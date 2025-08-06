@@ -1,0 +1,46 @@
+# macOS
+.DS_Store
+
+# Go build artifacts
+/bin/
+/build/
+/dist/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go modules
+/go.sum
+/go.work.sum
+
+# Dependency directories
+/vendor/
+
+# IDE/editor files
+.idea/
+.vscode/
+*.swp
+
+# Logs
+*.log
+
+# Coverage reports
+coverage.out
+
+# Test cache
+*.tmp
+
+# Node.js (if using frontend)
+node_modules/
+
+# Ignore by folder (for monorepo structure)
+**/bin/
+**/build/
+**/dist/
+**/vendor/
+**/*.log
+**/coverage.out
