@@ -1,15 +1,16 @@
 services:
   neo4j:
     image: neo4j
-    container_name: neo4j-prototype
+    container_name: db
     volumes:
       - ./neo4j/data:/data
       - ./neo4j/conf:/conf
       - ./neo4j/import:/import
+      - ./neo4j/plugins:/plugins
     environment:
       - NEO4J_AUTH=neo4j/password
-      - NEO4J_PLUGINS=["apoc", "graph-data-science"]
-      - NEO4J_dbms_security_procedures_unrestricted=apoc.*,gds.*
+      - NEO4J_server_jvm_additional=--add-modules=jdk.incubator.vector
+      - NEO4J_PLUGINS=["apoc", "genai", "apoc-extended" ]
     ports:
       - "7474:7474"
       - "7687:7687"

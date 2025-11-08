@@ -3,6 +3,7 @@ package golang
 import (
 	"go/ast"
 	"go/token"
+	"go/types"
 	"log/slog"
 	"strings"
 	"time"
@@ -33,8 +34,18 @@ func (g *GoExtractor) Extract(pkgstr string, dir string) (extract.ExtractNodesRe
 		Dir:  dir,
 	}
 
+	pattern := pkgstr
+	switch {
+	case pattern == "":
+		pattern = "./..."
+	case strings.HasSuffix(pattern, "/..."):
+		// already recursive
+	default:
+		pattern = pattern + "/..."
+	}
+
 	// TODO: Take directory as input and get extract pkgstr using go mod file
-	pkgs, err := packages.Load(cfg, pkgstr+"...")
+	pkgs, err := packages.Load(cfg, pattern)
 	if err != nil {
 		slog.Error("Unable to load", "package", pkgstr)
 		return extract.ExtractNodesResult{}, err
@@ -56,7 +67,7 @@ func (g *GoExtractor) Extract(pkgstr string, dir string) (extract.ExtractNodesRe
 
 	packages.Visit(pkgs, nil, func(pkg *packages.Package) {
 		// Process implementations of given package only.
-		if !strings.Contains(pkg.PkgPath, pkgstr) {
+		if pkgstr != "" && !strings.HasPrefix(pkg.PkgPath, pkgstr) {
 			return
 		}
 
@@ -73,7 +84,7 @@ func (g *GoExtractor) Extract(pkgstr string, dir string) (extract.ExtractNodesRe
 
 	packages.Visit(pkgs, nil, func(pkg *packages.Package) {
 		// Process nodes of given package only.
-		if !strings.Contains(pkg.PkgPath, pkgstr) {
+		if pkgstr != "" && !strings.HasPrefix(pkg.PkgPath, pkgstr) {
 			return
 		}
 
@@ -87,6 +98,9 @@ func (g *GoExtractor) Extract(pkgstr string, dir string) (extract.ExtractNodesRe
 		slog.Info("Analysing", "package", pkg.PkgPath)
 		slog.Info("Files found in", "package", pkg.PkgPath, "count", len(pkg.Syntax))
 
+		typeObjs := make(map[string]types.Type)
+		interfaceObjs := make(map[string]*types.Interface)
+
 		tv := &TypeVisitor{
 			Fset:       fset,
 			Info:       pkg.TypesInfo,
@@ -94,6 +108,7 @@ func (g *GoExtractor) Extract(pkgstr string, dir string) (extract.ExtractNodesRe
 			Implements: implMap,
 			Members:    extractRes.Members,
 			Package:    pkg.PkgPath,
+			TypeObjs:   typeObjs,
 		}
 
 		nv := &NamedVisitor{
@@ -122,10 +137,11 @@ func (g *GoExtractor) Extract(pkgstr string, dir string) (extract.ExtractNodesRe
 		}
 
 		iv := &InterfaceVisitor{
-			Fset:       fset,
-			Info:       pkg.TypesInfo,
-			Interfaces: extractRes.Interfaces,
-			Members:    extractRes.Members,
+			Fset:          fset,
+			Info:          pkg.TypesInfo,
+			Interfaces:    extractRes.Interfaces,
+			Members:       extractRes.Members,
+			InterfaceObjs: interfaceObjs,
 		}
 
 		for _, file := range pkg.Syntax {
@@ -137,9 +153,76 @@ func (g *GoExtractor) Extract(pkgstr string, dir string) (extract.ExtractNodesRe
 			ast.Walk(iv, file)
 			ast.Walk(vv, file)
 		}
+
+		augmentImplementsForNamedTypes(typeObjs, interfaceObjs, extractRes.TypeDecls)
 	})
 
 	slog.Info("Extraction completed", "time_taken", time.Since(start).String())
 
 	return extractRes, nil
+}
+
+func augmentImplementsForNamedTypes(
+	typeObjs map[string]types.Type,
+	interfaceObjs map[string]*types.Interface,
+	decls map[string]extract.TypeDecl,
+) {
+	if len(typeObjs) == 0 || len(interfaceObjs) == 0 {
+		return
+	}
+
+	for iface := range interfaceObjs {
+		if it := interfaceObjs[iface]; it != nil {
+			it.Complete()
+		}
+	}
+
+	for typeQName, typ := range typeObjs {
+		td, ok := decls[typeQName]
+		if !ok {
+			continue
+		}
+
+		seen := make(map[string]struct{}, len(td.ImplementsQName))
+		for _, existing := range td.ImplementsQName {
+			seen[existing] = struct{}{}
+		}
+
+		updated := false
+		for ifaceQName, iface := range interfaceObjs {
+			if iface == nil || iface.NumMethods() == 0 {
+				continue
+			}
+			if _, present := seen[ifaceQName]; present {
+				continue
+			}
+			if typeSatisfiesInterface(typ, iface) {
+				td.ImplementsQName = append(td.ImplementsQName, ifaceQName)
+				seen[ifaceQName] = struct{}{}
+				updated = true
+			}
+		}
+
+		if updated {
+			decls[typeQName] = td
+		}
+	}
+}
+
+func typeSatisfiesInterface(typ types.Type, iface *types.Interface) bool {
+	if typ == nil || iface == nil {
+		return false
+	}
+
+	if types.Implements(typ, iface) {
+		return true
+	}
+
+	if named, ok := typ.(*types.Named); ok {
+		if types.Implements(types.NewPointer(named), iface) {
+			return true
+		}
+	}
+
+	return false
 }

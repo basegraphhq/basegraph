@@ -10,10 +10,11 @@ import (
 
 type InterfaceVisitor struct {
 	ast.Visitor
-	Fset       *token.FileSet
-	Info       *types.Info
-	Interfaces map[string]extract.TypeDecl
-	Members    map[string]extract.Member
+	Fset          *token.FileSet
+	Info          *types.Info
+	Interfaces    map[string]extract.TypeDecl
+	Members       map[string]extract.Member
+	InterfaceObjs map[string]*types.Interface
 }
 
 func (v *InterfaceVisitor) Visit(node ast.Node) ast.Visitor {
@@ -60,6 +61,11 @@ func (v *InterfaceVisitor) Visit(node ast.Node) ast.Visitor {
 							Code:     infCode,
 						}
 						v.Interfaces[infQname] = td
+						if v.InterfaceObjs != nil {
+							if ifaceType, ok := tsObj.Type().Underlying().(*types.Interface); ok {
+								v.InterfaceObjs[infQname] = ifaceType
+							}
+						}
 					}
 				}
 			}

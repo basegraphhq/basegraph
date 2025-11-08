@@ -18,6 +18,7 @@ type TypeVisitor struct {
 	Implements map[string][]string
 	Members    map[string]extract.Member
 	Package    string
+	TypeObjs   map[string]types.Type
 }
 
 func (v *TypeVisitor) Visit(node ast.Node) ast.Visitor {
@@ -28,92 +29,78 @@ func (v *TypeVisitor) Visit(node ast.Node) ast.Visitor {
 	switch nd := node.(type) {
 
 	case *ast.GenDecl:
-		{
-			for _, s := range nd.Specs {
-				if tSpec, ok := s.(*ast.TypeSpec); ok {
-					tspecObj := v.Info.Defs[tSpec.Name]
+		for _, spec := range nd.Specs {
+			tSpec, ok := spec.(*ast.TypeSpec)
+			if !ok {
+				continue
+			}
 
-					if st, ok := tSpec.Type.(*ast.StructType); ok {
-						namespace := extract.Namespace{Name: tspecObj.Pkg().Path()}
-						stQName := namespace.Name + "." + tSpec.Name.Name
-						pos := v.Fset.Position(st.Pos()).Line
-						end := v.Fset.Position(st.End()).Line
-						filepath := v.Fset.Position(st.Pos()).Filename
+			tspecObj := v.Info.Defs[tSpec.Name]
+			if tspecObj == nil {
+				continue
+			}
 
-						stCode, err := extractCode(nd, v.Fset)
-						if err != nil {
-							// TODO: Handle errors gracefully
-							panic(err)
-						}
-						impl, ok := v.Implements[stQName]
-						if !ok {
-							// Try with pointer type
-							stQNameWPtr := "*" + stQName
-							impl = v.Implements[stQNameWPtr]
-						}
+			if st, ok := tSpec.Type.(*ast.StructType); ok {
+				namespace := extract.Namespace{Name: tspecObj.Pkg().Path()}
+				stQName := namespace.Name + "." + tSpec.Name.Name
+				pos := v.Fset.Position(st.Pos()).Line
+				end := v.Fset.Position(st.End()).Line
+				filepath := v.Fset.Position(st.Pos()).Filename
 
-						td := extract.TypeDecl{
-							Name:            tSpec.Name.Name,
-							QName:           stQName,
-							Namespace:       namespace,
-							TypeQName:       tspecObj.Type().String(),
-							Underlying:      tspecObj.Type().Underlying().String(),
-							ImplementsQName: impl,
-							Kind:            extract.Struct,
-							Pos:             pos,
-							End:             end,
-							Filepath:        filepath,
-							Code:            stCode,
-							Doc: extract.Doc{
-								Comment: nd.Doc.Text(),
-								OfQName: stQName,
-							},
-						}
+				stCode, err := extractCode(nd, v.Fset)
+				if err != nil {
+					// TODO: Handle errors gracefully
+					panic(err)
+				}
+				impl, ok := v.Implements[stQName]
+				if !ok {
+					// Try with pointer type
+					stQNameWPtr := "*" + stQName
+					impl = v.Implements[stQNameWPtr]
+				}
 
-						v.TypeDecls[stQName] = td
+				td := extract.TypeDecl{
+					Name:            tSpec.Name.Name,
+					QName:           stQName,
+					Namespace:       namespace,
+					TypeQName:       tspecObj.Type().String(),
+					Underlying:      tspecObj.Type().Underlying().String(),
+					ImplementsQName: impl,
+					Kind:            extract.Struct,
+					Pos:             pos,
+					End:             end,
+					Filepath:        filepath,
+					Code:            stCode,
+					Doc: extract.Doc{
+						Comment: nd.Doc.Text(),
+						OfQName: stQName,
+					},
+				}
 
-						fields := st.Fields
-						for _, field := range fields.List {
-							err := v.handleFieldNode(field, stQName)
-							// TODO: Revisit on how to handle errors
-							if err != nil {
-								slog.Error("Unable to visit field", "err", err)
-							}
-						}
-					} else if id, ok := tSpec.Type.(*ast.Ident); ok {
-						// Handle type aliases
+				v.TypeDecls[stQName] = td
+				if v.TypeObjs != nil {
+					v.TypeObjs[stQName] = tspecObj.Type()
+				}
 
-						namespace := extract.Namespace{Name: tspecObj.Pkg().Path()}
-						qname := namespace.Name + "." + tspecObj.Name()
-
-						pos := v.Fset.Position(id.Pos()).Line
-						end := v.Fset.Position(id.End()).Line
-						filepath := v.Fset.Position(id.Pos()).Filename
-
-						doc := extract.Doc{
-							Comment: nd.Doc.Text(),
-							OfQName: qname,
-						}
-						td := extract.TypeDecl{
-							Name:       tspecObj.Name(),
-							QName:      qname,
-							Namespace:  namespace,
-							TypeQName:  tspecObj.Type().String(),
-							Underlying: tspecObj.Type().Underlying().String(),
-							// TODO: Extract code
-							Code:     "",
-							Doc:      doc,
-							Kind:     extract.Alias,
-							Pos:      pos,
-							End:      end,
-							Filepath: filepath,
-						}
-						v.TypeDecls[qname] = td
+				fields := st.Fields
+				for _, field := range fields.List {
+					err := v.handleFieldNode(field, stQName)
+					// TODO: Revisit on how to handle errors
+					if err != nil {
+						slog.Error("Unable to visit field", "err", err)
 					}
 				}
+				continue
 			}
-			return v
+
+			if id, ok := tSpec.Type.(*ast.Ident); ok {
+				v.handleNonStructTypeSpec(nd, tSpec, id.Pos(), id.End())
+				continue
+			}
+
+			v.handleNonStructTypeSpec(nd, tSpec, tSpec.Pos(), tSpec.End())
 		}
+		return v
 
 	default:
 		return v
@@ -191,4 +178,67 @@ func (v *TypeVisitor) handleFieldNode(field *ast.Field, parentQName string) erro
 		v.Members[fieldQName] = m
 	}
 	return nil
+}
+
+func (v *TypeVisitor) handleNonStructTypeSpec(nd *ast.GenDecl, tSpec *ast.TypeSpec, pos token.Pos, end token.Pos) {
+	if tSpec == nil {
+		return
+	}
+
+	tspecObj := v.Info.Defs[tSpec.Name]
+	if tspecObj == nil {
+		return
+	}
+
+	namespace := extract.Namespace{Name: tspecObj.Pkg().Path()}
+	qname := namespace.Name + "." + tspecObj.Name()
+
+	posInfo := v.Fset.Position(pos)
+	endInfo := v.Fset.Position(end)
+
+	impl, ok := v.Implements[qname]
+	if !ok {
+		qnameWPtr := "*" + qname
+		impl = v.Implements[qnameWPtr]
+	}
+
+	doc := extract.Doc{
+		Comment: nd.Doc.Text(),
+		OfQName: qname,
+	}
+
+	kind := extract.Alias
+	if typeName, ok := tspecObj.(*types.TypeName); ok {
+		if !typeName.IsAlias() {
+			if _, isStruct := tspecObj.Type().Underlying().(*types.Struct); isStruct {
+				kind = extract.Struct
+			}
+		}
+	}
+
+	code, err := extractCode(tSpec, v.Fset)
+	if err != nil {
+		slog.Error("Unable to extract code for type spec", "qname", qname, "err", err)
+		code = ""
+	}
+
+	td := extract.TypeDecl{
+		Name:            tspecObj.Name(),
+		QName:           qname,
+		Namespace:       namespace,
+		TypeQName:       tspecObj.Type().String(),
+		Underlying:      tspecObj.Type().Underlying().String(),
+		ImplementsQName: impl,
+		Code:            code,
+		Doc:             doc,
+		Kind:            kind,
+		Pos:             posInfo.Line,
+		End:             endInfo.Line,
+		Filepath:        posInfo.Filename,
+	}
+
+	v.TypeDecls[qname] = td
+	if v.TypeObjs != nil {
+		v.TypeObjs[qname] = tspecObj.Type()
+	}
 }

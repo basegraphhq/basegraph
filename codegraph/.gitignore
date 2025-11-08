@@ -1,0 +1,11 @@
+.env
+.gocache
+bin/
+vendor/
+
+.venv/
+__pycache__/
+
+neo4j/
+
+notepad.txt
