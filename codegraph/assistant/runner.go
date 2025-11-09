@@ -43,6 +43,29 @@ type toolCall struct {
 	Arguments string
 }
 
+type tokenUsageSummary struct {
+	InputTokens     int64
+	OutputTokens    int64
+	TotalTokens     int64
+	CachedTokens    int64
+	ReasoningTokens int64
+	Requests        int
+}
+
+func (s *tokenUsageSummary) add(resp *responses.Response) {
+	if s == nil || resp == nil || !resp.JSON.Usage.Valid() {
+		return
+	}
+
+	usage := resp.Usage
+	s.InputTokens += usage.InputTokens
+	s.OutputTokens += usage.OutputTokens
+	s.TotalTokens += usage.TotalTokens
+	s.CachedTokens += usage.InputTokensDetails.CachedTokens
+	s.ReasoningTokens += usage.OutputTokensDetails.ReasoningTokens
+	s.Requests++
+}
+
 // Run starts the interactive assistant loop and blocks until the context is
 // cancelled or the user exits.
 func Run(ctx context.Context, cfg Config) error {
@@ -73,6 +96,7 @@ func Run(ctx context.Context, cfg Config) error {
 	conversation := []conversationItem{
 		{kind: conversationItemKindMessage, role: "system", content: systemPrompt},
 	}
+	usage := &tokenUsageSummary{}
 
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -84,10 +108,10 @@ func Run(ctx context.Context, cfg Config) error {
 		fmt.Print("» ")
 		if !scanner.Scan() {
 			if err := scanner.Err(); err != nil {
-				writeConversationToFile(conversation, cfg.WorkspaceRoot)
+				writeConversationToFile(conversation, usage, cfg.WorkspaceRoot)
 				return fmt.Errorf("read input: %w", err)
 			}
-			writeConversationToFile(conversation, cfg.WorkspaceRoot)
+			writeConversationToFile(conversation, usage, cfg.WorkspaceRoot)
 			return nil
 		}
 		userInput := strings.TrimSpace(scanner.Text())
@@ -96,7 +120,7 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 		if strings.EqualFold(userInput, "exit") || strings.EqualFold(userInput, "quit") {
 			fmt.Println("Exiting.")
-			writeConversationToFile(conversation, cfg.WorkspaceRoot)
+			writeConversationToFile(conversation, usage, cfg.WorkspaceRoot)
 			return nil
 		}
 
@@ -107,8 +131,8 @@ func Run(ctx context.Context, cfg Config) error {
 		})
 
 		start := time.Now()
-		if err := runConversation(ctx, client, registry, &conversation, cfg.OpenAI.Model); err != nil {
-			writeConversationToFile(conversation, cfg.WorkspaceRoot)
+		if err := runConversation(ctx, client, registry, &conversation, usage, cfg.OpenAI.Model); err != nil {
+			writeConversationToFile(conversation, usage, cfg.WorkspaceRoot)
 			return err
 		}
 		duration := time.Since(start)
@@ -116,7 +140,7 @@ func Run(ctx context.Context, cfg Config) error {
 	}
 }
 
-func runConversation(ctx context.Context, client openai.Client, registry *ToolRegistry, conversation *[]conversationItem, model string) error {
+func runConversation(ctx context.Context, client openai.Client, registry *ToolRegistry, conversation *[]conversationItem, usage *tokenUsageSummary, model string) error {
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -125,6 +149,23 @@ func runConversation(ctx context.Context, client openai.Client, registry *ToolRe
 		resp, err := createResponse(ctx, client, registry, *conversation, model)
 		if err != nil {
 			return fmt.Errorf("create response: %w", err)
+		}
+
+		if usage != nil {
+			if resp.JSON.Usage.Valid() {
+				callUsage := resp.Usage
+				fmt.Printf("🔢 Tokens this call — input:%d output:%d total:%d\n", callUsage.InputTokens, callUsage.OutputTokens, callUsage.TotalTokens)
+				if callUsage.InputTokensDetails.CachedTokens > 0 {
+					fmt.Printf("   Cached prompt tokens: %d\n", callUsage.InputTokensDetails.CachedTokens)
+				}
+				if callUsage.OutputTokensDetails.ReasoningTokens > 0 {
+					fmt.Printf("   Reasoning tokens: %d\n", callUsage.OutputTokensDetails.ReasoningTokens)
+				}
+			}
+			usage.add(resp)
+			if resp.JSON.Usage.Valid() {
+				fmt.Printf("   Running totals — input:%d output:%d total:%d across %d responses\n", usage.InputTokens, usage.OutputTokens, usage.TotalTokens, usage.Requests)
+			}
 		}
 
 		assistantText, toolCalls, err := parseResponse(resp)
@@ -310,7 +351,7 @@ type conversationItemJSON struct {
 }
 
 // writeConversationToFile writes the conversation thread to a JSON file with a timestamp.
-func writeConversationToFile(conversation []conversationItem, workspaceRoot string) {
+func writeConversationToFile(conversation []conversationItem, usage *tokenUsageSummary, workspaceRoot string) {
 	if len(conversation) <= 1 {
 		// Only system message, no actual conversation
 		return
@@ -357,6 +398,17 @@ func writeConversationToFile(conversation []conversationItem, workspaceRoot stri
 		"timestamp":    time.Now().Format(time.RFC3339),
 		"total_items":  len(items),
 		"conversation": items,
+	}
+
+	if usage != nil && usage.Requests > 0 {
+		output["token_usage"] = map[string]any{
+			"responses":        usage.Requests,
+			"input_tokens":     usage.InputTokens,
+			"output_tokens":    usage.OutputTokens,
+			"total_tokens":     usage.TotalTokens,
+			"cached_tokens":    usage.CachedTokens,
+			"reasoning_tokens": usage.ReasoningTokens,
+		}
 	}
 
 	// Marshal to JSON with indentation
