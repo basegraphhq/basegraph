@@ -21,7 +21,8 @@ func Orchestrate(e extract.Extractor) {
 	}()
 	ctx := context.Background()
 	// Step 1: Extract
-	repoRoot := envOrDefault("TARGET_REPO_PATH", "/Users/nithin/workspace/read-only/etcd")
+	// repoRoot := envOrDefault("TARGET_REPO_PATH", "/Users/nithin/workspace/read-only/etcd")
+	repoRoot := envOrDefault("TARGET_REPO_PATH", "/Users/nithin/basegraph/codegraph")
 	targetModule := strings.TrimSpace(os.Getenv("TARGET_MODULE"))
 
 	mods, err := discoverGoModules(repoRoot)

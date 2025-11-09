@@ -230,6 +230,8 @@ func (i *Neo4jIngestor) ingestTypeDecls(exec queryExecutor, decls map[string]ext
 			"code":           decl.Code,
 			"doc":            coalesceDoc(decl.Doc.Comment),
 			"namespace":      decl.Namespace.Name,
+			"pos":            decl.Pos,
+			"end":            decl.End,
 		})
 	}
 	if len(rows) == 0 {
@@ -246,7 +248,9 @@ SET n.name = row.name,
     n.kind = row.kind,
     n.code = row.code,
     n.doc = row.doc,
-    n.namespace = row.namespace
+    n.namespace = row.namespace,
+    n.pos = row.pos,
+    n.end = row.end
 `
 	return exec(stage, len(rows), query, map[string]any{"rows": rows})
 }
@@ -272,6 +276,8 @@ func (i *Neo4jIngestor) ingestInterfaces(exec queryExecutor, interfaces map[stri
 			"doc":            coalesceDoc(iface.Doc.Comment),
 			"namespace":      iface.Namespace.Name,
 			"kind":           string(iface.Kind),
+			"pos":            iface.Pos,
+			"end":            iface.End,
 		})
 	}
 	if len(rows) == 0 {
@@ -288,7 +294,9 @@ SET n.name = row.name,
     n.kind = row.kind,
     n.code = row.code,
     n.doc = row.doc,
-    n.namespace = row.namespace
+    n.namespace = row.namespace,
+    n.pos = row.pos,
+    n.end = row.end
 `
 	return exec(stage, len(rows), query, map[string]any{"rows": rows})
 }
@@ -314,6 +322,8 @@ func (i *Neo4jIngestor) ingestNamed(exec queryExecutor, named map[string]extract
 			"code":           n.Code,
 			"doc":            coalesceDoc(n.Doc.Comment),
 			"namespace":      n.Namespace.Name,
+			"pos":            n.Pos,
+			"end":            n.End,
 		})
 	}
 	if len(rows) == 0 {
@@ -330,7 +340,9 @@ SET n.name = row.name,
     n.kind = row.kind,
     n.code = row.code,
     n.doc = row.doc,
-    n.namespace = row.namespace
+    n.namespace = row.namespace,
+    n.pos = row.pos,
+    n.end = row.end
 `
 	return exec(stage, len(rows), query, map[string]any{"rows": rows})
 }
@@ -356,6 +368,8 @@ func (i *Neo4jIngestor) ingestMembers(exec queryExecutor, members map[string]ext
 			"code":                  member.Code,
 			"doc":                   coalesceDoc(member.Doc.Comment),
 			"namespace":             member.Namespace.Name,
+			"pos":                   member.Pos,
+			"end":                   member.End,
 		})
 	}
 	if len(rows) == 0 {
@@ -372,7 +386,9 @@ SET n.name = row.name,
     n.kind = row.kind,
     n.code = row.code,
     n.doc = row.doc,
-    n.namespace = row.namespace
+    n.namespace = row.namespace,
+    n.pos = row.pos,
+    n.end = row.end
 `
 	return exec(stage, len(rows), query, map[string]any{"rows": rows})
 }
@@ -403,6 +419,8 @@ SET n += row
 			"file":                  fn.Filepath,
 			"namespace":             fn.Namespace.Name,
 			"parent_qualified_name": fn.ParentQName,
+			"pos":                   fn.Pos,
+			"end":                   fn.End,
 		})
 	}
 	if len(rows) == 0 {

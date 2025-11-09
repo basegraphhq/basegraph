@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -69,10 +71,16 @@ func newCodeGraphTools(ctx context.Context, reg *ToolRegistry, cfg process.Neo4j
 	return tools, nil
 }
 
+// RegisterCodeGraphTools exposes the Neo4j-backed code graph tools to external registries.
+func RegisterCodeGraphTools(ctx context.Context, reg *ToolRegistry, cfg process.Neo4jConfig) error {
+	_, err := newCodeGraphTools(ctx, reg, cfg)
+	return err
+}
+
 func (c *codeGraphTools) searchDefinition() ToolDefinition {
 	return ToolDefinition{
-		Name:        "search_code_symbols",
-		Description: "Search the Neo4j code graph for symbols by name, qualified name, namespace, or kind.",
+		Name:        "search_symbols",
+		Description: "Search for symbols by qualified name, namespace, and kind.",
 		Strict:      true,
 		Parameters: map[string]any{
 			"type":                 "object",
@@ -80,24 +88,22 @@ func (c *codeGraphTools) searchDefinition() ToolDefinition {
 			"properties": map[string]any{
 				"query": map[string]any{
 					"type":        "string",
-					"description": "Case-insensitive substring to match against symbol name or qualified_name.",
+					"description": "Search string to match against name and qualified name.",
 				},
 				"namespace": map[string]any{
 					"type":        "string",
-					"description": "Optional exact namespace (Go package path) filter.",
+					"description": "Optional exact namespace filter.",
 				},
 				"kinds": map[string]any{
-					"type": "array",
-					"items": map[string]any{
-						"type": "string",
-					},
-					"description": "Optional list of node kinds to include (e.g., function, struct, interface, file, import).",
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Optional list of node kinds to include (e.g., function, struct, interface).",
 				},
 				"limit": map[string]any{
 					"type":        "integer",
 					"minimum":     1,
 					"maximum":     maxSearchLimit,
-					"description": "Maximum number of results to return (default 20, max 100).",
+					"description": "Maximum number of matches to return (default 20).",
 				},
 			},
 			"required": []string{"query", "namespace", "kinds", "limit"},
@@ -300,9 +306,12 @@ func (c *codeGraphTools) handleSymbolDetails(ctx context.Context, raw json.RawMe
 		limit = maxRelationshipLimit
 	}
 
+	includeRelationships := args.IncludeRelationships || !jsonFieldProvided(raw, "include_relationships")
+
 	params := map[string]any{
 		"qualified_name": qname,
 	}
+
 	cypher := `
 MATCH (n:Node {qualified_name: $qualified_name})
 RETURN n.name AS name,
@@ -316,6 +325,82 @@ RETURN n.name AS name,
        n.underlying_type AS underlying_type,
        n.parent_qualified_name AS parent_qualified_name
 `
+
+	if includeRelationships {
+		params["limit"] = limit
+		cypher = `
+MATCH (n:Node {qualified_name: $qualified_name})
+CALL {
+  WITH n
+  MATCH (n)-[:CALLS]->(dst:Node)
+  RETURN collect({qualified_name: dst.qualified_name,
+                  name: dst.name,
+                  kind: dst.kind,
+                  namespace: dst.namespace})[0..$limit] AS calls
+}
+WITH n, calls
+CALL {
+  WITH n
+  MATCH (src:Node)-[:CALLS]->(n)
+  RETURN collect({qualified_name: src.qualified_name,
+                  name: src.name,
+                  kind: src.kind,
+                  namespace: src.namespace})[0..$limit] AS called_by
+}
+WITH n, calls, called_by
+CALL {
+  WITH n
+  MATCH (n)-[:IMPLEMENTS]->(iface:Node)
+  RETURN collect({qualified_name: iface.qualified_name,
+                  name: iface.name,
+                  kind: iface.kind,
+                  namespace: iface.namespace})[0..$limit] AS implements
+}
+WITH n, calls, called_by, implements
+CALL {
+  WITH n
+  MATCH (impl:Node)-[:IMPLEMENTS]->(n)
+  RETURN collect({qualified_name: impl.qualified_name,
+                  name: impl.name,
+                  kind: impl.kind,
+                  namespace: impl.namespace})[0..$limit] AS implemented_by
+}
+WITH n, calls, called_by, implements, implemented_by
+CALL {
+  WITH n
+  MATCH (n)-[:RETURNS]->(ret:Node)
+  RETURN collect({qualified_name: ret.qualified_name,
+                  name: ret.name,
+                  kind: ret.kind,
+                  namespace: ret.namespace})[0..$limit] AS returns_rel
+}
+WITH n, calls, called_by, implements, implemented_by, returns_rel
+CALL {
+  WITH n
+  MATCH (param:Node)-[:PARAM_OF]->(n)
+  RETURN collect({qualified_name: param.qualified_name,
+                  name: param.name,
+                  kind: param.kind,
+                  namespace: param.namespace})[0..$limit] AS params_rel
+}
+RETURN n.name AS name,
+       n.qualified_name AS qualified_name,
+       n.kind AS kind,
+       n.namespace AS namespace,
+       n.file AS file,
+       n.doc AS doc,
+       n.code AS code,
+       n.type AS type,
+       n.underlying_type AS underlying_type,
+       n.parent_qualified_name AS parent_qualified_name,
+       calls,
+       called_by,
+       implements,
+       implemented_by,
+       returns_rel,
+       params_rel
+`
+	}
 
 	res, err := neo4j.ExecuteQuery(ctx, c.driver, cypher, params, neo4j.EagerResultTransformer, c.execOptions()...)
 	if err != nil {
@@ -340,85 +425,14 @@ RETURN n.name AS name,
 		Code:                truncateString(getString(info, "code"), maxCodeSnippetCharacters),
 	}
 
-	if args.IncludeRelationships || !jsonFieldProvided(raw, "include_relationships") {
-		rels := &symbolRelationships{}
-		if calls, err := c.fetchRelationship(ctx, qname, limit, `
-MATCH (:Node {qualified_name: $qname})-[:CALLS]->(dst:Node)
-RETURN dst.qualified_name AS qualified_name,
-       dst.name AS name,
-       dst.kind AS kind,
-       dst.namespace AS namespace
-ORDER BY dst.name
-LIMIT $limit
-`); err == nil {
-			rels.Calls = calls
-		} else {
-			return "", err
-		}
-		if callers, err := c.fetchRelationship(ctx, qname, limit, `
-MATCH (src:Node)-[:CALLS]->(:Node {qualified_name: $qname})
-RETURN src.qualified_name AS qualified_name,
-       src.name AS name,
-       src.kind AS kind,
-       src.namespace AS namespace
-ORDER BY src.name
-LIMIT $limit
-`); err == nil {
-			rels.CalledBy = callers
-		} else {
-			return "", err
-		}
-		if impls, err := c.fetchRelationship(ctx, qname, limit, `
-MATCH (:Node {qualified_name: $qname})-[:IMPLEMENTS]->(iface:Node)
-RETURN iface.qualified_name AS qualified_name,
-       iface.name AS name,
-       iface.kind AS kind,
-       iface.namespace AS namespace
-ORDER BY iface.name
-LIMIT $limit
-`); err == nil {
-			rels.Implements = impls
-		} else {
-			return "", err
-		}
-		if implementedBy, err := c.fetchRelationship(ctx, qname, limit, `
-MATCH (impl:Node)-[:IMPLEMENTS]->(:Node {qualified_name: $qname})
-RETURN impl.qualified_name AS qualified_name,
-       impl.name AS name,
-       impl.kind AS kind,
-       impl.namespace AS namespace
-ORDER BY impl.name
-LIMIT $limit
-`); err == nil {
-			rels.ImplementedBy = implementedBy
-		} else {
-			return "", err
-		}
-		if returns, err := c.fetchRelationship(ctx, qname, limit, `
-MATCH (:Node {qualified_name: $qname})-[:RETURNS]->(ret:Node)
-RETURN ret.qualified_name AS qualified_name,
-       ret.name AS name,
-       ret.kind AS kind,
-       ret.namespace AS namespace
-ORDER BY ret.name
-LIMIT $limit
-`); err == nil {
-			rels.Returns = returns
-		} else {
-			return "", err
-		}
-		if params, err := c.fetchRelationship(ctx, qname, limit, `
-MATCH (param:Node)-[:PARAM_OF]->(:Node {qualified_name: $qname})
-RETURN param.qualified_name AS qualified_name,
-       param.name AS name,
-       param.kind AS kind,
-       param.namespace AS namespace
-ORDER BY param.name
-LIMIT $limit
-`); err == nil {
-			rels.Params = params
-		} else {
-			return "", err
+	if includeRelationships {
+		rels := &symbolRelationships{
+			Calls:         toRelatedSymbols(info["calls"]),
+			CalledBy:      toRelatedSymbols(info["called_by"]),
+			Implements:    toRelatedSymbols(info["implements"]),
+			ImplementedBy: toRelatedSymbols(info["implemented_by"]),
+			Returns:       toRelatedSymbols(info["returns_rel"]),
+			Params:        toRelatedSymbols(info["params_rel"]),
 		}
 		details.Relationships = rels
 	}
@@ -513,22 +527,29 @@ func (c *codeGraphTools) handleGrepNodes(ctx context.Context, raw json.RawMessag
 	}
 
 	fields := normalizeFields(args.Fields)
-	caseSensitiveClause, insensitiveClause := buildFieldClauses(fields)
-	if caseSensitiveClause == "" || insensitiveClause == "" {
+	whereClause := buildRegexClause(fields)
+	if whereClause == "" {
 		return "", errors.New("no valid fields provided for grep search")
 	}
 
 	kinds := normalizeKinds(args.Kinds)
 
+	dbPattern, snippetPattern, err := buildRegexPatterns(query, args.CaseSensitive)
+	if err != nil {
+		return "", err
+	}
+	var snippetRE *regexp.Regexp
+	if snippetPattern != "" {
+		if re, compileErr := regexp.Compile(snippetPattern); compileErr == nil {
+			snippetRE = re
+		}
+	}
+
 	cypher := fmt.Sprintf(`
-WITH $query AS q, toLower($query) AS lq
 MATCH (n:Node)
 WHERE ($namespace = "" OR n.namespace = $namespace)
   AND (size($kinds) = 0 OR toLower(n.kind) IN $kinds)
-  AND (
-    ($case_sensitive = true AND (%s)) OR
-    ($case_sensitive = false AND (%s))
-  )
+  AND (%s)
 RETURN n.name AS name,
        n.qualified_name AS qualified_name,
        n.kind AS kind,
@@ -538,14 +559,14 @@ RETURN n.name AS name,
        n.doc AS doc
 ORDER BY n.kind, n.name
 LIMIT $limit
-`, caseSensitiveClause, insensitiveClause)
+`, whereClause)
 
 	params := map[string]any{
-		"query":          query,
-		"namespace":      strings.TrimSpace(args.Namespace),
-		"kinds":          kinds,
-		"limit":          limit,
-		"case_sensitive": args.CaseSensitive,
+		"query":     query,
+		"namespace": strings.TrimSpace(args.Namespace),
+		"kinds":     kinds,
+		"limit":     limit,
+		"pattern":   dbPattern,
 	}
 
 	res, err := neo4j.ExecuteQuery(ctx, c.driver, cypher, params, neo4j.EagerResultTransformer, c.execOptions()...)
@@ -564,7 +585,7 @@ LIMIT $limit
 		code := getString(m, "code")
 		doc := getString(m, "doc")
 
-		field, snippet, ok := selectMatchSnippet(fields, name, qualified, code, doc, query, args.CaseSensitive)
+		field, snippet, ok := selectMatchSnippet(fields, name, qualified, code, doc, snippetRE, query, args.CaseSensitive)
 		if !ok {
 			continue
 		}
@@ -582,6 +603,7 @@ LIMIT $limit
 
 	payload := map[string]any{
 		"query":          query,
+		"pattern":        dbPattern,
 		"case_sensitive": args.CaseSensitive,
 		"fields":         fields,
 		"results":        results,
@@ -639,24 +661,87 @@ func normalizeFields(fields []string) []string {
 	return ordered
 }
 
-func buildFieldClauses(fields []string) (string, string) {
+func buildRegexClause(fields []string) string {
 	access := map[string]string{
 		"code":           "n.code",
 		"doc":            "n.doc",
 		"name":           "n.name",
 		"qualified_name": "n.qualified_name",
 	}
-	caseSensitiveParts := make([]string, 0, len(fields))
-	insensitiveParts := make([]string, 0, len(fields))
+	parts := make([]string, 0, len(fields))
 	for _, field := range fields {
 		expr := access[field]
-		caseSensitiveParts = append(caseSensitiveParts, fmt.Sprintf("%s CONTAINS q", expr))
-		insensitiveParts = append(insensitiveParts, fmt.Sprintf("toLower(coalesce(%s, \"\")) CONTAINS lq", expr))
+		parts = append(parts, fmt.Sprintf("coalesce(%s, \"\") =~ $pattern", expr))
 	}
-	return strings.Join(caseSensitiveParts, " OR "), strings.Join(insensitiveParts, " OR ")
+	return strings.Join(parts, " OR ")
 }
 
-func selectMatchSnippet(fields []string, name, qualified, code, doc, query string, caseSensitive bool) (string, string, bool) {
+func buildRegexPatterns(query string, caseSensitive bool) (string, string, error) {
+	flagsFromQuery, rawBody := splitInlineFlags(strings.TrimSpace(query))
+	if rawBody == "" {
+		return "", "", errors.New("query must not be empty")
+	}
+	flagSet := map[rune]struct{}{}
+	for _, r := range flagsFromQuery {
+		flagSet[r] = struct{}{}
+	}
+	flagSet['s'] = struct{}{}
+	if !caseSensitive {
+		flagSet['i'] = struct{}{}
+	}
+
+	flags := make([]rune, 0, len(flagSet))
+	for r := range flagSet {
+		flags = append(flags, r)
+	}
+	sort.Slice(flags, func(i, j int) bool { return flags[i] < flags[j] })
+
+	prefix := ""
+	if len(flags) > 0 {
+		prefix = "(?" + string(flags) + ")"
+	}
+
+	build := func(patternBody string) (string, string) {
+		hasPrefixAnchor := strings.HasPrefix(patternBody, "^")
+		hasSuffixAnchor := strings.HasSuffix(patternBody, "$")
+
+		dbBody := patternBody
+		if !hasPrefixAnchor {
+			dbBody = ".*" + dbBody
+		}
+		if !hasSuffixAnchor {
+			dbBody = dbBody + ".*"
+		}
+		return prefix + dbBody, prefix + patternBody
+	}
+
+	dbPattern, snippetPattern := build(rawBody)
+	if _, err := regexp.Compile(snippetPattern); err != nil {
+		escapedBody := regexp.QuoteMeta(rawBody)
+		if escapedBody == rawBody {
+			return "", "", fmt.Errorf("compile regex: %w", err)
+		}
+		dbPattern, snippetPattern = build(escapedBody)
+		if _, escapedErr := regexp.Compile(snippetPattern); escapedErr != nil {
+			return "", "", fmt.Errorf("compile regex after escaping: %w", escapedErr)
+		}
+	}
+	return dbPattern, snippetPattern, nil
+}
+
+func splitInlineFlags(pattern string) (string, string) {
+	if strings.HasPrefix(pattern, "(?") {
+		if idx := strings.Index(pattern, ")"); idx > 2 {
+			flags := pattern[2:idx]
+			if !strings.ContainsAny(flags, ":<") {
+				return flags, pattern[idx+1:]
+			}
+		}
+	}
+	return "", pattern
+}
+
+func selectMatchSnippet(fields []string, name, qualified, code, doc string, re *regexp.Regexp, query string, caseSensitive bool) (string, string, bool) {
 	for _, field := range fields {
 		var content string
 		switch field {
@@ -669,7 +754,7 @@ func selectMatchSnippet(fields []string, name, qualified, code, doc, query strin
 		case "qualified_name":
 			content = qualified
 		}
-		snippet, ok := findSnippet(content, query, caseSensitive)
+		snippet, ok := findSnippet(content, re, query, caseSensitive)
 		if ok {
 			return field, snippet, true
 		}
@@ -677,33 +762,40 @@ func selectMatchSnippet(fields []string, name, qualified, code, doc, query strin
 	return "", "", false
 }
 
-func findSnippet(content, query string, caseSensitive bool) (string, bool) {
+func findSnippet(content string, re *regexp.Regexp, query string, caseSensitive bool) (string, bool) {
 	if content == "" {
 		return "", false
 	}
-	var (
-		index    int
-		needle   string
-		haystack string
-	)
-	haystack = content
-	needle = query
-	matchLen := len(needle)
+	if re != nil {
+		if loc := re.FindStringIndex(content); loc != nil {
+			return buildSnippet(content, loc[0], loc[1]), true
+		}
+	}
 	if caseSensitive {
-		index = strings.Index(haystack, needle)
+		if idx := strings.Index(content, query); idx >= 0 {
+			return buildSnippet(content, idx, idx+len(query)), true
+		}
 	} else {
-		var length int
-		index, length = caseInsensitiveMatch(haystack, needle)
-		matchLen = length
+		if idx, length := caseInsensitiveMatch(content, query); idx >= 0 {
+			return buildSnippet(content, idx, idx+length), true
+		}
 	}
-	if index < 0 {
-		return "", false
+	return "", false
+}
+
+func buildSnippet(content string, start, end int) string {
+	if start < 0 {
+		start = 0
 	}
-	start := index
-	end := index + matchLen
-	runes := []rune(haystack)
-	startRune := utf8.RuneCountInString(haystack[:start])
-	lengthRunes := utf8.RuneCountInString(haystack[start:end])
+	if end > len(content) {
+		end = len(content)
+	}
+	if start >= end {
+		return ""
+	}
+	runes := []rune(content)
+	startRune := utf8.RuneCountInString(content[:start])
+	lengthRunes := utf8.RuneCountInString(content[start:end])
 	if lengthRunes == 0 {
 		lengthRunes = 1
 	}
@@ -732,7 +824,26 @@ func findSnippet(content, query string, caseSensitive bool) (string, bool) {
 	}
 	snippet = strings.ReplaceAll(snippet, "\t", "    ")
 	snippet = strings.ReplaceAll(snippet, "\r", "")
-	return snippet, true
+	return snippet
+}
+
+func toRelatedSymbols(value any) []relatedSymbol {
+	list, ok := value.([]any)
+	if !ok || len(list) == 0 {
+		return nil
+	}
+	related := make([]relatedSymbol, 0, len(list))
+	for _, item := range list {
+		if m, ok := item.(map[string]any); ok {
+			related = append(related, relatedSymbol{
+				QualifiedName: getString(m, "qualified_name"),
+				Name:          getString(m, "name"),
+				Kind:          getString(m, "kind"),
+				Namespace:     getString(m, "namespace"),
+			})
+		}
+	}
+	return related
 }
 
 func caseInsensitiveMatch(haystack, needle string) (int, int) {

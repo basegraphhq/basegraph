@@ -30,8 +30,9 @@ func (g *GoExtractor) Extract(pkgstr string, dir string) (extract.ExtractNodesRe
 	cfg := &packages.Config{
 		Mode: packages.NeedTypes | packages.NeedDeps | packages.NeedSyntax |
 			packages.NeedName | packages.NeedTypesInfo | packages.NeedImports,
-		Fset: fset,
-		Dir:  dir,
+		Fset:  fset,
+		Dir:   dir,
+		Tests: true,
 	}
 
 	pattern := pkgstr

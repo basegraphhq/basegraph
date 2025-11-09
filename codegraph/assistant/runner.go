@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	openai "github.com/openai/openai-go/v3"
@@ -45,9 +47,9 @@ type toolCall struct {
 // cancelled or the user exits.
 func Run(ctx context.Context, cfg Config) error {
 	registry := NewToolRegistry()
-	if _, err := newFilesystemTools(registry, cfg.WorkspaceRoot); err != nil {
-		return fmt.Errorf("initialise filesystem tools: %w", err)
-	}
+	// if _, err := newFilesystemTools(registry, cfg.WorkspaceRoot); err != nil {
+	// 	return fmt.Errorf("initialise filesystem tools: %w", err)
+	// }
 	if _, err := newCodeGraphTools(ctx, registry, cfg.Neo4j); err != nil {
 		return fmt.Errorf("initialise code graph tools: %w", err)
 	}
@@ -70,7 +72,6 @@ func Run(ctx context.Context, cfg Config) error {
 
 	conversation := []conversationItem{
 		{kind: conversationItemKindMessage, role: "system", content: systemPrompt},
-		{kind: conversationItemKindMessage, role: "developer", content: developerPrompt},
 	}
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -83,8 +84,10 @@ func Run(ctx context.Context, cfg Config) error {
 		fmt.Print("» ")
 		if !scanner.Scan() {
 			if err := scanner.Err(); err != nil {
+				writeConversationToFile(conversation, cfg.WorkspaceRoot)
 				return fmt.Errorf("read input: %w", err)
 			}
+			writeConversationToFile(conversation, cfg.WorkspaceRoot)
 			return nil
 		}
 		userInput := strings.TrimSpace(scanner.Text())
@@ -93,6 +96,7 @@ func Run(ctx context.Context, cfg Config) error {
 		}
 		if strings.EqualFold(userInput, "exit") || strings.EqualFold(userInput, "quit") {
 			fmt.Println("Exiting.")
+			writeConversationToFile(conversation, cfg.WorkspaceRoot)
 			return nil
 		}
 
@@ -104,6 +108,7 @@ func Run(ctx context.Context, cfg Config) error {
 
 		start := time.Now()
 		if err := runConversation(ctx, client, registry, &conversation, cfg.OpenAI.Model); err != nil {
+			writeConversationToFile(conversation, cfg.WorkspaceRoot)
 			return err
 		}
 		duration := time.Since(start)
@@ -140,8 +145,21 @@ func runConversation(ctx context.Context, client openai.Client, registry *ToolRe
 			return nil
 		}
 
-		var toolErr error
-		for _, call := range toolCalls {
+		if len(toolCalls) > 1 {
+			fmt.Printf("🚀 Parallel tool calling detected: %d tools will execute concurrently\n", len(toolCalls))
+		}
+
+		type toolCallResult struct {
+			output   string
+			duration time.Duration
+			err      error
+		}
+
+		results := make([]toolCallResult, len(toolCalls))
+		var wg sync.WaitGroup
+		var mu sync.Mutex
+
+		for i, call := range toolCalls {
 			fmt.Printf("🔧 Calling tool: %s\n", call.Name)
 			fmt.Printf("   Input: %s\n", call.Arguments)
 
@@ -152,19 +170,42 @@ func runConversation(ctx context.Context, client openai.Client, registry *ToolRe
 				callID:       call.CallID,
 			})
 
-			output, err := registry.Handle(ctx, call.Name, json.RawMessage(call.Arguments))
-			if err != nil {
-				slog.Error("tool execution failed", "tool", call.Name, "err", err)
-				if toolErr == nil {
-					toolErr = err
+			wg.Add(1)
+			go func(idx int, call toolCall) {
+				defer wg.Done()
+
+				toolStart := time.Now()
+				output, err := registry.Handle(ctx, call.Name, json.RawMessage(call.Arguments))
+				duration := time.Since(toolStart)
+				if err != nil {
+					slog.Error("tool execution failed", "tool", call.Name, "err", err)
+					output = fmt.Sprintf(`{"error": %q}`, err.Error())
 				}
-				output = fmt.Sprintf(`{"error": %q}`, err.Error())
+
+				mu.Lock()
+				results[idx] = toolCallResult{
+					output:   output,
+					duration: duration,
+					err:      err,
+				}
+				mu.Unlock()
+			}(i, call)
+		}
+
+		wg.Wait()
+
+		var toolErr error
+		for i, call := range toolCalls {
+			result := results[i]
+			fmt.Printf("⏱️  Tool execution time (%s): %v\n", call.Name, result.duration)
+			if result.err != nil && toolErr == nil {
+				toolErr = result.err
 			}
 
 			*conversation = append(*conversation, conversationItem{
 				kind:    conversationItemKindFunctionOutput,
 				callID:  call.CallID,
-				content: output,
+				content: result.output,
 			})
 		}
 
@@ -178,9 +219,13 @@ func runConversation(ctx context.Context, client openai.Client, registry *ToolRe
 func createResponse(ctx context.Context, client openai.Client, registry *ToolRegistry, conversation []conversationItem, model string) (*responses.Response, error) {
 	inputItems := buildInputItems(conversation)
 	params := responses.ResponseNewParams{
-		Model: shared.ResponsesModel(model),
-		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: inputItems},
-		Tools: registry.ResponseTools(),
+		Model:             shared.ResponsesModel(model),
+		Input:             responses.ResponseNewParamsInputUnion{OfInputItemList: inputItems},
+		Tools:             registry.ResponseTools(),
+		ParallelToolCalls: param.NewOpt(true),
+		Reasoning: shared.ReasoningParam{
+			Effort: shared.ReasoningEffortMedium,
+		},
 	}
 	params.ToolChoice.OfToolChoiceMode = param.NewOpt(responses.ToolChoiceOptionsAuto)
 	resp, err := client.Responses.New(ctx, params)
@@ -252,4 +297,80 @@ func extractMessageText(msg responses.ResponseOutputMessage) string {
 		}
 	}
 	return strings.TrimSpace(builder.String())
+}
+
+// conversationItemJSON is a JSON-serializable representation of conversationItem
+type conversationItemJSON struct {
+	Kind         string `json:"kind"`
+	Role         string `json:"role,omitempty"`
+	Content      string `json:"content,omitempty"`
+	FunctionName string `json:"function_name,omitempty"`
+	Arguments    string `json:"arguments,omitempty"`
+	CallID       string `json:"call_id,omitempty"`
+}
+
+// writeConversationToFile writes the conversation thread to a JSON file with a timestamp.
+func writeConversationToFile(conversation []conversationItem, workspaceRoot string) {
+	if len(conversation) <= 1 {
+		// Only system message, no actual conversation
+		return
+	}
+
+	// Create conversations directory in workspace root
+	conversationsDir := filepath.Join(workspaceRoot, ".conversations")
+	if err := os.MkdirAll(conversationsDir, 0o755); err != nil {
+		slog.Error("failed to create conversations directory", "dir", conversationsDir, "err", err)
+		return
+	}
+
+	// Generate filename with timestamp
+	timestamp := time.Now().Format("2006-01-02_15-04-05")
+	filename := fmt.Sprintf("conversation_%s.json", timestamp)
+	filePath := filepath.Join(conversationsDir, filename)
+
+	// Convert conversation items to JSON-serializable format
+	items := make([]conversationItemJSON, 0, len(conversation))
+	for _, item := range conversation {
+		jsonItem := conversationItemJSON{
+			Role:    item.role,
+			Content: item.content,
+		}
+
+		switch item.kind {
+		case conversationItemKindMessage:
+			jsonItem.Kind = "message"
+		case conversationItemKindFunctionCall:
+			jsonItem.Kind = "function_call"
+			jsonItem.FunctionName = item.functionName
+			jsonItem.Arguments = item.arguments
+			jsonItem.CallID = item.callID
+		case conversationItemKindFunctionOutput:
+			jsonItem.Kind = "function_output"
+			jsonItem.CallID = item.callID
+		}
+
+		items = append(items, jsonItem)
+	}
+
+	// Create output structure with metadata
+	output := map[string]any{
+		"timestamp":    time.Now().Format(time.RFC3339),
+		"total_items":  len(items),
+		"conversation": items,
+	}
+
+	// Marshal to JSON with indentation
+	jsonData, err := json.MarshalIndent(output, "", "  ")
+	if err != nil {
+		slog.Error("failed to marshal conversation to JSON", "err", err)
+		return
+	}
+
+	// Write to file
+	if err := os.WriteFile(filePath, jsonData, 0o644); err != nil {
+		slog.Error("failed to write conversation to file", "file", filePath, "err", err)
+		return
+	}
+
+	slog.Info("conversation saved", "file", filePath, "items", len(items))
 }

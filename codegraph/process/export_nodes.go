@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strconv"
 
 	"github.com/humanbeeng/lepo/prototypes/codegraph/extract"
 )
@@ -34,6 +35,8 @@ func (c *CSVNodeExporter) ExportTypes(types map[string]extract.TypeDecl) error {
 		extract.Code,
 		"doc",
 		"namespace",
+		"pos",
+		"end",
 	}
 
 	err = csvwriter.Write(header)
@@ -54,7 +57,7 @@ func (c *CSVNodeExporter) ExportTypes(types map[string]extract.TypeDecl) error {
 			fmt.Println("Empty namespace found for", t.QName)
 		}
 
-		row := []string{t.Name, qname, tqn, und, string(t.Kind), code, t.Doc.Comment, t.Namespace.Name}
+		row := []string{t.Name, qname, tqn, und, string(t.Kind), code, t.Doc.Comment, t.Namespace.Name, strconv.Itoa(t.Pos), strconv.Itoa(t.End)}
 		err := csvwriter.Write(row)
 		if err != nil {
 			slog.Error("Unable to write to type.csv file", "err", err)
@@ -93,6 +96,8 @@ func (c *CSVNodeExporter) ExportFunctions(functions map[string]extract.Function)
 		"doc",
 		"file",
 		"namespace",
+		"pos",
+		"end",
 	}
 
 	err = csvwriter.Write(header)
@@ -110,7 +115,7 @@ func (c *CSVNodeExporter) ExportFunctions(functions map[string]extract.Function)
 			continue
 		}
 
-		row := []string{f.Name, qname, f.ParentQName, "function", code, f.Doc.Comment, f.Filepath, f.Namespace.Name}
+		row := []string{f.Name, qname, f.ParentQName, "function", code, f.Doc.Comment, f.Filepath, f.Namespace.Name, strconv.Itoa(f.Pos), strconv.Itoa(f.End)}
 		err := csvwriter.Write(row)
 		if err != nil {
 			slog.Error("Unable to write to function.csv file", "err", err)
@@ -149,6 +154,8 @@ func (c *CSVNodeExporter) ExportInterfaces(types map[string]extract.TypeDecl) er
 		extract.Code,
 		"doc",
 		"namespace",
+		"pos",
+		"end",
 	}
 
 	err = csvwriter.Write(header)
@@ -166,7 +173,7 @@ func (c *CSVNodeExporter) ExportInterfaces(types map[string]extract.TypeDecl) er
 		und = escapeStr(und)
 		tqn = escapeStr(tqn)
 
-		row := []string{t.Name, qname, tqn, und, string(t.Kind), code, t.Doc.Comment, t.Namespace.Name}
+		row := []string{t.Name, qname, tqn, und, string(t.Kind), code, t.Doc.Comment, t.Namespace.Name, strconv.Itoa(t.Pos), strconv.Itoa(t.End)}
 		err := csvwriter.Write(row)
 		if err != nil {
 			slog.Error("Unable to write to interface.csv file", "err", err)
@@ -205,6 +212,8 @@ func (c *CSVNodeExporter) ExportNamed(named map[string]extract.Named) error {
 		extract.Code,
 		"doc",
 		"namespace",
+		"pos",
+		"end",
 	}
 
 	err = csvwriter.Write(header)
@@ -223,7 +232,7 @@ func (c *CSVNodeExporter) ExportNamed(named map[string]extract.Named) error {
 		tqn = escapeStr(tqn)
 
 		// TODO : Refer schema for named types and revisit this name: named
-		row := []string{n.Name, qname, tqn, und, "named", code, n.Doc.Comment, n.Namespace.Name}
+		row := []string{n.Name, qname, tqn, und, "named", code, n.Doc.Comment, n.Namespace.Name, strconv.Itoa(n.Pos), strconv.Itoa(n.End)}
 		err := csvwriter.Write(row)
 		if err != nil {
 			slog.Error("Unable to write to named.csv file", "err", err)
@@ -383,6 +392,8 @@ func (c *CSVNodeExporter) ExportMembers(members map[string]extract.Member) error
 		extract.Code,
 		"doc",
 		"namespace",
+		"pos",
+		"end",
 	}
 
 	err = csvwriter.Write(header)
@@ -408,6 +419,8 @@ func (c *CSVNodeExporter) ExportMembers(members map[string]extract.Member) error
 			code,
 			t.Doc.Comment,
 			t.Namespace.Name,
+			strconv.Itoa(t.Pos),
+			strconv.Itoa(t.End),
 		}
 		err := csvwriter.Write(row)
 		if err != nil {
