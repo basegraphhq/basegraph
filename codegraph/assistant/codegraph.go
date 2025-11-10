@@ -134,8 +134,13 @@ func (c *codeGraphTools) detailDefinition() ToolDefinition {
 					"type":        "boolean",
 					"description": "When false, only node attributes are returned (relationships skipped).",
 				},
+				"relationship_types": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string", "enum": []string{"calls", "called_by", "implements", "implemented_by", "returns", "params"}},
+					"description": "Optional list of relationship types to fetch. Valid values: calls, called_by, implements, implemented_by, returns, params. If not provided and include_relationships is true, all relationships are fetched.",
+				},
 			},
-			"required": []string{"qualified_name", "relationship_limit", "include_relationships"},
+			"required": []string{"qualified_name", "relationship_limit", "include_relationships", "relationship_types"},
 		},
 	}
 }
@@ -148,9 +153,10 @@ type searchArgs struct {
 }
 
 type detailArgs struct {
-	QualifiedName        string `json:"qualified_name"`
-	RelationshipLimit    int    `json:"relationship_limit"`
-	IncludeRelationships bool   `json:"include_relationships"`
+	QualifiedName        string   `json:"qualified_name"`
+	RelationshipLimit    int      `json:"relationship_limit"`
+	IncludeRelationships bool     `json:"include_relationships"`
+	RelationshipTypes    []string `json:"relationship_types"`
 }
 
 type searchResult struct {
@@ -308,6 +314,13 @@ func (c *codeGraphTools) handleSymbolDetails(ctx context.Context, raw json.RawMe
 
 	includeRelationships := args.IncludeRelationships || !jsonFieldProvided(raw, "include_relationships")
 
+	// Normalize and validate relationship types
+	requestedRels := normalizeRelationshipTypes(args.RelationshipTypes)
+	if includeRelationships && len(requestedRels) == 0 {
+		// If include_relationships is true but no specific types requested, fetch all
+		requestedRels = []string{"calls", "called_by", "implements", "implemented_by", "returns", "params"}
+	}
+
 	params := map[string]any{
 		"qualified_name": qname,
 	}
@@ -326,80 +339,9 @@ RETURN n.name AS name,
        n.parent_qualified_name AS parent_qualified_name
 `
 
-	if includeRelationships {
+	if includeRelationships && len(requestedRels) > 0 {
 		params["limit"] = limit
-		cypher = `
-MATCH (n:Node {qualified_name: $qualified_name})
-CALL {
-  WITH n
-  MATCH (n)-[:CALLS]->(dst:Node)
-  RETURN collect({qualified_name: dst.qualified_name,
-                  name: dst.name,
-                  kind: dst.kind,
-                  namespace: dst.namespace})[0..$limit] AS calls
-}
-WITH n, calls
-CALL {
-  WITH n
-  MATCH (src:Node)-[:CALLS]->(n)
-  RETURN collect({qualified_name: src.qualified_name,
-                  name: src.name,
-                  kind: src.kind,
-                  namespace: src.namespace})[0..$limit] AS called_by
-}
-WITH n, calls, called_by
-CALL {
-  WITH n
-  MATCH (n)-[:IMPLEMENTS]->(iface:Node)
-  RETURN collect({qualified_name: iface.qualified_name,
-                  name: iface.name,
-                  kind: iface.kind,
-                  namespace: iface.namespace})[0..$limit] AS implements
-}
-WITH n, calls, called_by, implements
-CALL {
-  WITH n
-  MATCH (impl:Node)-[:IMPLEMENTS]->(n)
-  RETURN collect({qualified_name: impl.qualified_name,
-                  name: impl.name,
-                  kind: impl.kind,
-                  namespace: impl.namespace})[0..$limit] AS implemented_by
-}
-WITH n, calls, called_by, implements, implemented_by
-CALL {
-  WITH n
-  MATCH (n)-[:RETURNS]->(ret:Node)
-  RETURN collect({qualified_name: ret.qualified_name,
-                  name: ret.name,
-                  kind: ret.kind,
-                  namespace: ret.namespace})[0..$limit] AS returns_rel
-}
-WITH n, calls, called_by, implements, implemented_by, returns_rel
-CALL {
-  WITH n
-  MATCH (param:Node)-[:PARAM_OF]->(n)
-  RETURN collect({qualified_name: param.qualified_name,
-                  name: param.name,
-                  kind: param.kind,
-                  namespace: param.namespace})[0..$limit] AS params_rel
-}
-RETURN n.name AS name,
-       n.qualified_name AS qualified_name,
-       n.kind AS kind,
-       n.namespace AS namespace,
-       n.file AS file,
-       n.doc AS doc,
-       n.code AS code,
-       n.type AS type,
-       n.underlying_type AS underlying_type,
-       n.parent_qualified_name AS parent_qualified_name,
-       calls,
-       called_by,
-       implements,
-       implemented_by,
-       returns_rel,
-       params_rel
-`
+		cypher = c.buildRelationshipQuery(requestedRels)
 	}
 
 	res, err := neo4j.ExecuteQuery(ctx, c.driver, cypher, params, neo4j.EagerResultTransformer, c.execOptions()...)
@@ -425,14 +367,23 @@ RETURN n.name AS name,
 		Code:                truncateString(getString(info, "code"), maxCodeSnippetCharacters),
 	}
 
-	if includeRelationships {
-		rels := &symbolRelationships{
-			Calls:         toRelatedSymbols(info["calls"]),
-			CalledBy:      toRelatedSymbols(info["called_by"]),
-			Implements:    toRelatedSymbols(info["implements"]),
-			ImplementedBy: toRelatedSymbols(info["implemented_by"]),
-			Returns:       toRelatedSymbols(info["returns_rel"]),
-			Params:        toRelatedSymbols(info["params_rel"]),
+	if includeRelationships && len(requestedRels) > 0 {
+		rels := &symbolRelationships{}
+		for _, relType := range requestedRels {
+			switch relType {
+			case "calls":
+				rels.Calls = toRelatedSymbols(info["calls"])
+			case "called_by":
+				rels.CalledBy = toRelatedSymbols(info["called_by"])
+			case "implements":
+				rels.Implements = toRelatedSymbols(info["implements"])
+			case "implemented_by":
+				rels.ImplementedBy = toRelatedSymbols(info["implemented_by"])
+			case "returns":
+				rels.Returns = toRelatedSymbols(info["returns_rel"])
+			case "params":
+				rels.Params = toRelatedSymbols(info["params_rel"])
+			}
 		}
 		details.Relationships = rels
 	}
@@ -442,6 +393,167 @@ RETURN n.name AS name,
 		return "", fmt.Errorf("encode detail response: %w", err)
 	}
 	return string(jsonBytes), nil
+}
+
+func normalizeRelationshipTypes(types []string) []string {
+	valid := map[string]bool{
+		"calls":          false,
+		"called_by":      false,
+		"implements":     false,
+		"implemented_by": false,
+		"returns":        false,
+		"params":         false,
+	}
+	if len(types) == 0 {
+		return []string{}
+	}
+	normalized := make([]string, 0, len(types))
+	seen := make(map[string]bool)
+	for _, t := range types {
+		trimmed := strings.TrimSpace(strings.ToLower(t))
+		if _, ok := valid[trimmed]; ok && !seen[trimmed] {
+			normalized = append(normalized, trimmed)
+			seen[trimmed] = true
+		}
+	}
+	return normalized
+}
+
+func (c *codeGraphTools) buildRelationshipQuery(requestedRels []string) string {
+	type relBlock struct {
+		name      string
+		cypher    string
+		returnVar string
+	}
+
+	relBlocks := []relBlock{
+		{
+			name:      "calls",
+			returnVar: "calls",
+			cypher: `CALL {
+  WITH n
+  MATCH (n)-[:CALLS]->(dst:Node)
+  RETURN collect({qualified_name: dst.qualified_name,
+                  name: dst.name,
+                  kind: dst.kind,
+                  namespace: dst.namespace})[0..$limit] AS calls
+}`,
+		},
+		{
+			name:      "called_by",
+			returnVar: "called_by",
+			cypher: `CALL {
+  WITH n
+  MATCH (src:Node)-[:CALLS]->(n)
+  RETURN collect({qualified_name: src.qualified_name,
+                  name: src.name,
+                  kind: src.kind,
+                  namespace: src.namespace})[0..$limit] AS called_by
+}`,
+		},
+		{
+			name:      "implements",
+			returnVar: "implements",
+			cypher: `CALL {
+  WITH n
+  MATCH (n)-[:IMPLEMENTS]->(iface:Node)
+  RETURN collect({qualified_name: iface.qualified_name,
+                  name: iface.name,
+                  kind: iface.kind,
+                  namespace: iface.namespace})[0..$limit] AS implements
+}`,
+		},
+		{
+			name:      "implemented_by",
+			returnVar: "implemented_by",
+			cypher: `CALL {
+  WITH n
+  MATCH (impl:Node)-[:IMPLEMENTS]->(n)
+  RETURN collect({qualified_name: impl.qualified_name,
+                  name: impl.name,
+                  kind: impl.kind,
+                  namespace: impl.namespace})[0..$limit] AS implemented_by
+}`,
+		},
+		{
+			name:      "returns",
+			returnVar: "returns_rel",
+			cypher: `CALL {
+  WITH n
+  MATCH (n)-[:RETURNS]->(ret:Node)
+  RETURN collect({qualified_name: ret.qualified_name,
+                  name: ret.name,
+                  kind: ret.kind,
+                  namespace: ret.namespace})[0..$limit] AS returns_rel
+}`,
+		},
+		{
+			name:      "params",
+			returnVar: "params_rel",
+			cypher: `CALL {
+  WITH n
+  MATCH (param:Node)-[:PARAM_OF]->(n)
+  RETURN collect({qualified_name: param.qualified_name,
+                  name: param.name,
+                  kind: param.kind,
+                  namespace: param.namespace})[0..$limit] AS params_rel
+}`,
+		},
+	}
+
+	relMap := make(map[string]bool)
+	for _, rel := range requestedRels {
+		relMap[rel] = true
+	}
+
+	var selectedBlocks []relBlock
+	var withVars []string
+	var returnVars []string
+
+	withVars = append(withVars, "n")
+
+	for _, block := range relBlocks {
+		if relMap[block.name] {
+			selectedBlocks = append(selectedBlocks, block)
+			withVars = append(withVars, block.returnVar)
+			returnVars = append(returnVars, block.returnVar)
+		}
+	}
+
+	if len(selectedBlocks) == 0 {
+		return ""
+	}
+
+	// Build the full query
+	query := "MATCH (n:Node {qualified_name: $qualified_name})\n"
+	for i, block := range selectedBlocks {
+		// Build WITH clause before this block to chain previous results
+		if i > 0 {
+			query += "WITH " + strings.Join(withVars[:i+1], ", ") + "\n"
+		}
+		query += block.cypher + "\n"
+	}
+
+	// Final WITH clause before RETURN to include all variables
+	if len(selectedBlocks) > 0 {
+		query += "WITH " + strings.Join(withVars, ", ") + "\n"
+	}
+
+	query += "RETURN n.name AS name,\n"
+	query += "       n.qualified_name AS qualified_name,\n"
+	query += "       n.kind AS kind,\n"
+	query += "       n.namespace AS namespace,\n"
+	query += "       n.file AS file,\n"
+	query += "       n.doc AS doc,\n"
+	query += "       n.code AS code,\n"
+	query += "       n.type AS type,\n"
+	query += "       n.underlying_type AS underlying_type,\n"
+	query += "       n.parent_qualified_name AS parent_qualified_name"
+	for _, retVar := range returnVars {
+		query += ",\n       " + retVar
+	}
+
+	return query
 }
 
 func (c *codeGraphTools) fetchRelationship(ctx context.Context, qualifiedName string, limit int, query string) ([]relatedSymbol, error) {

@@ -7,4 +7,5 @@ Always pick the lowest-latency tool for the task:
 - Use grep_code_nodes for text/regex queries, keeping patterns simple when possible.
 - Use get_symbol_details to expand relationships, respecting the requested depth in one call.
 Combine tool requests in parallel when you need both content and relationships, and avoid redundant or repeated queries.
+For a vague search term, ask the user for more context. If you have options to show. Include all of them in your question.
 `

@@ -152,9 +152,25 @@ func (v *FunctionVisitor) extractParamsAndReturns(n *ast.FuncDecl, f *extract.Fu
 	}
 	params := n.Type.Params.List
 	for _, p := range params {
-		for _, name := range p.Names {
-			pObj := v.Info.Defs[name]
-			f.ParamQNames = append(f.ParamQNames, pObj.Type().String())
+		// Handle both named and unnamed parameters
+		if len(p.Names) > 0 {
+			// Named parameters: extract type from the parameter object
+			for _, name := range p.Names {
+				pObj := v.Info.Defs[name]
+				if pObj != nil {
+					f.ParamQNames = append(f.ParamQNames, pObj.Type().String())
+				} else {
+					// Fallback: extract type directly from AST
+					if typeInfo, ok := v.Info.Types[p.Type]; ok {
+						f.ParamQNames = append(f.ParamQNames, typeInfo.Type.String())
+					}
+				}
+			}
+		} else {
+			// Unnamed parameters: extract type directly from AST
+			if typeInfo, ok := v.Info.Types[p.Type]; ok {
+				f.ParamQNames = append(f.ParamQNames, typeInfo.Type.String())
+			}
 		}
 	}
 
