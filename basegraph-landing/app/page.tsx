@@ -11,13 +11,25 @@ export default function Home() {
           <h1 className="text-5xl md:text-6xl font-serif font-bold">Basegraph</h1>
         </div>
 
-        {/* Mission */}
+        {/* The Problem */}
         <section className="mb-16 md:mb-24">
-          <h2 className="text-3xl md:text-4xl font-serif font-bold mb-6">Our Mission</h2>
+          <h2 className="text-3xl md:text-4xl font-serif font-bold mb-6">The Problem</h2>
           <p className="text-lg leading-relaxed mb-4">
-            At Basegraph, we're reimagining the future of software development by putting humans back at the center of
-            AI-assisted coding. We believe that the most powerful code isn't written by AI alone—it's crafted through
-            intelligent collaboration between human creativity and machine precision.
+            Today's AI coding agents waste time and tokens reading tens or hundreds of files, guessing at each step when given a complex task.
+          </p>
+          <p className="text-lg leading-relaxed">
+            Agentic workflows are exploding, but every one of them hits the same wall: <strong>context</strong>.
+          </p>
+        </section>
+
+        {/* The Solution */}
+        <section className="mb-16 md:mb-24">
+          <h2 className="text-3xl md:text-4xl font-serif font-bold mb-6">Our Solution</h2>
+          <p className="text-lg leading-relaxed mb-4">
+            We built <strong>Codegraph</strong>, a high-performance code-context engine that performs compiler-accurate code lookup and relationship mapping—calls, imports, implementations—in milliseconds.
+          </p>
+          <p className="text-lg leading-relaxed">
+            It fetches only the exact context an agent needs, removing the guesswork and inefficiency of semantic search.
           </p>
         </section>
 
@@ -49,30 +61,21 @@ export default function Home() {
           </p>
         </section>
 
-        {/* What We're Building */}
+        {/* Relay */}
         <section className="mb-16 md:mb-24">
-          <h2 className="text-3xl md:text-4xl font-serif font-bold mb-6">What We're Building</h2>
+          <h2 className="text-3xl md:text-4xl font-serif font-bold mb-6">Relay</h2>
           <p className="text-lg leading-relaxed mb-4">
-            We're developing a Human-Centered AI Code Editor that embodies this philosophy. Unlike tools that generate
-            massive changesets and disappear for 20 minutes, Basegraph works alongside you in real-time, keeping you
-            aware and in control.
+            Our first product, <strong>Relay</strong>, is a CLI-based AI agent powered by Codegraph.
+          </p>
+          <p className="text-lg leading-relaxed mb-4">
+            Proven to be <strong>13x faster</strong> and <strong>14x cheaper</strong> compared to leading coding agents at planning complex tasks, with zero hallucinations.
           </p>
           <p className="text-lg leading-relaxed">
             Our native code review bot catches issues before they reach pull requests, but it doesn't just analyze
-            syntax—it understands the full context. It captures Jira and Linear issue descriptions, team discussions,
+            syntax—it understands the full context through our compiler backend Codegraph Engine.
+            We also capture Jira and Linear issue descriptions, team discussions,
             session goals, todos, and learnings from past decisions, ensuring AI recommendations align with your actual
             intent and requirements.
-          </p>
-        </section>
-
-        {/* Technical Approach */}
-        <section className="mb-16 md:mb-24">
-          <h2 className="text-3xl md:text-4xl font-serif font-bold mb-6">Our Technical Approach</h2>
-          <p className="text-lg leading-relaxed">
-            We're pioneering specialized Small Language Models (SLMs) trained specifically for individual codebases.
-            While the industry chases general-purpose solutions, we believe the answer lies in AI that deeply
-            understands your unique architecture, patterns, and business logic—delivering accuracy and relevance that
-            outstrips one-size-fits-all large language models.
           </p>
         </section>
 
@@ -98,3 +101,4 @@ export default function Home() {
     </main>
   )
 }
+
