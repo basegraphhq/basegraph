@@ -8,7 +8,7 @@ A monorepo containing code analysis tools and a web dashboard for exploring code
 basegraph/
 ├── codegraph/          # Go service for code extraction and analysis
 ├── dashboard/          # Next.js web dashboard
-└── relay/              # CLI AI coding assistant (planned)
+└── relay/              # CLI AI coding assistant
 ```
 
 ## 🚀 Quick Start
@@ -54,6 +54,50 @@ make tidy
 
 For more details, see [codegraph/Readme.md](./codegraph/Readme.md).
 
+### Relay Service
+
+CLI AI coding assistant service.
+
+#### Setup
+
+```bash
+cd relay
+
+# Install dependencies
+go mod download
+
+# Build the service
+make build
+
+# Run the service
+make run
+```
+
+#### Database Migrations
+
+The relay service uses [goose](https://github.com/pressly/goose) for database migrations, managed via Go 1.24+'s `tool` directive in `go.mod`.
+
+**Create a new migration:**
+```bash
+make migrate-create NAME=create_users_table
+```
+
+**Run migrations:**
+```bash
+# Apply all pending migrations
+make migrate-up DB_DRIVER=postgres DB_STRING="postgres://user:pass@localhost/dbname"
+
+# Rollback last migration
+make migrate-down DB_DRIVER=postgres DB_STRING="postgres://user:pass@localhost/dbname"
+
+# Check migration status
+make migrate-status DB_DRIVER=postgres DB_STRING="postgres://user:pass@localhost/dbname"
+```
+
+Supported database drivers: `postgres`, `mysql`, `sqlite3`, `mssql`, `clickhouse`, `vertica`, `ydb`, `turso`.
+
+**Note:** Goose is declared in `go.mod` using Go 1.24+'s `tool` directive. No global installation needed — `go tool goose` runs it directly using the version from `go.mod`.
+
 ### Dashboard
 
 A Next.js web application for visualizing and interacting with code graphs.
@@ -87,13 +131,16 @@ This is a monorepo containing multiple services:
 
 - **codegraph/**: Go-based code extraction and graph building service
 - **dashboard/**: Next.js frontend for code graph visualization
-- **relay/**: Planned CLI AI coding assistant (see [Relay_v1.md](./Relay_v1.md))
+- **relay/**: CLI AI coding assistant (see [Relay_v1.md](./Relay_v1.md))
 
 ### Building Everything
 
 ```bash
 # Build codegraph service
 cd codegraph && make build-codegraph
+
+# Build relay service
+cd relay && make build
 
 # Build dashboard (production)
 cd dashboard && bun run build
