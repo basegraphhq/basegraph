@@ -1,0 +1,7 @@
+---
+alwaysApply: true
+---
+
+Avoid creating unnecessary markdown files.
+If created, it should be documentation, and should be placed in appropriate folder under docs/ folder.
+If necessary, for logical separation, create a folder under docs/ folder and place the document there.

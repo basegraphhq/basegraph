@@ -1,0 +1,37 @@
+OG Image Specifications for Basegraph/Relay
+===========================================
+
+REQUIRED IMAGE: /public/og-image.png
+
+Dimensions: 1200 x 630 pixels
+Format: PNG or JPG
+Max file size: < 8MB (ideally < 300KB)
+
+Content Suggestions:
+- Relay by Basegraph logo
+- Tagline: "Turn Linear tasks into production-ready specs"
+- Key visual element (code/graph visualization)
+- Clean, professional design
+- High contrast for readability
+- Brand colors
+
+Optional but Recommended:
+- Apple Touch Icon: /public/apple-touch-icon.png (180x180px)
+
+Design Tips:
+- Keep text large and readable (will be shown small on social media)
+- Center important content (edges may be cropped)
+- Test on multiple platforms (Twitter, LinkedIn, Facebook)
+- Use brand colors consistently
+
+Tools to Create:
+- Figma
+- Canva
+- Adobe Photoshop
+- Online OG image generators
+
+After creating, test with:
+- https://www.opengraph.xyz/
+- https://developers.facebook.com/tools/debug/
+- https://cards-dev.twitter.com/validator
+

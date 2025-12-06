@@ -1,0 +1,23 @@
+<svg width="40" height="40" viewBox="0 0 40 40" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Graph edges - organic connections -->
+  <path d="M8 14L16 10" stroke="#8B5A3C" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M16 10L26 8" stroke="#8B5A3C" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M16 10L20 20" stroke="#8B5A3C" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M8 14L14 24" stroke="#8B5A3C" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M20 20L14 24" stroke="#8B5A3C" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M20 20L30 18" stroke="#8B5A3C" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M26 8L30 18" stroke="#8B5A3C" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M14 24L22 32" stroke="#8B5A3C" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M20 20L22 32" stroke="#8B5A3C" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M30 18L34 28" stroke="#8B5A3C" stroke-width="1.5" stroke-linecap="round"/>
+  
+  <!-- Graph nodes -->
+  <circle cx="8" cy="14" r="3" fill="#3D3D3D"/>
+  <circle cx="16" cy="10" r="3" fill="#3D3D3D"/>
+  <circle cx="26" cy="8" r="2.5" fill="#3D3D3D"/>
+  <circle cx="20" cy="20" r="4" fill="#8B5A3C"/>
+  <circle cx="14" cy="24" r="3" fill="#3D3D3D"/>
+  <circle cx="30" cy="18" r="2.5" fill="#3D3D3D"/>
+  <circle cx="22" cy="32" r="3" fill="#3D3D3D"/>
+  <circle cx="34" cy="28" r="2.5" fill="#3D3D3D"/>
+</svg>
