@@ -190,3 +190,4 @@ Create a `.env.local` file in the `dashboard/` directory for local development.
 - [Codegraph Assistant](./codegraph/assistant/) - CLI coding assistant
 - [Dashboard](./dashboard/) - Web interface for code graphs
 
+
