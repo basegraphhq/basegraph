@@ -16,8 +16,7 @@ type Config struct {
 }
 
 // Features holds feature flags for kill switches and gradual rollout.
-type Features struct {
-}
+type Features struct{}
 
 // Load provides sensible defaults for development.
 func Load() Config {
