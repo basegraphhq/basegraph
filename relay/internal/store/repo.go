@@ -102,7 +102,6 @@ func (s *repoStore) ListByIntegration(ctx context.Context, integrationID int64) 
 	return toRepoModels(rows), nil
 }
 
-// toRepoModel converts sqlc.Repository to model.Repository
 func toRepoModel(row sqlc.Repository) *model.Repository {
 	return &model.Repository{
 		ID:             row.ID,

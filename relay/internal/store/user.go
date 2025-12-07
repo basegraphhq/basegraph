@@ -49,7 +49,6 @@ func (s *userStore) Create(ctx context.Context, user *model.User) error {
 	if err != nil {
 		return err
 	}
-	// Update the model with DB-generated fields
 	*user = *toUserModel(row)
 	return nil
 }
@@ -75,7 +74,6 @@ func (s *userStore) Delete(ctx context.Context, id int64) error {
 	return s.queries.DeleteUser(ctx, id)
 }
 
-// toUserModel converts sqlc.User to model.User
 func toUserModel(row sqlc.User) *model.User {
 	return &model.User{
 		ID:        row.ID,

@@ -81,7 +81,6 @@ func (s *organizationStore) ListByAdminUser(ctx context.Context, userID int64) (
 	return toOrganizationModels(rows), nil
 }
 
-// toOrganizationModel converts sqlc.Organization to model.Organization
 func toOrganizationModel(row sqlc.Organization) *model.Organization {
 	return &model.Organization{
 		ID:          row.ID,

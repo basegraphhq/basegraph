@@ -100,7 +100,6 @@ func (s *integrationStore) ListByOrganization(ctx context.Context, orgID int64) 
 	return toIntegrationModels(rows), nil
 }
 
-// toIntegrationModel converts sqlc.Integration to model.Integration
 func toIntegrationModel(row sqlc.Integration) *model.Integration {
 	var expiresAt *time.Time
 	if row.ExpiresAt.Valid {
@@ -131,7 +130,6 @@ func toIntegrationModels(rows []sqlc.Integration) []model.Integration {
 	return result
 }
 
-// timeToPgTimestamptz converts *time.Time to pgtype.Timestamptz
 func timeToPgTimestamptz(t *time.Time) pgtype.Timestamptz {
 	if t == nil {
 		return pgtype.Timestamptz{Valid: false}

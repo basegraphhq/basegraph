@@ -96,7 +96,6 @@ func (s *workspaceStore) ListByUser(ctx context.Context, userID int64) ([]model.
 	return toWorkspaceModels(rows), nil
 }
 
-// toWorkspaceModel converts sqlc.Workspace to model.Workspace
 func toWorkspaceModel(row sqlc.Workspace) *model.Workspace {
 	return &model.Workspace{
 		ID:             row.ID,

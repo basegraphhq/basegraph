@@ -8,10 +8,8 @@ import (
 	"basegraph.app/relay/internal/model"
 )
 
-// ErrNotFound is returned when a requested entity does not exist
 var ErrNotFound = errors.New("not found")
 
-// UserStore defines the contract for user data access
 type UserStore interface {
 	GetByID(ctx context.Context, id int64) (*model.User, error)
 	GetByEmail(ctx context.Context, email string) (*model.User, error)
@@ -20,7 +18,6 @@ type UserStore interface {
 	Delete(ctx context.Context, id int64) error
 }
 
-// OrganizationStore defines the contract for organization data access
 type OrganizationStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Organization, error)
 	GetBySlug(ctx context.Context, slug string) (*model.Organization, error)
@@ -30,7 +27,6 @@ type OrganizationStore interface {
 	ListByAdminUser(ctx context.Context, userID int64) ([]model.Organization, error)
 }
 
-// WorkspaceStore defines the contract for workspace data access
 type WorkspaceStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Workspace, error)
 	GetByOrgAndSlug(ctx context.Context, orgID int64, slug string) (*model.Workspace, error)
@@ -41,7 +37,6 @@ type WorkspaceStore interface {
 	ListByUser(ctx context.Context, userID int64) ([]model.Workspace, error)
 }
 
-// IntegrationStore defines the contract for integration data access
 type IntegrationStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Integration, error)
 	GetByWorkspaceAndProvider(ctx context.Context, workspaceID int64, provider model.Provider) (*model.Integration, error)
@@ -52,7 +47,6 @@ type IntegrationStore interface {
 	ListByOrganization(ctx context.Context, orgID int64) ([]model.Integration, error)
 }
 
-// RepoStore defines the contract for code repository data access
 type RepoStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Repository, error)
 	GetByExternalID(ctx context.Context, integrationID int64, externalRepoID string) (*model.Repository, error)
@@ -64,7 +58,6 @@ type RepoStore interface {
 	ListByIntegration(ctx context.Context, integrationID int64) ([]model.Repository, error)
 }
 
-// SessionStore defines the contract for session data access
 type SessionStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Session, error)
 	GetValid(ctx context.Context, id int64) (*model.Session, error) // checks expiry

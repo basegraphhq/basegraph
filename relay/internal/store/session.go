@@ -73,7 +73,6 @@ func (s *sessionStore) ListByUser(ctx context.Context, userID int64) ([]model.Se
 	return toSessionModels(rows), nil
 }
 
-// toSessionModel converts sqlc.Session to model.Session
 func toSessionModel(row sqlc.Session) *model.Session {
 	return &model.Session{
 		ID:        row.ID,
