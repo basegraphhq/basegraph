@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"basegraph.app/relay/common/logger"
 	"basegraph.app/relay/core/config"
 	"basegraph.app/relay/core/db"
 	"basegraph.app/relay/internal/http"
@@ -22,7 +23,7 @@ func main() {
 	cfg := config.Load()
 
 	// Setup logger
-	setupLogger(cfg)
+	logger.Setup(cfg)
 	slog.Info("relay starting", "env", cfg.Env)
 
 	// Initialize database
@@ -65,20 +66,6 @@ func main() {
 
 	database.Close()
 	slog.Info("shutdown complete")
-}
-
-func setupLogger(cfg config.Config) {
-	var handler slog.Handler
-	if cfg.IsProduction() {
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		})
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelDebug,
-		})
-	}
-	slog.SetDefault(slog.New(handler))
 }
 
 func setupRouter(database *db.DB, stores *store.Stores) *gin.Engine {

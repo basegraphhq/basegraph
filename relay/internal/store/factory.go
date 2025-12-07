@@ -22,7 +22,7 @@ type Stores struct {
 //
 //	err := db.WithTx(ctx, func(q *sqlc.Queries) error {
 //	    stores := store.NewStores(q)
-//	    // All operations share the same transaction
+//	    -- All operations share the same transaction
 //	    if err := stores.Users().Create(ctx, user); err != nil {
 //	        return err
 //	    }
