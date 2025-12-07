@@ -2,7 +2,7 @@
 
 A monorepo containing code analysis tools and a web dashboard for exploring codebases as property graphs.
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 basegraph/
@@ -11,7 +11,7 @@ basegraph/
 └── relay/              # CLI AI coding assistant
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 
@@ -123,7 +123,7 @@ The dashboard will be available at `http://localhost:3000`.
 - `bun run start` - Start production server
 - `bun run lint` - Run ESLint
 
-## 🛠️ Development
+## Development
 
 ### Monorepo Structure
 
@@ -146,7 +146,7 @@ cd relay && make build
 cd dashboard && bun run build
 ```
 
-## 📝 Codegraph Assistant
+## Codegraph Assistant
 
 The codegraph service includes a CLI assistant that uses OpenAI's API with function calling to query code graphs and interact with workspace filesystem.
 
@@ -172,7 +172,7 @@ See [codegraph/Readme.md](./codegraph/Readme.md) for detailed setup instructions
 - `list_directory`: Directory listing with depth control
 - `apply_patch`: Replace/create/delete file content
 
-## 🧪 Testing
+## Testing
 
 ### Codegraph Tests
 
@@ -188,7 +188,7 @@ cd dashboard
 bun run lint
 ```
 
-## 📦 Dependencies
+## Dependencies
 
 ### Go (codegraph)
 - See [codegraph/go.mod](./codegraph/go.mod)
@@ -196,7 +196,7 @@ bun run lint
 ### Node.js (dashboard)
 - See [dashboard/package.json](./dashboard/package.json)
 
-## 🔧 Configuration
+## Configuration
 
 ### Environment Variables
 
@@ -214,25 +214,25 @@ See [codegraph/Readme.md](./codegraph/Readme.md) for full configuration options.
 
 Create a `.env.local` file in the `dashboard/` directory for local development.
 
-## 📚 Documentation
+## Documentation
 
 - [Codegraph README](./codegraph/Readme.md) - Detailed codegraph service documentation
 - [Relay v1 Spec](./Relay_v1.md) - Planned CLI AI assistant architecture
 - [Dashboard Auth Setup](./dashboard/docs/AUTH_SETUP.md) - Authentication configuration
 - [Design System](./dashboard/docs/DESIGN_SYSTEM.md) - UI component guidelines
 
-## 🤝 Contributing
+## Contributing
 
 1. Create a feature branch from `main`
 2. Make your changes
 3. Ensure tests pass
 4. Submit a pull request
 
-## 📄 License
+## License
 
 [Add your license here]
 
-## 🔗 Related Projects
+## Related Projects
 
 - [Codegraph Assistant](./codegraph/assistant/) - CLI coding assistant
 - [Dashboard](./dashboard/) - Web interface for code graphs
