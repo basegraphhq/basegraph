@@ -184,6 +184,17 @@ Take time to understand the context. Read the relevant code. Trace the data flow
 
 If something doesn't make sense, ask. If there are multiple valid approaches, ask which one the developer prefers. Don't guess. Don't assume. The goal is to get it right, not to get it done quickly.
 
+### 5. Comments: Why, Not What
+
+**Default: Don't add comments.** All contributors are senior engineers—code should be self-documenting.
+
+**When to comment:**
+- Dev explicitly requests it
+- Explaining *why* (not how or what) for non-obvious decisions
+- TODOs / unimplemented code / future work
+
+**When uncertain:** Ask the dev—suggest where comments might help and why.
+
 ---
 
 ## Codebase Conventions
