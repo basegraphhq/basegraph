@@ -1,4 +1,4 @@
-package repository
+package store
 
 import (
 	"context"
@@ -11,8 +11,8 @@ import (
 // ErrNotFound is returned when a requested entity does not exist
 var ErrNotFound = errors.New("not found")
 
-// UserRepository defines the contract for user data access
-type UserRepository interface {
+// UserStore defines the contract for user data access
+type UserStore interface {
 	GetByID(ctx context.Context, id int64) (*model.User, error)
 	GetByEmail(ctx context.Context, email string) (*model.User, error)
 	Create(ctx context.Context, user *model.User) error
@@ -20,8 +20,8 @@ type UserRepository interface {
 	Delete(ctx context.Context, id int64) error
 }
 
-// OrganizationRepository defines the contract for organization data access
-type OrganizationRepository interface {
+// OrganizationStore defines the contract for organization data access
+type OrganizationStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Organization, error)
 	GetBySlug(ctx context.Context, slug string) (*model.Organization, error)
 	Create(ctx context.Context, org *model.Organization) error
@@ -30,8 +30,8 @@ type OrganizationRepository interface {
 	ListByAdminUser(ctx context.Context, userID int64) ([]model.Organization, error)
 }
 
-// WorkspaceRepository defines the contract for workspace data access
-type WorkspaceRepository interface {
+// WorkspaceStore defines the contract for workspace data access
+type WorkspaceStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Workspace, error)
 	GetByOrgAndSlug(ctx context.Context, orgID int64, slug string) (*model.Workspace, error)
 	Create(ctx context.Context, ws *model.Workspace) error
@@ -41,8 +41,8 @@ type WorkspaceRepository interface {
 	ListByUser(ctx context.Context, userID int64) ([]model.Workspace, error)
 }
 
-// IntegrationRepository defines the contract for integration data access
-type IntegrationRepository interface {
+// IntegrationStore defines the contract for integration data access
+type IntegrationStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Integration, error)
 	GetByWorkspaceAndProvider(ctx context.Context, workspaceID int64, provider model.Provider) (*model.Integration, error)
 	Create(ctx context.Context, integration *model.Integration) error
@@ -52,8 +52,8 @@ type IntegrationRepository interface {
 	ListByOrganization(ctx context.Context, orgID int64) ([]model.Integration, error)
 }
 
-// RepositoryRepository defines the contract for code repository data access
-type RepositoryRepository interface {
+// RepoStore defines the contract for code repository data access
+type RepoStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Repository, error)
 	GetByExternalID(ctx context.Context, integrationID int64, externalRepoID string) (*model.Repository, error)
 	Create(ctx context.Context, repo *model.Repository) error
@@ -64,8 +64,8 @@ type RepositoryRepository interface {
 	ListByIntegration(ctx context.Context, integrationID int64) ([]model.Repository, error)
 }
 
-// SessionRepository defines the contract for session data access
-type SessionRepository interface {
+// SessionStore defines the contract for session data access
+type SessionStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Session, error)
 	GetValid(ctx context.Context, id int64) (*model.Session, error) // checks expiry
 	Create(ctx context.Context, session *model.Session) error
@@ -74,3 +74,4 @@ type SessionRepository interface {
 	DeleteExpired(ctx context.Context) error
 	ListByUser(ctx context.Context, userID int64) ([]model.Session, error)
 }
+

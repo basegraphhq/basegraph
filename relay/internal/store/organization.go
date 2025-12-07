@@ -1,4 +1,4 @@
-package repository
+package store
 
 import (
 	"context"
@@ -9,17 +9,16 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type organizationRepository struct {
+type organizationStore struct {
 	queries *sqlc.Queries
 }
 
-// NewOrganizationRepository creates a new OrganizationRepository
-func NewOrganizationRepository(queries *sqlc.Queries) OrganizationRepository {
-	return &organizationRepository{queries: queries}
+func newOrganizationStore(queries *sqlc.Queries) OrganizationStore {
+	return &organizationStore{queries: queries}
 }
 
-func (r *organizationRepository) GetByID(ctx context.Context, id int64) (*model.Organization, error) {
-	row, err := r.queries.GetOrganization(ctx, id)
+func (s *organizationStore) GetByID(ctx context.Context, id int64) (*model.Organization, error) {
+	row, err := s.queries.GetOrganization(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -29,8 +28,8 @@ func (r *organizationRepository) GetByID(ctx context.Context, id int64) (*model.
 	return toOrganizationModel(row), nil
 }
 
-func (r *organizationRepository) GetBySlug(ctx context.Context, slug string) (*model.Organization, error) {
-	row, err := r.queries.GetOrganizationBySlug(ctx, slug)
+func (s *organizationStore) GetBySlug(ctx context.Context, slug string) (*model.Organization, error) {
+	row, err := s.queries.GetOrganizationBySlug(ctx, slug)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -40,8 +39,8 @@ func (r *organizationRepository) GetBySlug(ctx context.Context, slug string) (*m
 	return toOrganizationModel(row), nil
 }
 
-func (r *organizationRepository) Create(ctx context.Context, org *model.Organization) error {
-	row, err := r.queries.CreateOrganization(ctx, sqlc.CreateOrganizationParams{
+func (s *organizationStore) Create(ctx context.Context, org *model.Organization) error {
+	row, err := s.queries.CreateOrganization(ctx, sqlc.CreateOrganizationParams{
 		ID:          org.ID,
 		AdminUserID: org.AdminUserID,
 		Name:        org.Name,
@@ -54,8 +53,8 @@ func (r *organizationRepository) Create(ctx context.Context, org *model.Organiza
 	return nil
 }
 
-func (r *organizationRepository) Update(ctx context.Context, org *model.Organization) error {
-	row, err := r.queries.UpdateOrganization(ctx, sqlc.UpdateOrganizationParams{
+func (s *organizationStore) Update(ctx context.Context, org *model.Organization) error {
+	row, err := s.queries.UpdateOrganization(ctx, sqlc.UpdateOrganizationParams{
 		ID:   org.ID,
 		Name: org.Name,
 		Slug: org.Slug,
@@ -70,12 +69,12 @@ func (r *organizationRepository) Update(ctx context.Context, org *model.Organiza
 	return nil
 }
 
-func (r *organizationRepository) Delete(ctx context.Context, id int64) error {
-	return r.queries.SoftDeleteOrganization(ctx, id)
+func (s *organizationStore) Delete(ctx context.Context, id int64) error {
+	return s.queries.SoftDeleteOrganization(ctx, id)
 }
 
-func (r *organizationRepository) ListByAdminUser(ctx context.Context, userID int64) ([]model.Organization, error) {
-	rows, err := r.queries.ListOrganizationsByAdmin(ctx, userID)
+func (s *organizationStore) ListByAdminUser(ctx context.Context, userID int64) ([]model.Organization, error) {
+	rows, err := s.queries.ListOrganizationsByAdmin(ctx, userID)
 	if err != nil {
 		return nil, err
 	}

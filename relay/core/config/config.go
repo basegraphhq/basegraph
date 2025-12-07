@@ -40,7 +40,7 @@ func buildDSN() string {
 	port := getEnv("DATABASE_PORT", "5432")
 	user := getEnv("DATABASE_USER", "postgres")
 	password := getEnv("DATABASE_PASSWORD", "postgres")
-	name := getEnv("DATABASE_NAME", "relay")
+	name := getEnv("DATABASE_NAME", "basegraph")
 	sslMode := getEnv("DATABASE_SSLMODE", "disable")
 
 	return fmt.Sprintf(

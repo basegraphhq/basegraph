@@ -1,4 +1,4 @@
-package repository
+package store
 
 import (
 	"context"
@@ -9,17 +9,16 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-type workspaceRepository struct {
+type workspaceStore struct {
 	queries *sqlc.Queries
 }
 
-// NewWorkspaceRepository creates a new WorkspaceRepository
-func NewWorkspaceRepository(queries *sqlc.Queries) WorkspaceRepository {
-	return &workspaceRepository{queries: queries}
+func newWorkspaceStore(queries *sqlc.Queries) WorkspaceStore {
+	return &workspaceStore{queries: queries}
 }
 
-func (r *workspaceRepository) GetByID(ctx context.Context, id int64) (*model.Workspace, error) {
-	row, err := r.queries.GetWorkspace(ctx, id)
+func (s *workspaceStore) GetByID(ctx context.Context, id int64) (*model.Workspace, error) {
+	row, err := s.queries.GetWorkspace(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -29,8 +28,8 @@ func (r *workspaceRepository) GetByID(ctx context.Context, id int64) (*model.Wor
 	return toWorkspaceModel(row), nil
 }
 
-func (r *workspaceRepository) GetByOrgAndSlug(ctx context.Context, orgID int64, slug string) (*model.Workspace, error) {
-	row, err := r.queries.GetWorkspaceByOrgAndSlug(ctx, sqlc.GetWorkspaceByOrgAndSlugParams{
+func (s *workspaceStore) GetByOrgAndSlug(ctx context.Context, orgID int64, slug string) (*model.Workspace, error) {
+	row, err := s.queries.GetWorkspaceByOrgAndSlug(ctx, sqlc.GetWorkspaceByOrgAndSlugParams{
 		OrganizationID: orgID,
 		Slug:           slug,
 	})
@@ -43,8 +42,8 @@ func (r *workspaceRepository) GetByOrgAndSlug(ctx context.Context, orgID int64, 
 	return toWorkspaceModel(row), nil
 }
 
-func (r *workspaceRepository) Create(ctx context.Context, ws *model.Workspace) error {
-	row, err := r.queries.CreateWorkspace(ctx, sqlc.CreateWorkspaceParams{
+func (s *workspaceStore) Create(ctx context.Context, ws *model.Workspace) error {
+	row, err := s.queries.CreateWorkspace(ctx, sqlc.CreateWorkspaceParams{
 		ID:             ws.ID,
 		AdminUserID:    ws.AdminUserID,
 		OrganizationID: ws.OrganizationID,
@@ -60,8 +59,8 @@ func (r *workspaceRepository) Create(ctx context.Context, ws *model.Workspace) e
 	return nil
 }
 
-func (r *workspaceRepository) Update(ctx context.Context, ws *model.Workspace) error {
-	row, err := r.queries.UpdateWorkspace(ctx, sqlc.UpdateWorkspaceParams{
+func (s *workspaceStore) Update(ctx context.Context, ws *model.Workspace) error {
+	row, err := s.queries.UpdateWorkspace(ctx, sqlc.UpdateWorkspaceParams{
 		ID:          ws.ID,
 		Name:        ws.Name,
 		Slug:        ws.Slug,
@@ -77,20 +76,20 @@ func (r *workspaceRepository) Update(ctx context.Context, ws *model.Workspace) e
 	return nil
 }
 
-func (r *workspaceRepository) Delete(ctx context.Context, id int64) error {
-	return r.queries.SoftDeleteWorkspace(ctx, id)
+func (s *workspaceStore) Delete(ctx context.Context, id int64) error {
+	return s.queries.SoftDeleteWorkspace(ctx, id)
 }
 
-func (r *workspaceRepository) ListByOrganization(ctx context.Context, orgID int64) ([]model.Workspace, error) {
-	rows, err := r.queries.ListWorkspacesByOrganization(ctx, orgID)
+func (s *workspaceStore) ListByOrganization(ctx context.Context, orgID int64) ([]model.Workspace, error) {
+	rows, err := s.queries.ListWorkspacesByOrganization(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}
 	return toWorkspaceModels(rows), nil
 }
 
-func (r *workspaceRepository) ListByUser(ctx context.Context, userID int64) ([]model.Workspace, error) {
-	rows, err := r.queries.ListWorkspacesByUser(ctx, userID)
+func (s *workspaceStore) ListByUser(ctx context.Context, userID int64) ([]model.Workspace, error) {
+	rows, err := s.queries.ListWorkspacesByUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}

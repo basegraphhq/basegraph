@@ -17,6 +17,7 @@ type DB struct {
 // Config holds database connection configuration.
 type Config struct {
 	// DSN is the database connection string
+	// ! TODO: @nithinsj -- Use sslmode in production
 	// Format: postgres://user:password@host:port/dbname?sslmode=disable
 	DSN string
 

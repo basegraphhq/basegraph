@@ -78,7 +78,7 @@ The core Relay service. Handles:
 - `core/db/queries/` - SQL query definitions (input for sqlc)
 - `core/db/sqlc/` - Generated database code (output from sqlc)
 - `core/config/` - Configuration management
-- `internal/` - Internal packages (http handlers, services, repositories)
+- `internal/` - Internal packages (http handlers, services, stores)
 - `migrations/` - Database migrations (goose)
 
 ### codegraph/
@@ -120,10 +120,10 @@ Design for composition. Use interfaces and dependency injection to make code tes
 type SpecGenerator struct {
     codeGraph  CodeGraphReader
     llmClient  LLMClient
-    specStore  SpecRepository
+    specStore  SpecStore
 }
 
-func NewSpecGenerator(cg CodeGraphReader, llm LLMClient, ss SpecRepository) *SpecGenerator {
+func NewSpecGenerator(cg CodeGraphReader, llm LLMClient, ss SpecStore) *SpecGenerator {
     return &SpecGenerator{codeGraph: cg, llmClient: llm, specStore: ss}
 }
 ```
@@ -214,7 +214,7 @@ service/
 │   ├── http/              # HTTP handlers
 │   ├── model/             # Domain models (clean types)
 │   ├── service/           # Business logic
-│   └── repository/        # Data access (sqlc ↔ model conversion)
+│   └── store/             # Data access (sqlc ↔ model conversion)
 ├── migrations/            # SQL migrations
 └── vendor/                # Vendored dependencies
 ```
@@ -233,7 +233,7 @@ service/
 Relay uses a layered architecture for data access:
 
 ```
-HTTP Handler → Service → Repository → sqlc → PostgreSQL
+HTTP Handler → Service → Store → sqlc → PostgreSQL
 ```
 
 **Layer responsibilities:**
@@ -241,9 +241,9 @@ HTTP Handler → Service → Repository → sqlc → PostgreSQL
 | Layer | Location | Responsibility |
 |-------|----------|----------------|
 | **sqlc** | `core/db/sqlc/` | Generated code, uses `pgtype.*` |
-| **Repository** | `internal/repository/` | Converts sqlc ↔ domain models, implements interfaces |
+| **Store** | `internal/store/` | Converts sqlc ↔ domain models, implements interfaces |
 | **Domain Models** | `internal/model/` | Clean types with `time.Time`, JSON tags for API |
-| **Service** | `internal/service/` | Business logic, accepts repository interfaces |
+| **Service** | `internal/service/` | Business logic, accepts store interfaces |
 
 **Domain models** (`internal/model/`):
 
@@ -258,30 +258,30 @@ type User struct {
 }
 ```
 
-**Repository pattern** (`internal/repository/`):
+**Store pattern** (`internal/store/`):
 
-Repositories implement interfaces for testability. Since we use PostgreSQL exclusively (no plans to switch), repositories return interfaces rather than concrete types—both work equivalently for composition.
+Stores implement interfaces for testability. Since we use PostgreSQL exclusively (no plans to switch), stores return interfaces rather than concrete types—both work equivalently for composition.
 
 ```go
 // interfaces.go - contracts for DI/mocking
-type UserRepository interface {
+type UserStore interface {
     GetByID(ctx context.Context, id int64) (*model.User, error)
     Create(ctx context.Context, user *model.User) error
 }
 
 // user.go - implementation
-func NewUserRepository(q *sqlc.Queries) UserRepository {
-    return &userRepo{queries: q}
+func newUserStore(q *sqlc.Queries) UserStore {
+    return &userStore{queries: q}
 }
 ```
 
-**Repository factory** (`internal/repository/factory.go`):
+**Store factory** (`internal/store/factory.go`):
 
-Creates all repositories from a single `*sqlc.Queries` instance. Works with both pool and transaction contexts.
+Creates all stores from a single `*sqlc.Queries` instance. Works with both pool and transaction contexts.
 
 ```go
-repos := repository.NewRepositories(db.Queries())
-user, err := repos.Users().GetByID(ctx, 123)
+stores := store.NewStores(db.Queries())
+user, err := stores.Users().GetByID(ctx, 123)
 ```
 
 **Transaction support** (`core/db/db.go`):
@@ -290,12 +290,12 @@ Use `db.WithTx()` when operations must be atomic. The transaction auto-commits o
 
 ```go
 err := db.WithTx(ctx, func(q *sqlc.Queries) error {
-    repos := repository.NewRepositories(q)
+    stores := store.NewStores(q)
     
-    if err := repos.Organizations().Create(ctx, org); err != nil {
+    if err := stores.Organizations().Create(ctx, org); err != nil {
         return err  // auto-rollback
     }
-    return repos.Workspaces().Create(ctx, ws)
+    return stores.Workspaces().Create(ctx, ws)
     // auto-commit on success
 })
 ```
@@ -304,10 +304,10 @@ err := db.WithTx(ctx, func(q *sqlc.Queries) error {
 
 ```go
 type UserService struct {
-    users repository.UserRepository  // interface, not concrete
+    users store.UserStore  // interface, not concrete
 }
 
-func NewUserService(users repository.UserRepository) *UserService {
+func NewUserService(users store.UserStore) *UserService {
     return &UserService{users: users}
 }
 ```
@@ -377,9 +377,9 @@ The output of Relay's planning process. A technical specification that covers:
 3. Add queries in `core/db/queries/foo.sql`
 4. Generate Go code: `make sqlc-generate`
 5. Create domain model in `internal/model/foo.go`
-6. Add repository interface to `internal/repository/interfaces.go`
-7. Implement repository in `internal/repository/foo.go`
-8. Add to factory in `internal/repository/factory.go`
+6. Add store interface to `internal/store/interfaces.go`
+7. Implement store in `internal/store/foo.go`
+8. Add to factory in `internal/store/factory.go`
 
 ### Adding a new code graph entity type
 

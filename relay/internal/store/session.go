@@ -1,4 +1,4 @@
-package repository
+package store
 
 import (
 	"context"
@@ -10,17 +10,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type sessionRepository struct {
+type sessionStore struct {
 	queries *sqlc.Queries
 }
 
-// NewSessionRepository creates a new SessionRepository
-func NewSessionRepository(queries *sqlc.Queries) SessionRepository {
-	return &sessionRepository{queries: queries}
+func newSessionStore(queries *sqlc.Queries) SessionStore {
+	return &sessionStore{queries: queries}
 }
 
-func (r *sessionRepository) GetByID(ctx context.Context, id int64) (*model.Session, error) {
-	row, err := r.queries.GetSession(ctx, id)
+func (s *sessionStore) GetByID(ctx context.Context, id int64) (*model.Session, error) {
+	row, err := s.queries.GetSession(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -30,8 +29,8 @@ func (r *sessionRepository) GetByID(ctx context.Context, id int64) (*model.Sessi
 	return toSessionModel(row), nil
 }
 
-func (r *sessionRepository) GetValid(ctx context.Context, id int64) (*model.Session, error) {
-	row, err := r.queries.GetValidSession(ctx, id)
+func (s *sessionStore) GetValid(ctx context.Context, id int64) (*model.Session, error) {
+	row, err := s.queries.GetValidSession(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -41,8 +40,8 @@ func (r *sessionRepository) GetValid(ctx context.Context, id int64) (*model.Sess
 	return toSessionModel(row), nil
 }
 
-func (r *sessionRepository) Create(ctx context.Context, session *model.Session) error {
-	row, err := r.queries.CreateSession(ctx, sqlc.CreateSessionParams{
+func (s *sessionStore) Create(ctx context.Context, session *model.Session) error {
+	row, err := s.queries.CreateSession(ctx, sqlc.CreateSessionParams{
 		ID:        session.ID,
 		UserID:    session.UserID,
 		ExpiresAt: pgtype.Timestamptz{Time: session.ExpiresAt, Valid: true},
@@ -54,20 +53,20 @@ func (r *sessionRepository) Create(ctx context.Context, session *model.Session) 
 	return nil
 }
 
-func (r *sessionRepository) Delete(ctx context.Context, id int64) error {
-	return r.queries.DeleteSession(ctx, id)
+func (s *sessionStore) Delete(ctx context.Context, id int64) error {
+	return s.queries.DeleteSession(ctx, id)
 }
 
-func (r *sessionRepository) DeleteByUser(ctx context.Context, userID int64) error {
-	return r.queries.DeleteSessionsByUser(ctx, userID)
+func (s *sessionStore) DeleteByUser(ctx context.Context, userID int64) error {
+	return s.queries.DeleteSessionsByUser(ctx, userID)
 }
 
-func (r *sessionRepository) DeleteExpired(ctx context.Context) error {
-	return r.queries.DeleteExpiredSessions(ctx)
+func (s *sessionStore) DeleteExpired(ctx context.Context) error {
+	return s.queries.DeleteExpiredSessions(ctx)
 }
 
-func (r *sessionRepository) ListByUser(ctx context.Context, userID int64) ([]model.Session, error) {
-	rows, err := r.queries.ListSessionsByUser(ctx, userID)
+func (s *sessionStore) ListByUser(ctx context.Context, userID int64) ([]model.Session, error) {
+	rows, err := s.queries.ListSessionsByUser(ctx, userID)
 	if err != nil {
 		return nil, err
 	}

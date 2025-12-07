@@ -1,4 +1,4 @@
-package repository
+package store
 
 import (
 	"context"
@@ -11,17 +11,16 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-type integrationRepository struct {
+type integrationStore struct {
 	queries *sqlc.Queries
 }
 
-// NewIntegrationRepository creates a new IntegrationRepository
-func NewIntegrationRepository(queries *sqlc.Queries) IntegrationRepository {
-	return &integrationRepository{queries: queries}
+func newIntegrationStore(queries *sqlc.Queries) IntegrationStore {
+	return &integrationStore{queries: queries}
 }
 
-func (r *integrationRepository) GetByID(ctx context.Context, id int64) (*model.Integration, error) {
-	row, err := r.queries.GetIntegration(ctx, id)
+func (s *integrationStore) GetByID(ctx context.Context, id int64) (*model.Integration, error) {
+	row, err := s.queries.GetIntegration(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrNotFound
@@ -31,8 +30,8 @@ func (r *integrationRepository) GetByID(ctx context.Context, id int64) (*model.I
 	return toIntegrationModel(row), nil
 }
 
-func (r *integrationRepository) GetByWorkspaceAndProvider(ctx context.Context, workspaceID int64, provider model.Provider) (*model.Integration, error) {
-	row, err := r.queries.GetIntegrationByWorkspaceAndProvider(ctx, sqlc.GetIntegrationByWorkspaceAndProviderParams{
+func (s *integrationStore) GetByWorkspaceAndProvider(ctx context.Context, workspaceID int64, provider model.Provider) (*model.Integration, error) {
+	row, err := s.queries.GetIntegrationByWorkspaceAndProvider(ctx, sqlc.GetIntegrationByWorkspaceAndProviderParams{
 		WorkspaceID: workspaceID,
 		Provider:    string(provider),
 	})
@@ -45,8 +44,8 @@ func (r *integrationRepository) GetByWorkspaceAndProvider(ctx context.Context, w
 	return toIntegrationModel(row), nil
 }
 
-func (r *integrationRepository) Create(ctx context.Context, integration *model.Integration) error {
-	row, err := r.queries.CreateIntegration(ctx, sqlc.CreateIntegrationParams{
+func (s *integrationStore) Create(ctx context.Context, integration *model.Integration) error {
+	row, err := s.queries.CreateIntegration(ctx, sqlc.CreateIntegrationParams{
 		ID:                  integration.ID,
 		WorkspaceID:         integration.WorkspaceID,
 		OrganizationID:      integration.OrganizationID,
@@ -65,8 +64,8 @@ func (r *integrationRepository) Create(ctx context.Context, integration *model.I
 	return nil
 }
 
-func (r *integrationRepository) UpdateTokens(ctx context.Context, id int64, accessToken string, refreshToken *string, expiresAt *time.Time) error {
-	_, err := r.queries.UpdateIntegrationTokens(ctx, sqlc.UpdateIntegrationTokensParams{
+func (s *integrationStore) UpdateTokens(ctx context.Context, id int64, accessToken string, refreshToken *string, expiresAt *time.Time) error {
+	_, err := s.queries.UpdateIntegrationTokens(ctx, sqlc.UpdateIntegrationTokensParams{
 		ID:           id,
 		AccessToken:  accessToken,
 		RefreshToken: refreshToken,
@@ -81,20 +80,20 @@ func (r *integrationRepository) UpdateTokens(ctx context.Context, id int64, acce
 	return nil
 }
 
-func (r *integrationRepository) Delete(ctx context.Context, id int64) error {
-	return r.queries.DeleteIntegration(ctx, id)
+func (s *integrationStore) Delete(ctx context.Context, id int64) error {
+	return s.queries.DeleteIntegration(ctx, id)
 }
 
-func (r *integrationRepository) ListByWorkspace(ctx context.Context, workspaceID int64) ([]model.Integration, error) {
-	rows, err := r.queries.ListIntegrationsByWorkspace(ctx, workspaceID)
+func (s *integrationStore) ListByWorkspace(ctx context.Context, workspaceID int64) ([]model.Integration, error) {
+	rows, err := s.queries.ListIntegrationsByWorkspace(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
 	return toIntegrationModels(rows), nil
 }
 
-func (r *integrationRepository) ListByOrganization(ctx context.Context, orgID int64) ([]model.Integration, error) {
-	rows, err := r.queries.ListIntegrationsByOrganization(ctx, orgID)
+func (s *integrationStore) ListByOrganization(ctx context.Context, orgID int64) ([]model.Integration, error) {
+	rows, err := s.queries.ListIntegrationsByOrganization(ctx, orgID)
 	if err != nil {
 		return nil, err
 	}

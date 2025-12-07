@@ -11,7 +11,7 @@ import (
 	"basegraph.app/relay/core/config"
 	"basegraph.app/relay/core/db"
 	"basegraph.app/relay/internal/http"
-	"basegraph.app/relay/internal/repository"
+	"basegraph.app/relay/internal/store"
 	"github.com/gin-gonic/gin"
 )
 
@@ -34,14 +34,14 @@ func main() {
 	defer database.Close()
 	slog.Info("database connected")
 
-	// Create repositories (for non-transactional operations)
-	repos := repository.NewRepositories(database.Queries())
+	// Create stores (for non-transactional operations)
+	stores := store.NewStores(database.Queries())
 
 	// Setup HTTP server
 	if cfg.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	router := setupRouter(database, repos)
+	router := setupRouter(database, stores)
 
 	// Graceful shutdown
 	go func() {
@@ -81,7 +81,7 @@ func setupLogger(cfg config.Config) {
 	slog.SetDefault(slog.New(handler))
 }
 
-func setupRouter(database *db.DB, repos *repository.Repositories) *gin.Engine {
+func setupRouter(database *db.DB, stores *store.Stores) *gin.Engine {
 	router := gin.New()
 	router.Use(gin.Recovery())
 
@@ -103,12 +103,12 @@ func setupRouter(database *db.DB, repos *repository.Repositories) *gin.Engine {
 	// Example: Using transaction in a handler
 	// router.POST("/organizations", func(c *gin.Context) {
 	//     err := database.WithTx(c.Request.Context(), func(q *sqlc.Queries) error {
-	//         repos := repository.NewRepositories(q)
+	//         stores := store.NewStores(q)
 	//         // All operations in same transaction
-	//         if err := repos.Organizations().Create(ctx, org); err != nil {
+	//         if err := stores.Organizations().Create(ctx, org); err != nil {
 	//             return err
 	//         }
-	//         return repos.Workspaces().Create(ctx, defaultWorkspace)
+	//         return stores.Workspaces().Create(ctx, defaultWorkspace)
 	//     })
 	//     if err != nil {
 	//         c.JSON(500, gin.H{"error": err.Error()})
@@ -118,7 +118,7 @@ func setupRouter(database *db.DB, repos *repository.Repositories) *gin.Engine {
 	// })
 
 	_ = database // will be used by handlers
-	_ = repos    // will be used by handlers
+	_ = stores   // will be used by handlers
 
 	return router
 }
