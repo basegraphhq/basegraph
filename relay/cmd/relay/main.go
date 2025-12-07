@@ -45,9 +45,9 @@ func main() {
 
 	// Graceful shutdown
 	go func() {
-		slog.Info("http server starting", "port", cfg.Port)
+		slog.Info("relay http server starting", "port", cfg.Port)
 		if err := router.Run(":" + cfg.Port); err != nil {
-			slog.Error("http server error", "error", err)
+			slog.Error("relay http server error", "error", err)
 		}
 	}()
 
