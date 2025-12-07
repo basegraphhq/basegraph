@@ -14,6 +14,11 @@ build:
 run: build
 	bin/relay
 
+# Tidy up go.mod and go.sum
+tidy:
+	go mod tidy
+	go mod vendor
+
 # Database migration commands (uses Go 1.24+ 'go tool' - no global install needed)
 # Usage: make migrate-up DB_DRIVER=postgres DB_STRING="postgres://user:pass@localhost/dbname"
 migrate-up:
