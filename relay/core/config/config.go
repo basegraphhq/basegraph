@@ -8,20 +8,18 @@ import (
 	"basegraph.app/relay/core/db"
 )
 
-// Config holds all application configuration.
 type Config struct {
-	// Env is the environment name (development, staging, production)
-	Env string
-
-	// Port is the HTTP server port
-	Port string
-
-	// DB holds database configuration
-	DB db.Config
+	Env      string
+	Port     string
+	DB       db.Config
+	Features Features
 }
 
-// Load loads configuration from environment variables.
-// It provides sensible defaults for development.
+// Features holds feature flags for kill switches and gradual rollout.
+type Features struct {
+}
+
+// Load provides sensible defaults for development.
 func Load() Config {
 	return Config{
 		Env:  getEnv("RELAY_ENV", "development"),
@@ -31,10 +29,10 @@ func Load() Config {
 			MaxConns: int32(getEnvInt("DB_MAX_CONNS", 10)),
 			MinConns: int32(getEnvInt("DB_MIN_CONNS", 2)),
 		},
+		Features: Features{},
 	}
 }
 
-// buildDSN constructs the database connection string from individual env vars.
 func buildDSN() string {
 	host := getEnv("DATABASE_HOST", "localhost")
 	port := getEnv("DATABASE_PORT", "5432")
@@ -49,12 +47,10 @@ func buildDSN() string {
 	)
 }
 
-// IsProduction returns true if running in production environment.
 func (c Config) IsProduction() bool {
 	return c.Env == "production"
 }
 
-// IsDevelopment returns true if running in development environment.
 func (c Config) IsDevelopment() bool {
 	return c.Env == "development"
 }
@@ -71,6 +67,13 @@ func getEnvInt(key string, fallback int) int {
 		if i, err := strconv.Atoi(value); err == nil {
 			return i
 		}
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if value, ok := os.LookupEnv(key); ok {
+		return value == "true" || value == "1"
 	}
 	return fallback
 }
