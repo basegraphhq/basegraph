@@ -101,4 +101,3 @@ func toOrganizationModels(rows []sqlc.Organization) []model.Organization {
 	}
 	return result
 }
-

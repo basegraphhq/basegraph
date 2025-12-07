@@ -86,4 +86,3 @@ func toUserModel(row sqlc.User) *model.User {
 		UpdatedAt: row.UpdatedAt.Time,
 	}
 }
-

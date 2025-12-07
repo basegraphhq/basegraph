@@ -74,4 +74,3 @@ type SessionStore interface {
 	DeleteExpired(ctx context.Context) error
 	ListByUser(ctx context.Context, userID int64) ([]model.Session, error)
 }
-

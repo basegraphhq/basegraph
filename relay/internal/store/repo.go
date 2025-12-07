@@ -125,4 +125,3 @@ func toRepoModels(rows []sqlc.Repository) []model.Repository {
 	}
 	return result
 }
-

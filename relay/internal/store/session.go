@@ -90,4 +90,3 @@ func toSessionModels(rows []sqlc.Session) []model.Session {
 	}
 	return result
 }
-

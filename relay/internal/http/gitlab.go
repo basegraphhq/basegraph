@@ -7,7 +7,6 @@ import (
 )
 
 func GitlabCallback(c *gin.Context) {
-
 	var req map[string]any
 
 	if err := c.ShouldBindJSON(&req); err != nil {

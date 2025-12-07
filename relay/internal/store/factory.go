@@ -61,4 +61,3 @@ func (s *Stores) Repos() RepoStore {
 func (s *Stores) Sessions() SessionStore {
 	return newSessionStore(s.queries)
 }
-

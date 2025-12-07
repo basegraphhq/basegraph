@@ -119,4 +119,3 @@ func toWorkspaceModels(rows []sqlc.Workspace) []model.Workspace {
 	}
 	return result
 }
-
