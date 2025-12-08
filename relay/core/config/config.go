@@ -12,13 +12,19 @@ type Config struct {
 	Env      string
 	Port     string
 	DB       db.Config
+	OTel     OTelConfig
 	Features Features
 }
 
-// Features holds feature flags for kill switches and gradual rollout.
+type OTelConfig struct {
+	Endpoint       string
+	Headers        string
+	ServiceName    string
+	ServiceVersion string
+}
+
 type Features struct{}
 
-// Load provides sensible defaults for development.
 func Load() Config {
 	return Config{
 		Env:  getEnv("RELAY_ENV", "development"),
@@ -27,6 +33,12 @@ func Load() Config {
 			DSN:      buildDSN(),
 			MaxConns: int32(getEnvInt("DB_MAX_CONNS", 10)),
 			MinConns: int32(getEnvInt("DB_MIN_CONNS", 2)),
+		},
+		OTel: OTelConfig{
+			Endpoint:       getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+			Headers:        getEnv("OTEL_EXPORTER_OTLP_HEADERS", ""),
+			ServiceName:    getEnv("OTEL_SERVICE_NAME", "relay"),
+			ServiceVersion: getEnv("OTEL_SERVICE_VERSION", "dev"),
 		},
 		Features: Features{},
 	}
@@ -52,6 +64,10 @@ func (c Config) IsProduction() bool {
 
 func (c Config) IsDevelopment() bool {
 	return c.Env == "development"
+}
+
+func (c OTelConfig) Enabled() bool {
+	return c.Endpoint != ""
 }
 
 func getEnv(key, fallback string) string {
