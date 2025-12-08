@@ -3,8 +3,8 @@
 ## The One Rule
 
 ```go
-slog.InfoContext(ctx, "message", "key", value)   // ✅
-slog.Info("message", "key", value)                // ❌
+slog.InfoContext(ctx, "message", "key", value)   // correct
+slog.Info("message", "key", value)                // wrong
 ```
 
 Always use `*Context` variants. This ensures trace correlation.
