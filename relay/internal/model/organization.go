@@ -11,4 +11,3 @@ type Organization struct {
 	UpdatedAt   time.Time `json:"updated_at"`
 	IsDeleted   bool      `json:"-"` // internal, not exposed in API
 }
-

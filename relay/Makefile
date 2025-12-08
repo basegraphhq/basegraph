@@ -1,8 +1,9 @@
-.PHONY: build run tidy install-tools install-goose install-sqlc sqlc-generate migrate-up migrate-down migrate-status migrate-create
+.PHONY: build run tidy format install-tools install-goose install-sqlc install-gofumpt sqlc-generate migrate-up migrate-down migrate-status migrate-create
 
 # Tool versions
 GOOSE_VERSION := v3.24.3
 SQLC_VERSION := v1.30.0
+GOFUMPT_VERSION := latest
 
 # Build the relay service
 build:
@@ -17,12 +18,22 @@ tidy:
 	go mod tidy
 	go mod vendor
 
+# Format all Go files (excluding generated code) using gofumpt
+format:
+	@command -v gofumpt >/dev/null 2>&1 || { \
+		echo "Error: gofumpt not found. Run 'make install-gofumpt' first."; \
+		exit 1; \
+	}
+	@echo "Formatting Go files (excluding generated code)..."
+	@find . -name '*.go' -not -path './core/db/sqlc/*' -not -path './vendor/*' -exec gofumpt -w {} +
+	@echo "Formatting complete"
+
 # ============================================================================
 # Tool Installation
 # ============================================================================
 
 # Install all CLI tools
-install-tools: install-goose install-sqlc
+install-tools: install-goose install-sqlc install-gofumpt
 	@echo "All tools installed successfully"
 
 # Install goose CLI with PostgreSQL-only support (excludes other DB drivers)
@@ -37,6 +48,12 @@ install-sqlc:
 	@echo "Installing sqlc $(SQLC_VERSION)..."
 	@go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
 	@echo "sqlc installed to $$(go env GOPATH)/bin/sqlc"
+
+# Install gofumpt for stricter Go formatting
+install-gofumpt:
+	@echo "Installing gofumpt $(GOFUMPT_VERSION)..."
+	@go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
+	@echo "gofumpt installed to $$(go env GOPATH)/bin/gofumpt"
 
 # ============================================================================
 # Code Generation

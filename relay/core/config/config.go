@@ -8,20 +8,23 @@ import (
 	"basegraph.app/relay/core/db"
 )
 
-// Config holds all application configuration.
 type Config struct {
-	// Env is the environment name (development, staging, production)
-	Env string
-
-	// Port is the HTTP server port
-	Port string
-
-	// DB holds database configuration
-	DB db.Config
+	Env      string
+	Port     string
+	DB       db.Config
+	OTel     OTelConfig
+	Features Features
 }
 
-// Load loads configuration from environment variables.
-// It provides sensible defaults for development.
+type OTelConfig struct {
+	Endpoint       string
+	Headers        string
+	ServiceName    string
+	ServiceVersion string
+}
+
+type Features struct{}
+
 func Load() Config {
 	return Config{
 		Env:  getEnv("RELAY_ENV", "development"),
@@ -31,16 +34,22 @@ func Load() Config {
 			MaxConns: int32(getEnvInt("DB_MAX_CONNS", 10)),
 			MinConns: int32(getEnvInt("DB_MIN_CONNS", 2)),
 		},
+		OTel: OTelConfig{
+			Endpoint:       getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
+			Headers:        getEnv("OTEL_EXPORTER_OTLP_HEADERS", ""),
+			ServiceName:    getEnv("OTEL_SERVICE_NAME", "relay"),
+			ServiceVersion: getEnv("OTEL_SERVICE_VERSION", "dev"),
+		},
+		Features: Features{},
 	}
 }
 
-// buildDSN constructs the database connection string from individual env vars.
 func buildDSN() string {
 	host := getEnv("DATABASE_HOST", "localhost")
 	port := getEnv("DATABASE_PORT", "5432")
 	user := getEnv("DATABASE_USER", "postgres")
 	password := getEnv("DATABASE_PASSWORD", "postgres")
-	name := getEnv("DATABASE_NAME", "relay")
+	name := getEnv("DATABASE_NAME", "basegraph")
 	sslMode := getEnv("DATABASE_SSLMODE", "disable")
 
 	return fmt.Sprintf(
@@ -49,14 +58,16 @@ func buildDSN() string {
 	)
 }
 
-// IsProduction returns true if running in production environment.
 func (c Config) IsProduction() bool {
 	return c.Env == "production"
 }
 
-// IsDevelopment returns true if running in development environment.
 func (c Config) IsDevelopment() bool {
 	return c.Env == "development"
+}
+
+func (c OTelConfig) Enabled() bool {
+	return c.Endpoint != ""
 }
 
 func getEnv(key, fallback string) string {
@@ -71,6 +82,13 @@ func getEnvInt(key string, fallback int) int {
 		if i, err := strconv.Atoi(value); err == nil {
 			return i
 		}
+	}
+	return fallback
+}
+
+func getEnvBool(key string, fallback bool) bool {
+	if value, ok := os.LookupEnv(key); ok {
+		return value == "true" || value == "1"
 	}
 	return fallback
 }

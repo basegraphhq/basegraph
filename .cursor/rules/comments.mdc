@@ -1,0 +1,13 @@
+---
+alwaysApply: true
+---
+# Comments
+
+**Default: Don't add comments.** All contributors are senior engineers.
+
+**When to comment:**
+- Dev explicitly requests it
+- Explaining *why* (not how or what) for non-obvious decisions
+- TODOs / unimplemented code / future work — these stay
+
+**When uncertain:** Ask the dev before or after the change — suggest where comments might help and why.

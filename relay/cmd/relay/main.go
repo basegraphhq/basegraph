@@ -3,29 +3,53 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
+	"basegraph.app/relay/common/id"
+	"basegraph.app/relay/common/logger"
+	"basegraph.app/relay/common/otel"
 	"basegraph.app/relay/core/config"
 	"basegraph.app/relay/core/db"
-	"basegraph.app/relay/internal/http"
-	"basegraph.app/relay/internal/repository"
+	"basegraph.app/relay/internal/http/middleware"
+	httprouter "basegraph.app/relay/internal/http/router"
+	"basegraph.app/relay/internal/service"
+	"basegraph.app/relay/internal/store"
 	"github.com/gin-gonic/gin"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/gin-gonic/gin/otelgin"
 )
 
 func main() {
 	ctx := context.Background()
 
-	// Load configuration
 	cfg := config.Load()
 
-	// Setup logger
-	setupLogger(cfg)
-	slog.Info("relay starting", "env", cfg.Env)
+	// OTel must init before logger (logger uses OTel provider in production)
+	telemetry, err := otel.Setup(ctx, cfg.OTel)
+	if err != nil {
+		// Can't use slog yet — OTel failed before logger setup
+		os.Stderr.WriteString("failed to initialize otel: " + err.Error() + "\n")
+		os.Exit(1)
+	}
 
-	// Initialize database
+	logger.Setup(cfg)
+
+	if telemetry != nil {
+		slog.Info("otel initialized", "endpoint", cfg.OTel.Endpoint)
+	} else {
+		slog.Info("otel disabled (no endpoint configured)")
+	}
+
+	slog.Info("relay starting", "env", cfg.Env, "service", cfg.OTel.ServiceName)
+
+	if err := id.Init(1); err != nil {
+		slog.Error("failed to initialize snowflake id generator", "error", err)
+		os.Exit(1)
+	}
+
 	database, err := db.New(ctx, cfg.DB)
 	if err != nil {
 		slog.Error("failed to connect to database", "error", err)
@@ -34,91 +58,60 @@ func main() {
 	defer database.Close()
 	slog.Info("database connected")
 
-	// Create repositories (for non-transactional operations)
-	repos := repository.NewRepositories(database.Queries())
+	stores := store.NewStores(database.Queries())
+	services := service.NewServices(stores)
 
-	// Setup HTTP server
 	if cfg.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
 	}
-	router := setupRouter(database, repos)
 
-	// Graceful shutdown
+	router := setupRouter(cfg, services)
+	server := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: router,
+	}
+
 	go func() {
 		slog.Info("http server starting", "port", cfg.Port)
-		if err := router.Run(":" + cfg.Port); err != nil {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			slog.Error("http server error", "error", err)
+			os.Exit(1)
 		}
 	}()
 
-	// Wait for interrupt signal
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	slog.Info("shutting down...")
 
-	// Give outstanding requests time to complete
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	_ = shutdownCtx // TODO: use for graceful HTTP shutdown when we add it
 
-	database.Close()
+	if err := server.Shutdown(shutdownCtx); err != nil {
+		slog.Error("http server shutdown error", "error", err)
+	}
+
+	if telemetry != nil {
+		if err := telemetry.Shutdown(shutdownCtx); err != nil {
+			slog.Error("otel shutdown error", "error", err)
+		}
+	}
+
 	slog.Info("shutdown complete")
 }
 
-func setupLogger(cfg config.Config) {
-	var handler slog.Handler
-	if cfg.IsProduction() {
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelInfo,
-		})
-	} else {
-		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-			Level: slog.LevelDebug,
-		})
-	}
-	slog.SetDefault(slog.New(handler))
-}
-
-func setupRouter(database *db.DB, repos *repository.Repositories) *gin.Engine {
+func setupRouter(cfg config.Config, services *service.Services) *gin.Engine {
 	router := gin.New()
-	router.Use(gin.Recovery())
 
-	// Health check - doesn't need auth
-	router.GET("/health", func(c *gin.Context) {
-		c.JSON(200, gin.H{"status": "ok"})
-	})
+	// Order matters: OTel creates span → Recovery catches panics → Logger logs with trace context
+	if cfg.OTel.Enabled() {
+		router.Use(otelgin.Middleware(cfg.OTel.ServiceName))
+	}
+	router.Use(middleware.Recovery())
+	router.Use(middleware.Logger())
 
-	// GitLab callback
-	router.POST("/api/gitlab/callback", http.GitlabCallback)
-
-	// Example: API routes would be added here
-	// api := router.Group("/api/v1")
-	// {
-	//     api.Use(authMiddleware)
-	//     api.GET("/users/:id", userHandler.Get)
-	// }
-
-	// Example: Using transaction in a handler
-	// router.POST("/organizations", func(c *gin.Context) {
-	//     err := database.WithTx(c.Request.Context(), func(q *sqlc.Queries) error {
-	//         repos := repository.NewRepositories(q)
-	//         // All operations in same transaction
-	//         if err := repos.Organizations().Create(ctx, org); err != nil {
-	//             return err
-	//         }
-	//         return repos.Workspaces().Create(ctx, defaultWorkspace)
-	//     })
-	//     if err != nil {
-	//         c.JSON(500, gin.H{"error": err.Error()})
-	//         return
-	//     }
-	//     c.JSON(201, gin.H{"status": "created"})
-	// })
-
-	_ = database // will be used by handlers
-	_ = repos    // will be used by handlers
+	httprouter.SetupRoutes(router, services)
 
 	return router
 }
