@@ -210,11 +210,14 @@ If something doesn't make sense, ask. If there are multiple valid approaches, as
 - **goose** for migrations
 - Queries live in `core/db/queries/*.sql` (input)
 - Generated code in `core/db/sqlc/*.go` (output)
+- **Primary keys** are Snowflake IDs (`bigint`)—use `common/id.New()` to generate
 
 **Project structure:**
 ```
 service/
 ├── cmd/service/main.go    # Entrypoint
+├── common/                 # Shared utilities
+│   └── id/                # Snowflake ID generation
 ├── core/                   # Core domain logic
 │   ├── config/            # Configuration (env vars)
 │   └── db/
@@ -222,9 +225,12 @@ service/
 │       ├── queries/       # SQL query definitions (input)
 │       └── sqlc/          # Generated Go code (output)
 ├── internal/              # Internal packages
-│   ├── http/              # HTTP handlers
+│   ├── http/
+│   │   ├── dto/           # Request/response types
+│   │   ├── handler/       # HTTP handlers (hold services)
+│   │   └── router/        # Route definitions
 │   ├── model/             # Domain models (clean types)
-│   ├── service/           # Business logic
+│   ├── service/           # Business logic (hold stores)
 │   └── store/             # Data access (sqlc ↔ model conversion)
 ├── migrations/            # SQL migrations
 └── vendor/                # Vendored dependencies
@@ -238,6 +244,12 @@ service/
 **Error handling:**
 - Return errors, don't panic
 - Wrap errors with context: `fmt.Errorf("creating spec: %w", err)`
+
+**ID generation:**
+- All database primary keys use Snowflake IDs (64-bit integers)
+- Use `common/id.New()` to generate new IDs in the service layer
+- Initialize the generator at startup with `id.Init(nodeID)` (nodeID identifies the service instance)
+- IDs are time-ordered and globally unique across distributed instances
 
 ### Relay Data Layer
 
@@ -311,15 +323,66 @@ err := db.WithTx(ctx, func(q *sqlc.Queries) error {
 })
 ```
 
-**Services accept interfaces** (testability):
+**Service layer** (`internal/service/`):
+
+Services contain business logic and accept store interfaces for testability.
 
 ```go
-type UserService struct {
-    users store.UserStore  // interface, not concrete
+type UserService interface {
+    Create(ctx context.Context, name, email string, avatarURL *string) (*model.User, error)
 }
 
-func NewUserService(users store.UserStore) *UserService {
-    return &UserService{users: users}
+type userService struct {
+    userStore store.UserStore  // interface, not concrete
+}
+
+func newUserService(userStore store.UserStore) *userService {
+    return &userService{userStore: userStore}
+}
+```
+
+**Service factory** (`internal/service/factory.go`):
+
+Creates all services from a `*store.Stores` instance. Mirrors the store factory pattern.
+
+```go
+services := service.NewServices(stores)
+user, err := services.Users().Create(ctx, name, email, nil)
+```
+
+**HTTP handlers** (`internal/http/handler/`):
+
+Handlers are structs that hold service dependencies. This keeps handlers testable and routes clean.
+
+```go
+type UserHandler struct {
+    userService service.UserService
+}
+
+func NewUserHandler(userService service.UserService) *UserHandler {
+    return &UserHandler{userService: userService}
+}
+
+func (h *UserHandler) Create(c *gin.Context) {
+    // parse request, call service, return response
+}
+```
+
+**DTOs** (`internal/http/dto/`):
+
+Request/response types for HTTP APIs. Separate from domain models to allow API-specific validation and formatting.
+
+```go
+type CreateUserRequest struct {
+    Name      string  `json:"name" binding:"required,min=1,max=255"`
+    Email     string  `json:"email" binding:"required,email,max=255"`
+    AvatarURL *string `json:"avatar_url,omitempty" binding:"omitempty,url,max=2048"`
+}
+
+type UserResponse struct {
+    ID        int64     `json:"id"`
+    Name      string    `json:"name"`
+    // ... clean response structure
 }
 ```
 
@@ -406,6 +469,121 @@ cd relay
 make install-tools    # Install goose and sqlc
 make migrate-up DB_STRING="postgres://..."
 make run
+```
+
+---
+
+## Testing
+
+### Philosophy
+
+- **Quality over coverage**: We don't chase 100% test coverage. Test what matters—business logic, edge cases, integration points.
+- **Confidence after changes**: Tests exist so engineers can refactor and ship with confidence.
+- **BDD for use cases**: Behavior-driven tests for service/handler layers describe *what* the system does.
+- **Unit tests for utilities**: Simple, fast tests for pure functions with no dependencies.
+
+### Framework
+
+- **Ginkgo v2 + Gomega**: BDD-style testing for Go
+- **Standard `testing`**: For simple utility functions (Ginkgo is overkill)
+
+### Test Organization (Colocated)
+
+```
+relay/
+├── internal/
+│   ├── service/
+│   │   ├── user.go
+│   │   ├── user_test.go              # Ginkgo BDD tests
+│   │   └── service_suite_test.go     # Ginkgo bootstrap
+│   ├── store/
+│   │   ├── user.go
+│   │   ├── user_integration_test.go  # Test with real DB
+│   │   └── store_suite_test.go
+├── common/
+│   └── id/
+│       ├── snowflake.go
+│       └── snowflake_test.go         # Standard Go test
+```
+
+### Testing by Layer
+
+| Layer | Test Type | What to Test | Mocking |
+|-------|-----------|--------------|---------|
+| `common/` | Unit | Pure functions, utilities | None |
+| `internal/store/` | Integration | SQL correctness, conversions | Real test DB |
+| `internal/service/` | BDD | Business logic, workflows | Mock stores |
+| `internal/http/handler/` | BDD | Request validation, response format | Mock services |
+
+### Mocking Strategy
+
+**Current approach**: Hand-written mocks for simplicity.
+
+```go
+// internal/service/mocks_test.go
+type mockUserStore struct {
+    createFn  func(ctx context.Context, user *model.User) error
+    getByIDFn func(ctx context.Context, id int64) (*model.User, error)
+}
+
+func (m *mockUserStore) Create(ctx context.Context, user *model.User) error {
+    if m.createFn != nil {
+        return m.createFn(ctx, user)
+    }
+    return nil
+}
+```
+
+**Scaling up**: When hand-written mocks become burdensome (10+ interfaces, frequent changes), consider:
+
+| Tool | When to Use |
+|------|-------------|
+| **gomock** | Type-safe generated mocks, good IDE support. Use when interfaces are stable but tests are many. |
+| **mockery** | Testify-compatible mocks. Use if already using testify matchers. |
+| **counterfeiter** | Ginkgo-friendly, generates fakes. Use for complex test doubles with state. |
+
+Add mock generation when: (1) mocks have >5 methods, (2) interfaces change frequently, (3) multiple packages need the same mocks.
+
+### Constructor Pattern for Testability
+
+Services export individual constructors for test injection:
+
+```go
+// internal/service/user.go
+
+// NewUserService creates a UserService with the given store.
+// Production code uses service.NewServices(stores).Users() instead.
+func NewUserService(userStore store.UserStore) UserService {
+    return &userService{userStore: userStore}
+}
+```
+
+- **Production**: Use factory (`service.NewServices(stores).Users()`)
+- **Tests**: Use constructor directly with mocks (`service.NewUserService(mockStore)`)
+
+### What NOT to Test
+
+- **sqlc-generated code**: It's generated and type-safe. Trust it.
+- **Simple pass-through methods**: No logic = no test needed.
+- **Framework behavior**: Don't test that Gin parses JSON correctly.
+
+### Running Tests
+
+```bash
+# Run all tests
+ginkgo ./...
+
+# Run specific package
+ginkgo ./internal/service/...
+
+# Run with verbose output
+ginkgo -v ./...
+
+# Run specific test by name
+ginkgo --focus "UserService" ./internal/service/...
+
+# Standard Go tests (for utilities)
+go test ./common/...
 ```
 
 ---

@@ -98,6 +98,10 @@ Supported database drivers: `postgres`, `mysql`, `sqlite3`, `mssql`, `clickhouse
 
 **Note:** Goose is declared in `go.mod` using Go 1.24+'s `tool` directive. No global installation needed — `go tool goose` runs it directly using the version from `go.mod`.
 
+**ID Generation:**
+
+All database primary keys use [Snowflake IDs](https://en.wikipedia.org/wiki/Snowflake_ID) (64-bit integers). The relay service uses `bwmarrin/snowflake` for ID generation. IDs are generated in the service layer using `common/id.New()`.
+
 ### Dashboard
 
 A Next.js web application for visualizing and interacting with code graphs.

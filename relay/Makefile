@@ -1,9 +1,10 @@
-.PHONY: build run tidy format install-tools install-goose install-sqlc install-gofumpt sqlc-generate migrate-up migrate-down migrate-status migrate-create
+.PHONY: build run tidy format install-tools install-goose install-sqlc install-gofumpt install-ginkgo sqlc-generate migrate-up migrate-down migrate-status migrate-create test test-unit test-verbose
 
 # Tool versions
 GOOSE_VERSION := v3.24.3
 SQLC_VERSION := v1.30.0
 GOFUMPT_VERSION := latest
+GINKGO_VERSION := latest
 
 # Build the relay service
 build:
@@ -33,7 +34,7 @@ format:
 # ============================================================================
 
 # Install all CLI tools
-install-tools: install-goose install-sqlc install-gofumpt
+install-tools: install-goose install-sqlc install-gofumpt install-ginkgo
 	@echo "All tools installed successfully"
 
 # Install goose CLI with PostgreSQL-only support (excludes other DB drivers)
@@ -54,6 +55,12 @@ install-gofumpt:
 	@echo "Installing gofumpt $(GOFUMPT_VERSION)..."
 	@go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
 	@echo "gofumpt installed to $$(go env GOPATH)/bin/gofumpt"
+
+# Install ginkgo CLI for BDD testing
+install-ginkgo:
+	@echo "Installing ginkgo $(GINKGO_VERSION)..."
+	@go install github.com/onsi/ginkgo/v2/ginkgo@$(GINKGO_VERSION)
+	@echo "ginkgo installed to $$(go env GOPATH)/bin/ginkgo"
 
 # ============================================================================
 # Code Generation
@@ -117,3 +124,46 @@ migrate-create: check-goose
 	fi
 	@mkdir -p migrations
 	goose -dir migrations create $(NAME) sql
+
+# ============================================================================
+# Testing
+# ============================================================================
+
+# Check if ginkgo is installed
+check-ginkgo:
+	@command -v ginkgo >/dev/null 2>&1 || { \
+		echo "Error: ginkgo not found. Run 'make install-ginkgo' first."; \
+		exit 1; \
+	}
+
+# Run all tests (BDD with Ginkgo + standard Go tests)
+test: check-ginkgo
+	ginkgo ./...
+
+# Run tests with verbose output
+test-verbose: check-ginkgo
+	ginkgo -v ./...
+
+# Run only utility/common tests (standard Go tests, no Ginkgo needed)
+test-unit:
+	go test ./common/...
+
+# Run tests for a specific package
+# Usage: make test-pkg PKG=./internal/service/...
+test-pkg: check-ginkgo
+	@if [ -z "$(PKG)" ]; then \
+		echo "Usage: make test-pkg PKG=<package_path>"; \
+		echo "Example: make test-pkg PKG=./internal/service/..."; \
+		exit 1; \
+	fi
+	ginkgo -v $(PKG)
+
+# Run tests matching a specific pattern
+# Usage: make test-focus FOCUS="UserService"
+test-focus: check-ginkgo
+	@if [ -z "$(FOCUS)" ]; then \
+		echo "Usage: make test-focus FOCUS=<pattern>"; \
+		echo "Example: make test-focus FOCUS='UserService'"; \
+		exit 1; \
+	fi
+	ginkgo --focus "$(FOCUS)" ./...
