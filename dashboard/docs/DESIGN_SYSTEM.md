@@ -1,4 +1,4 @@
-# Basegraph Design System
+# Relay Design System
 
 > A refined, editorial design system built for precision and clarity.
 
@@ -12,6 +12,7 @@
 2. **Hierarchy through contrast** — Not through color variety
 3. **Semantic color usage** — Accent colors have meaning, not just aesthetics
 4. **Dark mode as first-class** — Both modes are intentionally designed, not inverted
+5. **Subtle depth** — Glassmorphism inspired by Apple's liquid glass: felt, not seen
 
 ---
 
@@ -241,6 +242,56 @@ For list items, integration cards, settings rows:
 <Card className="card-subtle">Content</Card>
 ```
 
+### Overlays & Panels
+
+All overlay components (Sheet, Dialog, AlertDialog) follow a consistent glassmorphism treatment inspired by Apple's liquid glass — subtle depth you *feel* rather than *see*.
+
+**Overlay backdrop:**
+```css
+bg-black/25 backdrop-blur-[2px]
+```
+
+- `bg-black/25` — Light scrim, content remains visible
+- `backdrop-blur-[2px]` — Barely perceptible blur, just softens edges
+
+**Panel styling:**
+
+| Component | Rounded Corners | Shadow |
+|-----------|-----------------|--------|
+| Sheet (right) | `rounded-l-xl` | `shadow-xl` |
+| Sheet (left) | `rounded-r-xl` | `shadow-xl` |
+| Sheet (top) | `rounded-b-xl` | `shadow-xl` |
+| Sheet (bottom) | `rounded-t-xl` | `shadow-xl` |
+| Dialog | `rounded-xl` | `shadow-xl` |
+| AlertDialog | `rounded-xl` | `shadow-xl` |
+| Popover | `rounded-lg` | `shadow-lg` |
+| DropdownMenu | `rounded-lg` | `shadow-lg` |
+
+**Why subtle blur?**
+Heavy blur (like `backdrop-blur-md`) creates a frosted glass effect that feels dated and draws attention to the overlay itself. Apple's approach uses minimal blur so the *content panel* does the visual heavy lifting, not the backdrop.
+
+```tsx
+{/* Sheet for detailed setup flows */}
+<Sheet>
+  <SheetTrigger asChild>
+    <Button>Open Panel</Button>
+  </SheetTrigger>
+  <SheetContent side="right" className="sm:max-w-[28rem]">
+    {/* Content */}
+  </SheetContent>
+</Sheet>
+
+{/* Dialog for focused actions */}
+<Dialog>
+  <DialogTrigger asChild>
+    <Button>Confirm</Button>
+  </DialogTrigger>
+  <DialogContent>
+    {/* Content */}
+  </DialogContent>
+</Dialog>
+```
+
 ### Fixed Positioning
 
 ```css
@@ -249,6 +300,33 @@ For list items, integration cards, settings rows:
 ```
 
 Both handle iOS safe areas automatically.
+
+---
+
+## Border Radius & Shadows
+
+### Radius Scale
+
+| Token | Value | Usage |
+|-------|-------|-------|
+| `rounded-sm` | `calc(var(--radius) - 2px)` | Small elements, close buttons |
+| `rounded-md` | `var(--radius)` | Default, inputs |
+| `rounded-lg` | `calc(var(--radius) + 2px)` | Cards, dropdowns, popovers |
+| `rounded-xl` | `calc(var(--radius) + 4px)` | Dialogs, sheets, elevated panels |
+
+**Convention:**
+- Floating elements (popovers, dropdowns) use `rounded-lg`
+- Modal overlays (dialogs, sheets) use `rounded-xl`
+- Inputs and small controls use `rounded-md`
+
+### Shadow Scale
+
+| Class | Usage |
+|-------|-------|
+| `shadow-sm` | Buttons at rest |
+| `shadow-md` | Buttons on hover, small elevations |
+| `shadow-lg` | Popovers, dropdowns |
+| `shadow-xl` | Dialogs, sheets, major overlays |
 
 ---
 
@@ -317,19 +395,34 @@ padding-top: env(safe-area-inset-top);
 ```
 app/
 ├── globals.css          # Design tokens, base styles, utilities
+├── layout.tsx           # Root layout
 ├── page.tsx             # Landing page
-└── dashboard/
-    └── page.tsx         # Dashboard
+├── dashboard/
+│   ├── layout.tsx       # Dashboard layout
+│   ├── page.tsx         # Dashboard home
+│   └── onboarding/
+│       └── page.tsx     # Onboarding flow
+└── api/                 # API routes
 
 components/
-├── ui/                  # Primitive components (Button, Card, Input...)
+├── ui/                  # Primitive components (shadcn/ui based)
 │   ├── button.tsx
 │   ├── card.tsx
+│   ├── dialog.tsx
+│   ├── sheet.tsx
+│   ├── input.tsx
 │   └── ...
-└── [feature].tsx        # Feature components
+├── [feature].tsx        # Feature components (e.g., gitlab-connect-panel.tsx)
+└── [shared].tsx         # Shared components (e.g., logo.tsx, top-bar.tsx)
 
-styles/
-└── globals.css          # Legacy (imports handled in app/globals.css)
+lib/
+├── utils.ts             # cn() and other utilities
+├── auth.ts              # Auth helpers
+└── config.ts            # Environment config
+
+hooks/
+├── use-toast.ts         # Toast notifications
+└── use-mobile.ts        # Mobile detection
 ```
 
 ---
@@ -364,6 +457,8 @@ Before adding UI:
 - [ ] Is the color usage semantic (not decorative)?
 - [ ] Does it follow the typography scale?
 - [ ] Are interactive states clear?
+- [ ] Do overlays use subtle blur (`backdrop-blur-[2px]`)?
+- [ ] Are rounded corners appropriate for the elevation level?
 
 ---
 
@@ -376,6 +471,15 @@ Before adding UI:
 <p className="text-body-secondary">Supporting text</p>
 <Button className="state-connected">Synced</Button>
 <div className="fixed-top-right">...</div>
+
+// ✅ Good: Overlay with subtle blur (handled by components)
+<Sheet>
+  <SheetContent side="right">...</SheetContent>
+</Sheet>
+
+// ✅ Good: Appropriate shadow for elevation
+<Popover>  {/* Uses shadow-lg */}
+<Dialog>   {/* Uses shadow-xl */}
 ```
 
 ### Incorrect Usage
@@ -385,8 +489,35 @@ Before adding UI:
 <p className="text-gray-600">Supporting text</p>
 <p style={{ color: 'rgba(0,0,0,0.8)' }}>Text</p>
 <Button className="bg-emerald-500/10">Synced</Button>
-<div style={{ top: 'calc(1.5rem + env(...))' }}>...</div>
+
+// ❌ Bad: Heavy blur on overlays
+<div className="backdrop-blur-md bg-black/50">  {/* Too heavy */}
+
+// ❌ Bad: Inconsistent rounded corners
+<div className="rounded-3xl">  {/* Not in our scale */}
 ```
+
+---
+
+## Component Conventions
+
+### When to use Sheet vs Dialog
+
+| Use Case | Component | Why |
+|----------|-----------|-----|
+| Setup flows with multiple steps | Sheet | More space, user can reference while doing external tasks |
+| Quick confirmations | Dialog | Focused, centered attention |
+| Forms with many fields | Sheet | Scrollable, doesn't feel cramped |
+| Destructive action confirmation | AlertDialog | Requires explicit decision |
+| Settings or detail views | Sheet | Companion panel feel |
+
+### Sheet Width Guidelines
+
+| Content Type | Width | Class |
+|--------------|-------|-------|
+| Simple forms | 384px | `sm:max-w-sm` (default) |
+| Setup guides with instructions | 448px | `sm:max-w-[28rem]` |
+| Complex forms or previews | 512px | `sm:max-w-md` |
 
 ---
 
