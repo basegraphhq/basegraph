@@ -398,7 +398,8 @@ All integrations use the same schema:
 
 ```sql
 -- integrations table
-integration.provider            -- 'gitlab', 'github', 'linear', 'jira'
+integration.provider            -- 'gitlab', 'github', 'linear', 'jira', 'slack', 'notion'
+integration.capabilities        -- text[] e.g., {'code_repo', 'issue_tracker', 'wiki'}
 integration.setup_by_user_id    -- Relay admin who configured it
 integration.external_org_id     -- GitLab group, GitHub org, Linear workspace, Jira site
 
@@ -409,6 +410,29 @@ credential.access_token         -- PAT, installation token, OAuth token, or shar
 credential.refresh_token        -- For OAuth flows
 credential.scopes               -- Granted permissions
 ```
+
+### Capabilities
+
+Providers can have multiple capabilities (e.g., GitLab is both code_repo and issue_tracker):
+
+| Capability | Providers | Description |
+|------------|-----------|-------------|
+| `code_repo` | GitLab, GitHub | Source code, MRs/PRs, code reviews |
+| `issue_tracker` | GitLab, GitHub, Linear, Jira | Issues, projects, sprints |
+| `documentation` | Notion | Docs, knowledge base |
+| `wiki` | GitLab, GitHub, Notion | Wiki pages |
+| `communication` | Slack | Messages, threads, channels |
+
+### Provider Capabilities
+
+| Provider | Capabilities |
+|----------|-------------|
+| GitLab | `code_repo`, `issue_tracker`, `wiki` |
+| GitHub | `code_repo`, `issue_tracker`, `wiki` |
+| Linear | `issue_tracker` |
+| Jira | `issue_tracker` |
+| Slack | `communication` |
+| Notion | `documentation`, `wiki` |
 
 ---
 
