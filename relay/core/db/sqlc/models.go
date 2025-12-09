@@ -26,11 +26,13 @@ type Integration struct {
 	ID                  int64              `json:"id"`
 	WorkspaceID         int64              `json:"workspace_id"`
 	OrganizationID      int64              `json:"organization_id"`
-	ConnectedByUserID   int64              `json:"connected_by_user_id"`
+	SetupByUserID       int64              `json:"setup_by_user_id"`
 	Provider            string             `json:"provider"`
+	Capabilities        []string           `json:"capabilities"`
 	ProviderBaseUrl     *string            `json:"provider_base_url"`
 	ExternalOrgID       *string            `json:"external_org_id"`
 	ExternalWorkspaceID *string            `json:"external_workspace_id"`
+	IsEnabled           bool               `json:"is_enabled"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }

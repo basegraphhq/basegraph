@@ -13,5 +13,9 @@ func NewServices(stores *store.Stores) *Services {
 }
 
 func (s *Services) Users() UserService {
-	return NewUserService(s.stores.Users())
+	return NewUserService(s.stores.Users(), s.stores.Organizations())
+}
+
+func (s *Services) Organizations() OrganizationService {
+	return NewOrganizationService(s.stores.Organizations())
 }

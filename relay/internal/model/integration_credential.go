@@ -5,10 +5,10 @@ import "time"
 type CredentialType string
 
 const (
-	CredentialTypeUserOAuth      CredentialType = "user_oauth"
-	CredentialTypeBot            CredentialType = "bot"
-	CredentialTypeAppInstall     CredentialType = "app_installation"
-	CredentialTypeAPIKey         CredentialType = "api_key"
+	CredentialTypeUserOAuth  CredentialType = "user_oauth"
+	CredentialTypeBot        CredentialType = "bot"
+	CredentialTypeAppInstall CredentialType = "app_installation"
+	CredentialTypeAPIKey     CredentialType = "api_key"
 )
 
 type IntegrationCredential struct {
@@ -25,4 +25,3 @@ type IntegrationCredential struct {
 	UpdatedAt      time.Time      `json:"updated_at"`
 	RevokedAt      *time.Time     `json:"revoked_at,omitempty"`
 }
-

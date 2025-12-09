@@ -46,3 +46,31 @@ func (h *UserHandler) Create(c *gin.Context) {
 
 func (h *UserHandler) GetByID(c *gin.Context) {
 }
+
+func (h *UserHandler) Sync(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var req dto.SyncUserRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		slog.WarnContext(ctx, "invalid sync request body", "error", err)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	user, orgs, err := h.userService.Sync(ctx, req.Name, req.Email, req.AvatarURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sync user"})
+		return
+	}
+
+	resp := dto.SyncUserResponse{
+		User:            dto.ToUserResponse(user),
+		Organizations:   make([]dto.OrganizationBrief, 0, len(orgs)),
+		HasOrganization: len(orgs) > 0,
+	}
+	for _, org := range orgs {
+		resp.Organizations = append(resp.Organizations, dto.ToOrganizationBrief(org))
+	}
+
+	c.JSON(http.StatusOK, resp)
+}

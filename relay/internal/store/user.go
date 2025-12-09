@@ -53,6 +53,20 @@ func (s *userStore) Create(ctx context.Context, user *model.User) error {
 	return nil
 }
 
+func (s *userStore) Upsert(ctx context.Context, user *model.User) error {
+	row, err := s.queries.UpsertUser(ctx, sqlc.UpsertUserParams{
+		ID:        user.ID,
+		Name:      user.Name,
+		Email:     user.Email,
+		AvatarUrl: user.AvatarURL,
+	})
+	if err != nil {
+		return err
+	}
+	*user = *toUserModel(row)
+	return nil
+}
+
 func (s *userStore) Update(ctx context.Context, user *model.User) error {
 	row, err := s.queries.UpdateUser(ctx, sqlc.UpdateUserParams{
 		ID:        user.ID,

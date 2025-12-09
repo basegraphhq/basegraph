@@ -15,5 +15,9 @@ func SetupRoutes(router *gin.Engine, services *service.Services) {
 	{
 		userHandler := handler.NewUserHandler(services.Users())
 		UserRouter(v1.Group("/users"), userHandler)
+		AuthRouter(v1.Group("/auth"), userHandler)
+
+		orgHandler := handler.NewOrganizationHandler(services.Organizations())
+		OrganizationRouter(v1.Group("/organizations"), orgHandler)
 	}
 }

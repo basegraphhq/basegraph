@@ -13,6 +13,7 @@ var ErrNotFound = errors.New("not found")
 type UserStore interface {
 	GetByID(ctx context.Context, id int64) (*model.User, error)
 	GetByEmail(ctx context.Context, email string) (*model.User, error)
+	Upsert(ctx context.Context, user *model.User) error
 	Create(ctx context.Context, user *model.User) error
 	Update(ctx context.Context, user *model.User) error
 	Delete(ctx context.Context, id int64) error
@@ -42,9 +43,11 @@ type IntegrationStore interface {
 	GetByWorkspaceAndProvider(ctx context.Context, workspaceID int64, provider model.Provider) (*model.Integration, error)
 	Create(ctx context.Context, integration *model.Integration) error
 	Update(ctx context.Context, integration *model.Integration) error
+	SetEnabled(ctx context.Context, id int64, enabled bool) error
 	Delete(ctx context.Context, id int64) error
 	ListByWorkspace(ctx context.Context, workspaceID int64) ([]model.Integration, error)
 	ListByOrganization(ctx context.Context, orgID int64) ([]model.Integration, error)
+	ListByCapability(ctx context.Context, workspaceID int64, capability model.Capability) ([]model.Integration, error)
 }
 
 type IntegrationCredentialStore interface {

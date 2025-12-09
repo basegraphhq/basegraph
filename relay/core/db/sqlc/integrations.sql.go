@@ -11,24 +11,26 @@ import (
 
 const createIntegration = `-- name: CreateIntegration :one
 INSERT INTO integrations (
-    id, workspace_id, organization_id, connected_by_user_id,
-    provider, provider_base_url,
+    id, workspace_id, organization_id, setup_by_user_id,
+    provider, capabilities, provider_base_url,
     external_org_id, external_workspace_id,
-    created_at, updated_at
+    is_enabled, created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
-RETURNING id, workspace_id, organization_id, connected_by_user_id, provider, provider_base_url, external_org_id, external_workspace_id, created_at, updated_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
+RETURNING id, workspace_id, organization_id, setup_by_user_id, provider, capabilities, provider_base_url, external_org_id, external_workspace_id, is_enabled, created_at, updated_at
 `
 
 type CreateIntegrationParams struct {
-	ID                  int64   `json:"id"`
-	WorkspaceID         int64   `json:"workspace_id"`
-	OrganizationID      int64   `json:"organization_id"`
-	ConnectedByUserID   int64   `json:"connected_by_user_id"`
-	Provider            string  `json:"provider"`
-	ProviderBaseUrl     *string `json:"provider_base_url"`
-	ExternalOrgID       *string `json:"external_org_id"`
-	ExternalWorkspaceID *string `json:"external_workspace_id"`
+	ID                  int64    `json:"id"`
+	WorkspaceID         int64    `json:"workspace_id"`
+	OrganizationID      int64    `json:"organization_id"`
+	SetupByUserID       int64    `json:"setup_by_user_id"`
+	Provider            string   `json:"provider"`
+	Capabilities        []string `json:"capabilities"`
+	ProviderBaseUrl     *string  `json:"provider_base_url"`
+	ExternalOrgID       *string  `json:"external_org_id"`
+	ExternalWorkspaceID *string  `json:"external_workspace_id"`
+	IsEnabled           bool     `json:"is_enabled"`
 }
 
 func (q *Queries) CreateIntegration(ctx context.Context, arg CreateIntegrationParams) (Integration, error) {
@@ -36,22 +38,26 @@ func (q *Queries) CreateIntegration(ctx context.Context, arg CreateIntegrationPa
 		arg.ID,
 		arg.WorkspaceID,
 		arg.OrganizationID,
-		arg.ConnectedByUserID,
+		arg.SetupByUserID,
 		arg.Provider,
+		arg.Capabilities,
 		arg.ProviderBaseUrl,
 		arg.ExternalOrgID,
 		arg.ExternalWorkspaceID,
+		arg.IsEnabled,
 	)
 	var i Integration
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
 		&i.OrganizationID,
-		&i.ConnectedByUserID,
+		&i.SetupByUserID,
 		&i.Provider,
+		&i.Capabilities,
 		&i.ProviderBaseUrl,
 		&i.ExternalOrgID,
 		&i.ExternalWorkspaceID,
+		&i.IsEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -68,7 +74,7 @@ func (q *Queries) DeleteIntegration(ctx context.Context, id int64) error {
 }
 
 const getIntegration = `-- name: GetIntegration :one
-SELECT id, workspace_id, organization_id, connected_by_user_id, provider, provider_base_url, external_org_id, external_workspace_id, created_at, updated_at FROM integrations WHERE id = $1
+SELECT id, workspace_id, organization_id, setup_by_user_id, provider, capabilities, provider_base_url, external_org_id, external_workspace_id, is_enabled, created_at, updated_at FROM integrations WHERE id = $1
 `
 
 func (q *Queries) GetIntegration(ctx context.Context, id int64) (Integration, error) {
@@ -78,11 +84,13 @@ func (q *Queries) GetIntegration(ctx context.Context, id int64) (Integration, er
 		&i.ID,
 		&i.WorkspaceID,
 		&i.OrganizationID,
-		&i.ConnectedByUserID,
+		&i.SetupByUserID,
 		&i.Provider,
+		&i.Capabilities,
 		&i.ProviderBaseUrl,
 		&i.ExternalOrgID,
 		&i.ExternalWorkspaceID,
+		&i.IsEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -90,7 +98,7 @@ func (q *Queries) GetIntegration(ctx context.Context, id int64) (Integration, er
 }
 
 const getIntegrationByWorkspaceAndProvider = `-- name: GetIntegrationByWorkspaceAndProvider :one
-SELECT id, workspace_id, organization_id, connected_by_user_id, provider, provider_base_url, external_org_id, external_workspace_id, created_at, updated_at FROM integrations 
+SELECT id, workspace_id, organization_id, setup_by_user_id, provider, capabilities, provider_base_url, external_org_id, external_workspace_id, is_enabled, created_at, updated_at FROM integrations 
 WHERE workspace_id = $1 AND provider = $2
 `
 
@@ -106,19 +114,65 @@ func (q *Queries) GetIntegrationByWorkspaceAndProvider(ctx context.Context, arg 
 		&i.ID,
 		&i.WorkspaceID,
 		&i.OrganizationID,
-		&i.ConnectedByUserID,
+		&i.SetupByUserID,
 		&i.Provider,
+		&i.Capabilities,
 		&i.ProviderBaseUrl,
 		&i.ExternalOrgID,
 		&i.ExternalWorkspaceID,
+		&i.IsEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
 }
 
+const listIntegrationsByCapability = `-- name: ListIntegrationsByCapability :many
+SELECT id, workspace_id, organization_id, setup_by_user_id, provider, capabilities, provider_base_url, external_org_id, external_workspace_id, is_enabled, created_at, updated_at FROM integrations 
+WHERE workspace_id = $1 AND $2::text = ANY(capabilities)
+ORDER BY created_at DESC
+`
+
+type ListIntegrationsByCapabilityParams struct {
+	WorkspaceID int64  `json:"workspace_id"`
+	Capability  string `json:"capability"`
+}
+
+func (q *Queries) ListIntegrationsByCapability(ctx context.Context, arg ListIntegrationsByCapabilityParams) ([]Integration, error) {
+	rows, err := q.db.Query(ctx, listIntegrationsByCapability, arg.WorkspaceID, arg.Capability)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Integration{}
+	for rows.Next() {
+		var i Integration
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.OrganizationID,
+			&i.SetupByUserID,
+			&i.Provider,
+			&i.Capabilities,
+			&i.ProviderBaseUrl,
+			&i.ExternalOrgID,
+			&i.ExternalWorkspaceID,
+			&i.IsEnabled,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listIntegrationsByOrganization = `-- name: ListIntegrationsByOrganization :many
-SELECT id, workspace_id, organization_id, connected_by_user_id, provider, provider_base_url, external_org_id, external_workspace_id, created_at, updated_at FROM integrations 
+SELECT id, workspace_id, organization_id, setup_by_user_id, provider, capabilities, provider_base_url, external_org_id, external_workspace_id, is_enabled, created_at, updated_at FROM integrations 
 WHERE organization_id = $1
 ORDER BY created_at DESC
 `
@@ -136,11 +190,13 @@ func (q *Queries) ListIntegrationsByOrganization(ctx context.Context, organizati
 			&i.ID,
 			&i.WorkspaceID,
 			&i.OrganizationID,
-			&i.ConnectedByUserID,
+			&i.SetupByUserID,
 			&i.Provider,
+			&i.Capabilities,
 			&i.ProviderBaseUrl,
 			&i.ExternalOrgID,
 			&i.ExternalWorkspaceID,
+			&i.IsEnabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -155,7 +211,7 @@ func (q *Queries) ListIntegrationsByOrganization(ctx context.Context, organizati
 }
 
 const listIntegrationsByWorkspace = `-- name: ListIntegrationsByWorkspace :many
-SELECT id, workspace_id, organization_id, connected_by_user_id, provider, provider_base_url, external_org_id, external_workspace_id, created_at, updated_at FROM integrations 
+SELECT id, workspace_id, organization_id, setup_by_user_id, provider, capabilities, provider_base_url, external_org_id, external_workspace_id, is_enabled, created_at, updated_at FROM integrations 
 WHERE workspace_id = $1
 ORDER BY created_at DESC
 `
@@ -173,11 +229,13 @@ func (q *Queries) ListIntegrationsByWorkspace(ctx context.Context, workspaceID i
 			&i.ID,
 			&i.WorkspaceID,
 			&i.OrganizationID,
-			&i.ConnectedByUserID,
+			&i.SetupByUserID,
 			&i.Provider,
+			&i.Capabilities,
 			&i.ProviderBaseUrl,
 			&i.ExternalOrgID,
 			&i.ExternalWorkspaceID,
+			&i.IsEnabled,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -191,6 +249,22 @@ func (q *Queries) ListIntegrationsByWorkspace(ctx context.Context, workspaceID i
 	return items, nil
 }
 
+const setIntegrationEnabled = `-- name: SetIntegrationEnabled :exec
+UPDATE integrations
+SET is_enabled = $2, updated_at = now()
+WHERE id = $1
+`
+
+type SetIntegrationEnabledParams struct {
+	ID        int64 `json:"id"`
+	IsEnabled bool  `json:"is_enabled"`
+}
+
+func (q *Queries) SetIntegrationEnabled(ctx context.Context, arg SetIntegrationEnabledParams) error {
+	_, err := q.db.Exec(ctx, setIntegrationEnabled, arg.ID, arg.IsEnabled)
+	return err
+}
+
 const updateIntegration = `-- name: UpdateIntegration :one
 UPDATE integrations
 SET 
@@ -199,7 +273,7 @@ SET
     external_workspace_id = coalesce($4, external_workspace_id),
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, organization_id, connected_by_user_id, provider, provider_base_url, external_org_id, external_workspace_id, created_at, updated_at
+RETURNING id, workspace_id, organization_id, setup_by_user_id, provider, capabilities, provider_base_url, external_org_id, external_workspace_id, is_enabled, created_at, updated_at
 `
 
 type UpdateIntegrationParams struct {
@@ -221,11 +295,13 @@ func (q *Queries) UpdateIntegration(ctx context.Context, arg UpdateIntegrationPa
 		&i.ID,
 		&i.WorkspaceID,
 		&i.OrganizationID,
-		&i.ConnectedByUserID,
+		&i.SetupByUserID,
 		&i.Provider,
+		&i.Capabilities,
 		&i.ProviderBaseUrl,
 		&i.ExternalOrgID,
 		&i.ExternalWorkspaceID,
+		&i.IsEnabled,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

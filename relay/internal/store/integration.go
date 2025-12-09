@@ -47,11 +47,13 @@ func (s *integrationStore) Create(ctx context.Context, integration *model.Integr
 		ID:                  integration.ID,
 		WorkspaceID:         integration.WorkspaceID,
 		OrganizationID:      integration.OrganizationID,
-		ConnectedByUserID:   integration.ConnectedByUserID,
+		SetupByUserID:       integration.SetupByUserID,
 		Provider:            string(integration.Provider),
+		Capabilities:        capabilitiesToStrings(integration.Capabilities),
 		ProviderBaseUrl:     integration.ProviderBaseURL,
 		ExternalOrgID:       integration.ExternalOrgID,
 		ExternalWorkspaceID: integration.ExternalWorkspaceID,
+		IsEnabled:           integration.IsEnabled,
 	})
 	if err != nil {
 		return err
@@ -77,6 +79,13 @@ func (s *integrationStore) Update(ctx context.Context, integration *model.Integr
 	return nil
 }
 
+func (s *integrationStore) SetEnabled(ctx context.Context, id int64, enabled bool) error {
+	return s.queries.SetIntegrationEnabled(ctx, sqlc.SetIntegrationEnabledParams{
+		ID:        id,
+		IsEnabled: enabled,
+	})
+}
+
 func (s *integrationStore) Delete(ctx context.Context, id int64) error {
 	return s.queries.DeleteIntegration(ctx, id)
 }
@@ -97,16 +106,29 @@ func (s *integrationStore) ListByOrganization(ctx context.Context, orgID int64) 
 	return toIntegrationModels(rows), nil
 }
 
+func (s *integrationStore) ListByCapability(ctx context.Context, workspaceID int64, capability model.Capability) ([]model.Integration, error) {
+	rows, err := s.queries.ListIntegrationsByCapability(ctx, sqlc.ListIntegrationsByCapabilityParams{
+		WorkspaceID: workspaceID,
+		Capability:  string(capability),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return toIntegrationModels(rows), nil
+}
+
 func toIntegrationModel(row sqlc.Integration) *model.Integration {
 	return &model.Integration{
 		ID:                  row.ID,
 		WorkspaceID:         row.WorkspaceID,
 		OrganizationID:      row.OrganizationID,
-		ConnectedByUserID:   row.ConnectedByUserID,
+		SetupByUserID:       row.SetupByUserID,
 		Provider:            model.Provider(row.Provider),
+		Capabilities:        stringsToCapabilities(row.Capabilities),
 		ProviderBaseURL:     row.ProviderBaseUrl,
 		ExternalOrgID:       row.ExternalOrgID,
 		ExternalWorkspaceID: row.ExternalWorkspaceID,
+		IsEnabled:           row.IsEnabled,
 		CreatedAt:           row.CreatedAt.Time,
 		UpdatedAt:           row.UpdatedAt.Time,
 	}
@@ -118,4 +140,20 @@ func toIntegrationModels(rows []sqlc.Integration) []model.Integration {
 		result[i] = *toIntegrationModel(row)
 	}
 	return result
+}
+
+func stringsToCapabilities(s []string) []model.Capability {
+	caps := make([]model.Capability, len(s))
+	for i, v := range s {
+		caps[i] = model.Capability(v)
+	}
+	return caps
+}
+
+func capabilitiesToStrings(caps []model.Capability) []string {
+	s := make([]string, len(caps))
+	for i, c := range caps {
+		s[i] = string(c)
+	}
+	return s
 }
