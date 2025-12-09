@@ -7,32 +7,28 @@ package sqlc
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createIntegration = `-- name: CreateIntegration :one
 INSERT INTO integrations (
-    id, workspace_id, organization_id, provider, provider_base_url,
+    id, workspace_id, organization_id, connected_by_user_id,
+    provider, provider_base_url,
     external_org_id, external_workspace_id,
-    access_token, refresh_token, expires_at,
     created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
-RETURNING id, workspace_id, organization_id, provider, provider_base_url, external_org_id, external_workspace_id, access_token, refresh_token, expires_at, created_at, updated_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
+RETURNING id, workspace_id, organization_id, connected_by_user_id, provider, provider_base_url, external_org_id, external_workspace_id, created_at, updated_at
 `
 
 type CreateIntegrationParams struct {
-	ID                  int64              `json:"id"`
-	WorkspaceID         int64              `json:"workspace_id"`
-	OrganizationID      int64              `json:"organization_id"`
-	Provider            string             `json:"provider"`
-	ProviderBaseUrl     *string            `json:"provider_base_url"`
-	ExternalOrgID       *string            `json:"external_org_id"`
-	ExternalWorkspaceID *string            `json:"external_workspace_id"`
-	AccessToken         string             `json:"access_token"`
-	RefreshToken        *string            `json:"refresh_token"`
-	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	ID                  int64   `json:"id"`
+	WorkspaceID         int64   `json:"workspace_id"`
+	OrganizationID      int64   `json:"organization_id"`
+	ConnectedByUserID   int64   `json:"connected_by_user_id"`
+	Provider            string  `json:"provider"`
+	ProviderBaseUrl     *string `json:"provider_base_url"`
+	ExternalOrgID       *string `json:"external_org_id"`
+	ExternalWorkspaceID *string `json:"external_workspace_id"`
 }
 
 func (q *Queries) CreateIntegration(ctx context.Context, arg CreateIntegrationParams) (Integration, error) {
@@ -40,26 +36,22 @@ func (q *Queries) CreateIntegration(ctx context.Context, arg CreateIntegrationPa
 		arg.ID,
 		arg.WorkspaceID,
 		arg.OrganizationID,
+		arg.ConnectedByUserID,
 		arg.Provider,
 		arg.ProviderBaseUrl,
 		arg.ExternalOrgID,
 		arg.ExternalWorkspaceID,
-		arg.AccessToken,
-		arg.RefreshToken,
-		arg.ExpiresAt,
 	)
 	var i Integration
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
 		&i.OrganizationID,
+		&i.ConnectedByUserID,
 		&i.Provider,
 		&i.ProviderBaseUrl,
 		&i.ExternalOrgID,
 		&i.ExternalWorkspaceID,
-		&i.AccessToken,
-		&i.RefreshToken,
-		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -76,7 +68,7 @@ func (q *Queries) DeleteIntegration(ctx context.Context, id int64) error {
 }
 
 const getIntegration = `-- name: GetIntegration :one
-SELECT id, workspace_id, organization_id, provider, provider_base_url, external_org_id, external_workspace_id, access_token, refresh_token, expires_at, created_at, updated_at FROM integrations WHERE id = $1
+SELECT id, workspace_id, organization_id, connected_by_user_id, provider, provider_base_url, external_org_id, external_workspace_id, created_at, updated_at FROM integrations WHERE id = $1
 `
 
 func (q *Queries) GetIntegration(ctx context.Context, id int64) (Integration, error) {
@@ -86,13 +78,11 @@ func (q *Queries) GetIntegration(ctx context.Context, id int64) (Integration, er
 		&i.ID,
 		&i.WorkspaceID,
 		&i.OrganizationID,
+		&i.ConnectedByUserID,
 		&i.Provider,
 		&i.ProviderBaseUrl,
 		&i.ExternalOrgID,
 		&i.ExternalWorkspaceID,
-		&i.AccessToken,
-		&i.RefreshToken,
-		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -100,7 +90,7 @@ func (q *Queries) GetIntegration(ctx context.Context, id int64) (Integration, er
 }
 
 const getIntegrationByWorkspaceAndProvider = `-- name: GetIntegrationByWorkspaceAndProvider :one
-SELECT id, workspace_id, organization_id, provider, provider_base_url, external_org_id, external_workspace_id, access_token, refresh_token, expires_at, created_at, updated_at FROM integrations 
+SELECT id, workspace_id, organization_id, connected_by_user_id, provider, provider_base_url, external_org_id, external_workspace_id, created_at, updated_at FROM integrations 
 WHERE workspace_id = $1 AND provider = $2
 `
 
@@ -116,13 +106,11 @@ func (q *Queries) GetIntegrationByWorkspaceAndProvider(ctx context.Context, arg 
 		&i.ID,
 		&i.WorkspaceID,
 		&i.OrganizationID,
+		&i.ConnectedByUserID,
 		&i.Provider,
 		&i.ProviderBaseUrl,
 		&i.ExternalOrgID,
 		&i.ExternalWorkspaceID,
-		&i.AccessToken,
-		&i.RefreshToken,
-		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -130,7 +118,7 @@ func (q *Queries) GetIntegrationByWorkspaceAndProvider(ctx context.Context, arg 
 }
 
 const listIntegrationsByOrganization = `-- name: ListIntegrationsByOrganization :many
-SELECT id, workspace_id, organization_id, provider, provider_base_url, external_org_id, external_workspace_id, access_token, refresh_token, expires_at, created_at, updated_at FROM integrations 
+SELECT id, workspace_id, organization_id, connected_by_user_id, provider, provider_base_url, external_org_id, external_workspace_id, created_at, updated_at FROM integrations 
 WHERE organization_id = $1
 ORDER BY created_at DESC
 `
@@ -148,13 +136,11 @@ func (q *Queries) ListIntegrationsByOrganization(ctx context.Context, organizati
 			&i.ID,
 			&i.WorkspaceID,
 			&i.OrganizationID,
+			&i.ConnectedByUserID,
 			&i.Provider,
 			&i.ProviderBaseUrl,
 			&i.ExternalOrgID,
 			&i.ExternalWorkspaceID,
-			&i.AccessToken,
-			&i.RefreshToken,
-			&i.ExpiresAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -169,7 +155,7 @@ func (q *Queries) ListIntegrationsByOrganization(ctx context.Context, organizati
 }
 
 const listIntegrationsByWorkspace = `-- name: ListIntegrationsByWorkspace :many
-SELECT id, workspace_id, organization_id, provider, provider_base_url, external_org_id, external_workspace_id, access_token, refresh_token, expires_at, created_at, updated_at FROM integrations 
+SELECT id, workspace_id, organization_id, connected_by_user_id, provider, provider_base_url, external_org_id, external_workspace_id, created_at, updated_at FROM integrations 
 WHERE workspace_id = $1
 ORDER BY created_at DESC
 `
@@ -187,13 +173,11 @@ func (q *Queries) ListIntegrationsByWorkspace(ctx context.Context, workspaceID i
 			&i.ID,
 			&i.WorkspaceID,
 			&i.OrganizationID,
+			&i.ConnectedByUserID,
 			&i.Provider,
 			&i.ProviderBaseUrl,
 			&i.ExternalOrgID,
 			&i.ExternalWorkspaceID,
-			&i.AccessToken,
-			&i.RefreshToken,
-			&i.ExpiresAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 		); err != nil {
@@ -207,39 +191,41 @@ func (q *Queries) ListIntegrationsByWorkspace(ctx context.Context, workspaceID i
 	return items, nil
 }
 
-const updateIntegrationTokens = `-- name: UpdateIntegrationTokens :one
+const updateIntegration = `-- name: UpdateIntegration :one
 UPDATE integrations
-SET access_token = $2, refresh_token = $3, expires_at = $4, updated_at = now()
+SET 
+    provider_base_url = coalesce($2, provider_base_url),
+    external_org_id = coalesce($3, external_org_id),
+    external_workspace_id = coalesce($4, external_workspace_id),
+    updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, organization_id, provider, provider_base_url, external_org_id, external_workspace_id, access_token, refresh_token, expires_at, created_at, updated_at
+RETURNING id, workspace_id, organization_id, connected_by_user_id, provider, provider_base_url, external_org_id, external_workspace_id, created_at, updated_at
 `
 
-type UpdateIntegrationTokensParams struct {
-	ID           int64              `json:"id"`
-	AccessToken  string             `json:"access_token"`
-	RefreshToken *string            `json:"refresh_token"`
-	ExpiresAt    pgtype.Timestamptz `json:"expires_at"`
+type UpdateIntegrationParams struct {
+	ID                  int64   `json:"id"`
+	ProviderBaseUrl     *string `json:"provider_base_url"`
+	ExternalOrgID       *string `json:"external_org_id"`
+	ExternalWorkspaceID *string `json:"external_workspace_id"`
 }
 
-func (q *Queries) UpdateIntegrationTokens(ctx context.Context, arg UpdateIntegrationTokensParams) (Integration, error) {
-	row := q.db.QueryRow(ctx, updateIntegrationTokens,
+func (q *Queries) UpdateIntegration(ctx context.Context, arg UpdateIntegrationParams) (Integration, error) {
+	row := q.db.QueryRow(ctx, updateIntegration,
 		arg.ID,
-		arg.AccessToken,
-		arg.RefreshToken,
-		arg.ExpiresAt,
+		arg.ProviderBaseUrl,
+		arg.ExternalOrgID,
+		arg.ExternalWorkspaceID,
 	)
 	var i Integration
 	err := row.Scan(
 		&i.ID,
 		&i.WorkspaceID,
 		&i.OrganizationID,
+		&i.ConnectedByUserID,
 		&i.Provider,
 		&i.ProviderBaseUrl,
 		&i.ExternalOrgID,
 		&i.ExternalWorkspaceID,
-		&i.AccessToken,
-		&i.RefreshToken,
-		&i.ExpiresAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

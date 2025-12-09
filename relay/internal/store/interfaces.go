@@ -41,10 +41,24 @@ type IntegrationStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Integration, error)
 	GetByWorkspaceAndProvider(ctx context.Context, workspaceID int64, provider model.Provider) (*model.Integration, error)
 	Create(ctx context.Context, integration *model.Integration) error
-	UpdateTokens(ctx context.Context, id int64, accessToken string, refreshToken *string, expiresAt *time.Time) error
+	Update(ctx context.Context, integration *model.Integration) error
 	Delete(ctx context.Context, id int64) error
 	ListByWorkspace(ctx context.Context, workspaceID int64) ([]model.Integration, error)
 	ListByOrganization(ctx context.Context, orgID int64) ([]model.Integration, error)
+}
+
+type IntegrationCredentialStore interface {
+	GetByID(ctx context.Context, id int64) (*model.IntegrationCredential, error)
+	GetPrimaryByIntegration(ctx context.Context, integrationID int64) (*model.IntegrationCredential, error)
+	GetByIntegrationAndUser(ctx context.Context, integrationID int64, userID int64) (*model.IntegrationCredential, error)
+	Create(ctx context.Context, cred *model.IntegrationCredential) error
+	UpdateTokens(ctx context.Context, id int64, accessToken string, refreshToken *string, expiresAt *time.Time) error
+	SetAsPrimary(ctx context.Context, integrationID int64, credentialID int64) error
+	Revoke(ctx context.Context, id int64) error
+	RevokeAllByIntegration(ctx context.Context, integrationID int64) error
+	Delete(ctx context.Context, id int64) error
+	ListByIntegration(ctx context.Context, integrationID int64) ([]model.IntegrationCredential, error)
+	ListActiveByIntegration(ctx context.Context, integrationID int64) ([]model.IntegrationCredential, error)
 }
 
 type RepoStore interface {
