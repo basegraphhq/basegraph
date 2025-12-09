@@ -5,6 +5,8 @@ import (
 	"os"
 	"strconv"
 
+	"github.com/joho/godotenv"
+
 	"basegraph.app/relay/core/db"
 )
 
@@ -26,6 +28,10 @@ type OTelConfig struct {
 type Features struct{}
 
 func Load() Config {
+	// if getEnv("RELAY_ENV", "development") == "development" {
+	_ = godotenv.Load(".env")
+	// }
+
 	return Config{
 		Env:  getEnv("RELAY_ENV", "development"),
 		Port: getEnv("PORT", "8080"),
