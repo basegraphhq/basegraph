@@ -38,25 +38,25 @@ func main() {
 	logger.Setup(cfg)
 
 	if telemetry != nil {
-		slog.Info("otel initialized", "endpoint", cfg.OTel.Endpoint)
+		slog.InfoContext(ctx, "otel initialized", "endpoint", cfg.OTel.Endpoint)
 	} else {
-		slog.Info("otel disabled (no endpoint configured)")
+		slog.InfoContext(ctx, "otel disabled (no endpoint configured)")
 	}
 
-	slog.Info("relay starting", "env", cfg.Env, "service", cfg.OTel.ServiceName)
+	slog.InfoContext(ctx, "relay starting", "env", cfg.Env, "service", cfg.OTel.ServiceName)
 
 	if err := id.Init(1); err != nil {
-		slog.Error("failed to initialize snowflake id generator", "error", err)
+		slog.ErrorContext(ctx, "failed to initialize snowflake id generator", "error", err)
 		os.Exit(1)
 	}
 
 	database, err := db.New(ctx, cfg.DB)
 	if err != nil {
-		slog.Error("failed to connect to database", "error", err)
+		slog.ErrorContext(ctx, "failed to connect to database", "error", err)
 		os.Exit(1)
 	}
 	defer database.Close()
-	slog.Info("database connected")
+	slog.InfoContext(ctx, "database connected")
 
 	stores := store.NewStores(database.Queries())
 	services := service.NewServices(stores)
@@ -72,9 +72,9 @@ func main() {
 	}
 
 	go func() {
-		slog.Info("http server starting", "port", cfg.Port)
+		slog.InfoContext(ctx, "http server starting", "port", cfg.Port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			slog.Error("http server error", "error", err)
+			slog.ErrorContext(ctx, "http server error", "error", err)
 			os.Exit(1)
 		}
 	}()
@@ -83,22 +83,22 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	slog.Info("shutting down...")
+	slog.InfoContext(ctx, "shutting down...")
 
 	shutdownCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	if err := server.Shutdown(shutdownCtx); err != nil {
-		slog.Error("http server shutdown error", "error", err)
+		slog.ErrorContext(shutdownCtx, "http server shutdown error", "error", err)
 	}
 
 	if telemetry != nil {
 		if err := telemetry.Shutdown(shutdownCtx); err != nil {
-			slog.Error("otel shutdown error", "error", err)
+			slog.ErrorContext(shutdownCtx, "otel shutdown error", "error", err)
 		}
 	}
 
-	slog.Info("shutdown complete")
+	slog.InfoContext(shutdownCtx, "shutdown complete")
 }
 
 func setupRouter(cfg config.Config, services *service.Services) *gin.Engine {
