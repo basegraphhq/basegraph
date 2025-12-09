@@ -136,9 +136,12 @@ check-ginkgo:
 		exit 1; \
 	}
 
-# Run all tests (BDD with Ginkgo + standard Go tests)
+# Run all tests (unit tests + BDD tests with Ginkgo)
 test: check-ginkgo
-	ginkgo ./...
+	@echo "Running unit tests..."
+	@go test ./common/...
+	@echo "Running BDD tests..."
+	@ginkgo ./...
 
 # Run tests with verbose output
 test-verbose: check-ginkgo

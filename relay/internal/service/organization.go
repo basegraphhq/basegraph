@@ -3,9 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
-	"regexp"
-	"strings"
 
+	"basegraph.app/relay/common"
 	"basegraph.app/relay/common/id"
 	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/store"
@@ -44,11 +43,14 @@ func (s *organizationService) Create(ctx context.Context, name string, slug *str
 }
 
 func (s *organizationService) ensureSlug(ctx context.Context, name string, slug *string) (string, error) {
-	base := ""
+	input := name
 	if slug != nil && *slug != "" {
-		base = *slug
-	} else {
-		base = slugify(name)
+		input = *slug
+	}
+
+	base, err := common.Slugify(input, "org")
+	if err != nil {
+		return "", fmt.Errorf("generating slug: %w", err)
 	}
 
 	// Fast path
@@ -72,16 +74,4 @@ func (s *organizationService) ensureSlug(ctx context.Context, name string, slug 
 	}
 
 	return "", fmt.Errorf("unable to find available slug for %q", base)
-}
-
-var nonSlugChars = regexp.MustCompile(`[^a-z0-9]+`)
-
-func slugify(input string) string {
-	lower := strings.ToLower(strings.TrimSpace(input))
-	slug := nonSlugChars.ReplaceAllString(lower, "-")
-	slug = strings.Trim(slug, "-")
-	if slug == "" {
-		return "org"
-	}
-	return slug
 }
