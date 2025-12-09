@@ -205,6 +205,10 @@ If something doesn't make sense, ask. If there are multiple valid approaches, as
 - Vendor all dependencies: `go mod vendor`
 - Use Go 1.24+ (for tool directive support)
 
+**Configuration:**
+- Config is loaded from environment variables
+- `.env` file is loaded if present (for all environments)
+
 **Database:**
 - **sqlc** for type-safe query generation
 - **goose** for migrations
@@ -416,12 +420,14 @@ A company or team using Relay. Contains users and workspaces.
 A container within an organization. Groups related repositories and integrations. Think of it as a "project" or "team space."
 
 ### Integration
-A connection to an external service:
-- **Git providers**: GitLab, GitHub
-- **Project management**: Linear, Jira
-- **Communication**: Slack (future)
+A connection to an external service. Each integration has one or more **capabilities**:
+- `code_repo`: Source code, MRs/PRs (GitLab, GitHub)
+- `issue_tracker`: Issues, projects, sprints (GitLab, GitHub, Linear, Jira)
+- `wiki`: Wiki pages (GitLab, GitHub, Notion)
+- `documentation`: Docs, knowledge base (Notion)
+- `communication`: Messages, threads (Slack)
 
-Each integration stores OAuth tokens and provider-specific configuration.
+Providers like GitLab and GitHub have multiple capabilities (both code_repo and issue_tracker). Each integration stores OAuth tokens and provider-specific configuration.
 
 ### Repository
 A codebase connected through an integration. Relay indexes repositories to build code graphs.
