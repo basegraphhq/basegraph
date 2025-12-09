@@ -249,6 +249,13 @@ service/
 - Return errors, don't panic
 - Wrap errors with context: `fmt.Errorf("creating spec: %w", err)`
 
+**Code formatting:**
+- Always use `make format` to format Go code (runs `gofumpt`, stricter than `gofmt`)
+- Format before committing, after generating code (sqlc, mocks), or when seeing inconsistencies
+- Never manually format Go code or use `gofmt` directly
+- `gofumpt` enforces consistent spacing, removes unnecessary blank lines, standardizes import grouping
+- Run from service root (`relay/` or `codegraph/`)
+
 **ID generation:**
 - All database primary keys use Snowflake IDs (64-bit integers)
 - Use `common/id.New()` to generate new IDs in the service layer

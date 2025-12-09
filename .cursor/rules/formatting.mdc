@@ -1,0 +1,26 @@
+---
+alwaysApply: true
+---
+# Code Formatting
+
+## Go Projects
+
+**Always use `make format`** to format Go code. This command runs `gofumpt`, which is stricter than `gofmt`.
+
+**When to format:**
+- Before committing changes
+- After generating code (sqlc, mocks, etc.)
+- When you see formatting inconsistencies
+
+**What it does:**
+- Enforces consistent spacing and alignment
+- Removes unnecessary blank lines
+- Standardizes import grouping
+- Applies stricter formatting rules than standard `gofmt`
+
+**Never:**
+- Manually format Go code
+- Use `gofmt` directly (use `make format` instead)
+- Commit unformatted code
+
+Run `make format` from the service root (`relay/` or `codegraph/`).
