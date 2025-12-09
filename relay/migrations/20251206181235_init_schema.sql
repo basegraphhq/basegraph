@@ -56,13 +56,16 @@ create table integrations(
     id bigint primary key,
     workspace_id bigint not null references workspaces(id),
     organization_id bigint not null references organizations(id),
-    connected_by_user_id bigint not null references users(id),
+    setup_by_user_id bigint not null references users(id),
 
     provider text not null,
+    capabilities text[] not null default '{}',
     provider_base_url text,
 
     external_org_id text,
     external_workspace_id text,
+
+    is_enabled boolean not null default true,
 
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
@@ -72,7 +75,7 @@ create table integrations(
 
 create index idx_integrations_workspace_id on integrations (workspace_id);
 create index idx_integrations_organization_id on integrations (organization_id);
-create index idx_integrations_connected_by_user_id on integrations (connected_by_user_id);
+create index idx_integrations_setup_by_user_id on integrations (setup_by_user_id);
 create index idx_integrations_provider_external_org_id on integrations (provider, external_org_id);
 create index idx_integrations_provider_external_workspace_id on integrations (provider, external_workspace_id);
 
