@@ -70,7 +70,18 @@ export async function POST(req: Request) {
     }
 
     const orgData = await createOrgResponse.json()
-    return NextResponse.json(orgData)
+    
+    // Set onboarding cookie to mark organization creation complete
+    const res = NextResponse.json(orgData)
+    res.cookies.set('relay-onboarding-complete', 'true', {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 365, // 1 year
+      path: '/',
+    })
+    
+    return res
 
   } catch (error) {
     console.error('Error creating organization:', error)

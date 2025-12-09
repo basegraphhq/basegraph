@@ -39,7 +39,20 @@ export async function POST() {
     }
 
     const data = await response.json()
-    return NextResponse.json(data)
+    
+    // Set onboarding cookie based on organization status
+    const hasOrg = data.has_organization === true
+    const res = NextResponse.json(data)
+    
+    res.cookies.set('relay-onboarding-complete', String(hasOrg), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 365, // 1 year
+      path: '/',
+    })
+    
+    return res
 
   } catch (error) {
     console.error('Error syncing user:', error)

@@ -150,6 +150,14 @@ Based on a 4px grid:
 --header-height: 3.5rem;                  /* Top bar height */
 ```
 
+### Form Spacing (Vercel-inspired rhythm)
+
+- Label → input: `8px` (use `space-y-2`)
+- Input → helper text: `12px` (e.g., `space-y-2` plus a small `mt-1`)
+- Between field groups: `24px` (`space-y-6`)
+- CTA spacing: at least `24px` above primary actions
+- Keep helper text at `text-sm` with `leading-5` for legibility
+
 ---
 
 ## Layout Utilities

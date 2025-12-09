@@ -106,6 +106,13 @@ Next.js web application for the Relay UI.
 - `components/` - React components (shadcn/ui based)
 - `lib/` - Utilities and auth helpers
 - `hooks/` - Custom React hooks
+- `proxy.ts` - Route protection and onboarding checks
+
+**Onboarding:**
+- Next.js proxy enforces organization setup requirements server-side
+- Checks `relay-onboarding-complete` cookie before rendering `/dashboard/*` (and redirects landing `/` for signed-in users)
+- Cookie managed by API routes (`/api/user/sync`, `/api/organization/create`)
+- Architecture supports migration to JWT-based claims (planned with WorkOS)
 
 ---
 

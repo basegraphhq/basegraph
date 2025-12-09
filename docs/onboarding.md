@@ -350,6 +350,104 @@ No public workspace creation endpoint yet. Workspaces are auto-created with orgs
 
 ---
 
+---
+
+## Dashboard Integration
+
+### Proxy-Based Route Protection
+
+The dashboard uses a Next.js proxy file to enforce onboarding requirements server-side before pages render.
+
+**Implementation:** `dashboard/proxy.ts` intercepts `/` and `/dashboard/*` routes and checks onboarding status via cookie:
+
+```typescript
+// dashboard/proxy.ts
+export function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl
+  
+  // Check dashboard routes (except onboarding page)
+  if (pathname.startsWith('/dashboard') && pathname !== '/dashboard/onboarding') {
+    const hasOrganization = request.cookies.get('relay-onboarding-complete')?.value === 'true'
+    
+    if (!hasOrganization) {
+      // Redirect to onboarding BEFORE page renders
+      return NextResponse.redirect(new URL('/dashboard/onboarding', request.url))
+    }
+  }
+  
+  // If on onboarding but already completed, redirect to dashboard
+  if (pathname === '/dashboard/onboarding') {
+    const hasOrganization = request.cookies.get('relay-onboarding-complete')?.value === 'true'
+    
+    if (hasOrganization) {
+      return NextResponse.redirect(new URL('/dashboard', request.url))
+    }
+  }
+  
+  return NextResponse.next()
+}
+```
+
+### Onboarding Status Cookie
+
+The `relay-onboarding-complete` cookie tracks organization setup state.
+
+**Cookie lifecycle:**
+- Set by `/api/user/sync` based on `has_organization` from backend
+- Set by `/api/organization/create` after successful organization creation
+- Checked by proxy on every `/dashboard/*` request
+
+**Cookie attributes:**
+```typescript
+{
+  httpOnly: true,  // Not accessible from JavaScript
+  secure: true,    // HTTPS-only in production
+  sameSite: 'lax', // CSRF protection
+  maxAge: 31536000, // 1 year
+  path: '/',
+}
+```
+
+### Request Flow
+
+**First-time user:**
+1. Sign in → Better Auth creates session
+2. Navigate to `/dashboard`
+3. Proxy checks cookie → not present → redirect to `/dashboard/onboarding`
+4. Onboarding page renders, calls `/api/user/sync` (sets cookie based on backend response)
+5. User creates organization → `/api/organization/create` sets cookie
+6. Redirect to `/dashboard`
+7. Proxy checks cookie → present → allow access
+
+**Returning user:**
+1. Sign in
+2. Navigate to `/dashboard`
+3. Proxy checks cookie → present → allow access immediately
+
+### Authentication Provider Migration
+
+The proxy architecture supports switching authentication providers with minimal code changes.
+
+**Current implementation (Better Auth):**
+- Onboarding state stored in `relay-onboarding-complete` cookie
+- Cookie managed by dashboard API routes
+- Proxy reads cookie to determine access
+
+**WorkOS migration path:**
+- Onboarding state stored in JWT claims via WorkOS user metadata
+- JWT managed by WorkOS AuthKit
+- Proxy reads JWT claim to determine access
+
+**Migration involves:**
+1. Configure WorkOS JWT template to include custom claims
+2. Store `has_organization` in WorkOS user metadata (updated after org creation)
+3. Update proxy to read from session JWT instead of cookie
+4. Remove cookie management from API routes
+
+The proxy structure and redirect logic remain unchanged.
+
+---
+
 ## Summary
 
 - **User sync** upserts by email; idempotent, returns orgs.
@@ -357,10 +455,13 @@ No public workspace creation endpoint yet. Workspaces are auto-created with orgs
 - **Workspaces** are org-scoped, slug-based, renameable; one per org for now.
 - **Slugs** are human-readable, collision-safe (numeric suffix fallback).
 - **Transactions** ensure atomic org + workspace creation; no orphaned state.
+- **Proxy** enforces onboarding requirements server-side before page render.
+- **Cookie-based** onboarding state tracking (current); JWT claims (planned with WorkOS).
 - **Pre-beta simplicity:** Single default workspace per org; multi-workspace UX deferred.
 
 For implementation details, see:
 - Org service: `relay/internal/service/organization.go`
 - User service: `relay/internal/service/user.go`
 - Transaction runner: `relay/internal/service/txrunner.go`
+- Dashboard proxy: `dashboard/proxy.ts`
 - Tests: `relay/internal/service/organization_test.go`
