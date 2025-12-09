@@ -58,7 +58,7 @@ export function TopNavBar() {
               style={{ transitionDuration: 'var(--duration-fast)' }}
             >
               <Avatar className="h-7 w-7">
-                <AvatarImage src={session?.user?.image || ""} alt={session?.user?.name || ""} />
+                <AvatarImage src={session?.user?.image || undefined} alt={session?.user?.name || ""} />
                 <AvatarFallback className="text-xs bg-muted">
                   {session?.user?.name?.slice(0, 2).toUpperCase() || "U"}
                 </AvatarFallback>

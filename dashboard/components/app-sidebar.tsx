@@ -70,7 +70,7 @@ export function AppSidebar() {
                   className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground focus-visible:ring-0"
                 >
                   <Avatar className="h-8 w-8 rounded-lg">
-                    <AvatarImage src={session?.user?.image || ""} alt={session?.user?.name || ""} />
+                    <AvatarImage src={session?.user?.image || undefined} alt={session?.user?.name || ""} />
                     <AvatarFallback className="rounded-lg">
                       {session?.user?.name?.slice(0, 2).toUpperCase() || "U"}
                     </AvatarFallback>
