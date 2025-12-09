@@ -49,7 +49,7 @@ function DashboardContent() {
     }
   }, [isPending, session, router])
 
-  // Sync user to Airtable (runs once per session)
+  // Sync user to Relay (runs once per session)
   useEffect(() => {
     if (!isPending && session && !hasSynced.current) {
       hasSynced.current = true
@@ -59,13 +59,15 @@ function DashboardContent() {
         .then((data) => {
           if (data.error) {
             console.error("Failed to sync user:", data)
+          } else if (data.has_organization === false) {
+            router.push("/dashboard/onboarding")
           }
         })
         .catch((err) => {
           console.error("Error syncing user:", err)
         })
     }
-  }, [isPending, session])
+  }, [isPending, session, router])
 
   // Check if returning from GitLab OAuth and fetch projects
   useEffect(() => {
