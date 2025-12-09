@@ -30,6 +30,11 @@ import {
   Key,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 
 interface GitLabConnectPanelProps {
   children: React.ReactNode
@@ -315,21 +320,31 @@ export function GitLabConnectPanel({ children, onConnect }: GitLabConnectPanelPr
                   'Test Connection'
                 )}
               </Button>
-              <Button
-                className="flex-1"
-                disabled={testStatus !== 'success' || connectLoading}
-                title={testStatus !== 'success' ? 'Test the connection first' : undefined}
-                onClick={handleConnect}
-              >
-                {connectLoading ? (
-                  <>
-                    <Loader2 className="size-4 animate-spin" />
-                    Connecting...
-                  </>
-                ) : (
-                  'Connect'
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex-1">
+                    <Button
+                      className="w-full"
+                      disabled={testStatus !== 'success' || connectLoading}
+                      onClick={handleConnect}
+                    >
+                      {connectLoading ? (
+                        <>
+                          <Loader2 className="size-4 animate-spin" />
+                          Connecting...
+                        </>
+                      ) : (
+                        'Connect'
+                      )}
+                    </Button>
+                  </span>
+                </TooltipTrigger>
+                {testStatus !== 'success' && (
+                  <TooltipContent>
+                    Test the connection first
+                  </TooltipContent>
                 )}
-              </Button>
+              </Tooltip>
             </div>
           </div>
         </div>
