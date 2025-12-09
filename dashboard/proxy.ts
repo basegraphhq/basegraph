@@ -1,39 +1,87 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
+import { fetchHasOrganization } from '@/lib/relay-client'
 
-export function proxy(request: NextRequest) {
+const ONBOARDING_COOKIE = 'relay-onboarding-complete'
+const SESSION_COOKIES = [
+  'better-auth.session_token',
+  'better-auth.session',
+  'auth_session',
+]
+
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
-  const hasOrganization =
-    request.cookies.get('relay-onboarding-complete')?.value === 'true'
 
-  // Landing page: if authenticated, send to dashboard or onboarding
-  if (pathname === '/') {
-    const sessionCookie =
-      request.cookies.get('better-auth.session_token') ??
-      request.cookies.get('better-auth.session') ??
-      request.cookies.get('auth_session')
+  const hasSession = SESSION_COOKIES.some(
+    (name) => request.cookies.get(name)?.value,
+  )
+  const hasOrgCookie =
+    request.cookies.get(ONBOARDING_COOKIE)?.value === 'true'
 
-    if (sessionCookie?.value) {
-      const target = hasOrganization ? '/dashboard' : '/dashboard/onboarding'
-      return NextResponse.redirect(new URL(target, request.url))
+  // No session: treat as logged out
+  if (!hasSession) {
+    if (pathname.startsWith('/dashboard')) {
+      return NextResponse.redirect(new URL('/', request.url))
     }
+    return NextResponse.next()
+  }
+
+  // Session present, but missing onboarding cookie: re-derive from backend
+  let hasOrganization = hasOrgCookie
+  let responseToSetCookie: NextResponse | undefined
+
+  if (!hasOrgCookie) {
+    const derived = await fetchHasOrganization({
+      baseUrl: request.nextUrl.origin,
+      headers: {
+        cookie: request.headers.get('cookie') ?? '',
+      },
+    })
+    if (derived === null) {
+      // If we cannot determine, fall back to logged-out behavior
+      return NextResponse.redirect(new URL('/', request.url))
+    }
+    hasOrganization = derived
+  }
+
+  // Landing page: redirect authenticated users appropriately
+  if (pathname === '/') {
+    const target = hasOrganization ? '/dashboard' : '/dashboard/onboarding'
+    responseToSetCookie = NextResponse.redirect(new URL(target, request.url))
   }
 
   // Dashboard pages (exclude onboarding page itself)
-  if (pathname.startsWith('/dashboard') && pathname !== '/dashboard/onboarding') {
+  if (!responseToSetCookie && pathname.startsWith('/dashboard') && pathname !== '/dashboard/onboarding') {
     if (!hasOrganization) {
-      return NextResponse.redirect(new URL('/dashboard/onboarding', request.url))
+      responseToSetCookie = NextResponse.redirect(
+        new URL('/dashboard/onboarding', request.url),
+      )
     }
   }
 
   // If on onboarding page but already has organization, redirect to dashboard
-  if (pathname === '/dashboard/onboarding') {
+  if (!responseToSetCookie && pathname === '/dashboard/onboarding') {
     if (hasOrganization) {
-      return NextResponse.redirect(new URL('/dashboard', request.url))
+      responseToSetCookie = NextResponse.redirect(
+        new URL('/dashboard', request.url),
+      )
     }
   }
 
-  return NextResponse.next()
+  const res = responseToSetCookie ?? NextResponse.next()
+
+  // If we re-derived org status, persist the cookie for speed next time
+  if (!hasOrgCookie) {
+    res.cookies.set(ONBOARDING_COOKIE, String(hasOrganization), {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'lax',
+      maxAge: 60 * 60 * 24 * 365, // 1 year
+      path: '/',
+    })
+  }
+
+  return res
 }
 
 export const config = {
