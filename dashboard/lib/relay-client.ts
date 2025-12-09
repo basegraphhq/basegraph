@@ -25,3 +25,31 @@ export async function testGitLabConnection(payload: {
 
   return res.json()
 }
+
+/**
+ * Fetches onboarding status from the dashboard's sync endpoint.
+ * Returns true/false when determinable, or null on failure.
+ */
+export async function fetchHasOrganization(options?: {
+  baseUrl?: string
+  headers?: HeadersInit
+}): Promise<boolean | null> {
+  const { baseUrl = '', headers } = options ?? {}
+  const url = `${baseUrl}/api/user/sync`
+
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers,
+    })
+
+    if (!res.ok) {
+      return null
+    }
+
+    const data = await res.json()
+    return data?.has_organization === true
+  } catch {
+    return null
+  }
+}
