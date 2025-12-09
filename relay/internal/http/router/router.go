@@ -19,5 +19,8 @@ func SetupRoutes(router *gin.Engine, services *service.Services) {
 
 		orgHandler := handler.NewOrganizationHandler(services.Organizations())
 		OrganizationRouter(v1.Group("/organizations"), orgHandler)
+
+		gitlabHandler := handler.NewGitLabHandler(services.GitLab())
+		GitLabRouter(v1.Group("/integrations/gitlab"), gitlabHandler)
 	}
 }

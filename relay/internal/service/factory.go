@@ -1,15 +1,20 @@
 package service
 
 import (
+	"basegraph.app/relay/internal/service/integration"
 	"basegraph.app/relay/internal/store"
 )
 
 type Services struct {
-	stores *store.Stores
+	stores   *store.Stores
+	txRunner TxRunner
 }
 
-func NewServices(stores *store.Stores) *Services {
-	return &Services{stores: stores}
+func NewServices(stores *store.Stores, txRunner TxRunner) *Services {
+	return &Services{
+		stores:   stores,
+		txRunner: txRunner,
+	}
 }
 
 func (s *Services) Users() UserService {
@@ -17,5 +22,9 @@ func (s *Services) Users() UserService {
 }
 
 func (s *Services) Organizations() OrganizationService {
-	return NewOrganizationService(s.stores.Organizations())
+	return NewOrganizationService(s.txRunner)
+}
+
+func (s *Services) GitLab() integration.GitLabService {
+	return integration.NewGitLabService()
 }

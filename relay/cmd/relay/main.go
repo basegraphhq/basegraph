@@ -59,7 +59,7 @@ func main() {
 	slog.InfoContext(ctx, "database connected")
 
 	stores := store.NewStores(database.Queries())
-	services := service.NewServices(stores)
+	services := service.NewServices(stores, service.NewTxRunner(database))
 
 	if cfg.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)

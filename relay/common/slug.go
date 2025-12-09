@@ -7,8 +7,8 @@ import (
 )
 
 var (
-	ErrEmptySlug  = errors.New("slug cannot be empty")
-	nonSlugChars  = regexp.MustCompile(`[^a-z0-9]+`)
+	ErrEmptySlug = errors.New("slug cannot be empty")
+	nonSlugChars = regexp.MustCompile(`[^a-z0-9]+`)
 )
 
 func Slugify(input, fallback string) (string, error) {

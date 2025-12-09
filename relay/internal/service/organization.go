@@ -15,34 +15,53 @@ type OrganizationService interface {
 }
 
 type organizationService struct {
-	orgStore store.OrganizationStore
+	tx TxRunner
 }
 
-func NewOrganizationService(orgStore store.OrganizationStore) OrganizationService {
-	return &organizationService{orgStore: orgStore}
+func NewOrganizationService(tx TxRunner) OrganizationService {
+	return &organizationService{
+		tx: tx,
+	}
 }
 
 func (s *organizationService) Create(ctx context.Context, name string, slug *string, adminUserID int64) (*model.Organization, error) {
-	finalSlug, err := s.ensureSlug(ctx, name, slug)
+	var createdOrg *model.Organization
+
+	err := s.tx.WithTx(ctx, func(stores StoreProvider) error {
+		orgStore := stores.Organizations()
+		workspaceStore := stores.Workspaces()
+
+		finalSlug, err := s.ensureOrgSlug(ctx, orgStore, name, slug)
+		if err != nil {
+			return err
+		}
+
+		org := &model.Organization{
+			ID:          id.New(),
+			AdminUserID: adminUserID,
+			Name:        name,
+			Slug:        finalSlug,
+		}
+
+		if err := orgStore.Create(ctx, org); err != nil {
+			return fmt.Errorf("creating organization: %w", err)
+		}
+
+		if err := s.createDefaultWorkspace(ctx, workspaceStore, org, adminUserID); err != nil {
+			return fmt.Errorf("creating default workspace: %w", err)
+		}
+
+		createdOrg = org
+		return nil
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	org := &model.Organization{
-		ID:          id.New(),
-		AdminUserID: adminUserID,
-		Name:        name,
-		Slug:        finalSlug,
-	}
-
-	if err := s.orgStore.Create(ctx, org); err != nil {
-		return nil, fmt.Errorf("creating organization: %w", err)
-	}
-
-	return org, nil
+	return createdOrg, nil
 }
 
-func (s *organizationService) ensureSlug(ctx context.Context, name string, slug *string) (string, error) {
+func (s *organizationService) ensureOrgSlug(ctx context.Context, orgStore store.OrganizationStore, name string, slug *string) (string, error) {
 	input := name
 	if slug != nil && *slug != "" {
 		input = *slug
@@ -54,7 +73,7 @@ func (s *organizationService) ensureSlug(ctx context.Context, name string, slug 
 	}
 
 	// Fast path
-	if _, err := s.orgStore.GetBySlug(ctx, base); err != nil {
+	if _, err := orgStore.GetBySlug(ctx, base); err != nil {
 		if err == store.ErrNotFound {
 			return base, nil
 		}
@@ -64,7 +83,7 @@ func (s *organizationService) ensureSlug(ctx context.Context, name string, slug 
 	// Add numeric suffix until available
 	for i := 1; i <= 20; i++ {
 		candidate := fmt.Sprintf("%s-%d", base, i)
-		_, err := s.orgStore.GetBySlug(ctx, candidate)
+		_, err := orgStore.GetBySlug(ctx, candidate)
 		if err == store.ErrNotFound {
 			return candidate, nil
 		}
@@ -74,4 +93,53 @@ func (s *organizationService) ensureSlug(ctx context.Context, name string, slug 
 	}
 
 	return "", fmt.Errorf("unable to find available slug for %q", base)
+}
+
+func (s *organizationService) createDefaultWorkspace(ctx context.Context, workspaceStore store.WorkspaceStore, org *model.Organization, adminUserID int64) error {
+	wsSlug, err := s.ensureWorkspaceSlug(ctx, workspaceStore, org.ID, org.Name)
+	if err != nil {
+		return err
+	}
+
+	ws := &model.Workspace{
+		ID:             id.New(),
+		AdminUserID:    adminUserID,
+		OrganizationID: org.ID,
+		UserID:         adminUserID,
+		Name:           fmt.Sprintf("%s workspace", org.Name),
+		Slug:           wsSlug,
+	}
+
+	if err := workspaceStore.Create(ctx, ws); err != nil {
+		return fmt.Errorf("creating workspace: %w", err)
+	}
+
+	return nil
+}
+
+func (s *organizationService) ensureWorkspaceSlug(ctx context.Context, workspaceStore store.WorkspaceStore, orgID int64, orgName string) (string, error) {
+	base, err := common.Slugify(orgName, "workspace")
+	if err != nil {
+		return "", fmt.Errorf("generating workspace slug: %w", err)
+	}
+
+	if _, err := workspaceStore.GetByOrgAndSlug(ctx, orgID, base); err != nil {
+		if err == store.ErrNotFound {
+			return base, nil
+		}
+		return "", fmt.Errorf("checking workspace slug availability: %w", err)
+	}
+
+	for i := 1; i <= 20; i++ {
+		candidate := fmt.Sprintf("%s-%d", base, i)
+		_, err := workspaceStore.GetByOrgAndSlug(ctx, orgID, candidate)
+		if err == store.ErrNotFound {
+			return candidate, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("checking workspace slug availability: %w", err)
+		}
+	}
+
+	return "", fmt.Errorf("unable to find available workspace slug for %q", base)
 }
