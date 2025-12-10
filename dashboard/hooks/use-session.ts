@@ -26,3 +26,4 @@ export function useSession(): UseSessionReturn {
     isPending: status === 'loading',
   }
 }
+

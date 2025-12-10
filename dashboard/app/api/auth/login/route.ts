@@ -36,3 +36,4 @@ export async function GET() {
     return NextResponse.redirect(new URL('/?auth_error=login_failed', process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'))
   }
 }
+
