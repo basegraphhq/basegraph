@@ -7,18 +7,18 @@ import (
 )
 
 type CreateUserRequest struct {
+	AvatarURL *string `json:"avatar_url,omitempty" binding:"omitempty,url,max=2048"`
 	Name      string  `json:"name" binding:"required,min=1,max=255"`
 	Email     string  `json:"email" binding:"required,email,max=255"`
-	AvatarURL *string `json:"avatar_url,omitempty" binding:"omitempty,url,max=2048"`
 }
 
 type UserResponse struct {
-	ID        int64     `json:"id,string"`
-	Name      string    `json:"name"`
-	Email     string    `json:"email"`
-	AvatarURL *string   `json:"avatar_url,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+	AvatarURL *string   `json:"avatar_url,omitempty"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email"`
+	ID        int64     `json:"id,string"`
 }
 
 func ToUserResponse(u *model.User) *UserResponse {
@@ -33,9 +33,9 @@ func ToUserResponse(u *model.User) *UserResponse {
 }
 
 type SyncUserRequest struct {
+	AvatarURL *string `json:"avatar_url,omitempty" binding:"omitempty,url,max=2048"`
 	Name      string  `json:"name" binding:"required,min=1,max=255"`
 	Email     string  `json:"email" binding:"required,email,max=255"`
-	AvatarURL *string `json:"avatar_url,omitempty" binding:"omitempty,url,max=2048"`
 }
 
 type SyncUserResponse struct {
@@ -45,9 +45,9 @@ type SyncUserResponse struct {
 }
 
 type OrganizationBrief struct {
-	ID   int64  `json:"id,string"`
 	Name string `json:"name"`
 	Slug string `json:"slug"`
+	ID   int64  `json:"id,string"`
 }
 
 func ToOrganizationBrief(org model.Organization) OrganizationBrief {

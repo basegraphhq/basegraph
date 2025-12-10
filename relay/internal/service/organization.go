@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"basegraph.app/relay/common"
@@ -74,7 +75,7 @@ func (s *organizationService) ensureOrgSlug(ctx context.Context, orgStore store.
 
 	// Fast path
 	if _, err := orgStore.GetBySlug(ctx, base); err != nil {
-		if err == store.ErrNotFound {
+		if errors.Is(err, store.ErrNotFound) {
 			return base, nil
 		}
 		return "", fmt.Errorf("checking slug availability: %w", err)
@@ -84,7 +85,7 @@ func (s *organizationService) ensureOrgSlug(ctx context.Context, orgStore store.
 	for i := 1; i <= 20; i++ {
 		candidate := fmt.Sprintf("%s-%d", base, i)
 		_, err := orgStore.GetBySlug(ctx, candidate)
-		if err == store.ErrNotFound {
+		if errors.Is(err, store.ErrNotFound) {
 			return candidate, nil
 		}
 		if err != nil {
@@ -124,7 +125,7 @@ func (s *organizationService) ensureWorkspaceSlug(ctx context.Context, workspace
 	}
 
 	if _, err := workspaceStore.GetByOrgAndSlug(ctx, orgID, base); err != nil {
-		if err == store.ErrNotFound {
+		if errors.Is(err, store.ErrNotFound) {
 			return base, nil
 		}
 		return "", fmt.Errorf("checking workspace slug availability: %w", err)
@@ -133,7 +134,7 @@ func (s *organizationService) ensureWorkspaceSlug(ctx context.Context, workspace
 	for i := 1; i <= 20; i++ {
 		candidate := fmt.Sprintf("%s-%d", base, i)
 		_, err := workspaceStore.GetByOrgAndSlug(ctx, orgID, candidate)
-		if err == store.ErrNotFound {
+		if errors.Is(err, store.ErrNotFound) {
 			return candidate, nil
 		}
 		if err != nil {
