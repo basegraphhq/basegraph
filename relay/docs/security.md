@@ -4,13 +4,10 @@
 
 ### PostgreSQL SSL Mode Setup
 - [ ] **Configure SSL mode for Railway PostgreSQL**
-  - Set `DATABASE_SSLMODE=require` in Railway environment variables
+  - Set `DATABASE_URL` with `sslmode=require` in Railway environment variables
   - Railway uses self-signed certificates, so use `require` (not `verify-full`)
   - Never use `sslmode=disable` in production
-
-- [ ] **Update default SSL mode in code** (optional improvement)
-  - Consider updating `core/config/config.go` to default to `require` for production environments
-  - Keep `disable` as default for local development only
+  - Example: `postgres://user:password@host:port/dbname?sslmode=require`
 
 - [ ] **Verify SSL connection**
   - Test database connection with SSL enabled
@@ -18,7 +15,7 @@
   - Verify encrypted connection in production
 
 ### Current Configuration
-- Default SSL mode: `disable` (line 44 in `core/config/config.go`)
-- Environment variable: `DATABASE_SSLMODE` (can override default)
-- For Railway: Set `DATABASE_SSLMODE=require` in production
+- Environment variable: `DATABASE_URL` (single connection string)
+- Default: `postgres://postgres:postgres@localhost:5432/basegraph?sslmode=disable` (development only)
+- For Railway: Set `DATABASE_URL` with `sslmode=require` in production
 
