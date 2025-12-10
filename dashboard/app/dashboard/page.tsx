@@ -1,14 +1,15 @@
 "use client"
 
-import { useSession } from "@/lib/auth-client"
+import { useSession } from "@/hooks/use-session"
 import { Typewriter } from "@/components/typewriter"
 import { useRouter } from "next/navigation"
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useState } from "react"
 import { Card } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Check, Gitlab } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { GitLabConnectPanel } from "@/components/gitlab-connect-panel"
+
 const messages = [
   "Connect your tools to enable Relay's code analysis and context gathering.",
   "Then generate production-ready specs from your repositories in seconds.",
@@ -17,38 +18,13 @@ const messages = [
 export default function DashboardPage() {
   const { data: session, isPending } = useSession()
   const router = useRouter()
-  const hasSynced = useRef(false)
   
-  // Integration states
   const [gitlabConnected, setGitlabConnected] = useState(false)
-  
-  // Animation state
   const [showCard, setShowCard] = useState(false)
 
-  // Redirect to home if not authenticated
   useEffect(() => {
     if (!isPending && !session) {
       router.push("/")
-    }
-  }, [isPending, session, router])
-
-  // Sync user to Relay (runs once per session)
-  useEffect(() => {
-    if (!isPending && session && !hasSynced.current) {
-      hasSynced.current = true
-      
-      fetch("/api/user/sync", { method: "POST" })
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.error) {
-            console.error("Failed to sync user:", data)
-          } else if (data.has_organization === false) {
-            router.push("/dashboard/onboarding")
-          }
-        })
-        .catch((err) => {
-          console.error("Error syncing user:", err)
-        })
     }
   }, [isPending, session, router])
 

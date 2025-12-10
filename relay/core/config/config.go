@@ -10,11 +10,19 @@ import (
 )
 
 type Config struct {
-	Features Features
-	OTel     OTelConfig
-	Env      string
-	Port     string
-	DB       db.Config
+	Features     Features
+	OTel         OTelConfig
+	WorkOS       WorkOSConfig
+	Env          string
+	Port         string
+	DashboardURL string
+	DB           db.Config
+}
+
+type WorkOSConfig struct {
+	APIKey      string
+	ClientID    string
+	RedirectURI string
 }
 
 type OTelConfig struct {
@@ -32,8 +40,9 @@ func Load() Config {
 	}
 
 	return Config{
-		Env:  getEnv("RELAY_ENV", "development"),
-		Port: getEnv("PORT", "8080"),
+		Env:          getEnv("RELAY_ENV", "development"),
+		Port:         getEnv("PORT", "8080"),
+		DashboardURL: getEnv("DASHBOARD_URL", "http://localhost:3000"),
 		DB: db.Config{
 			DSN:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/basegraph?sslmode=disable"),
 			MaxConns: getEnvInt32("DB_MAX_CONNS", 10),
@@ -44,6 +53,11 @@ func Load() Config {
 			Headers:        getEnv("OTEL_EXPORTER_OTLP_HEADERS", ""),
 			ServiceName:    getEnv("OTEL_SERVICE_NAME", "relay"),
 			ServiceVersion: getEnv("OTEL_SERVICE_VERSION", "dev"),
+		},
+		WorkOS: WorkOSConfig{
+			APIKey:      getEnv("WORKOS_API_KEY", ""),
+			ClientID:    getEnv("WORKOS_CLIENT_ID", ""),
+			RedirectURI: getEnv("WORKOS_REDIRECT_URI", "http://localhost:8080/auth/callback"),
 		},
 		Features: Features{},
 	}
@@ -59,6 +73,10 @@ func (c Config) IsDevelopment() bool {
 
 func (c OTelConfig) Enabled() bool {
 	return c.Endpoint != ""
+}
+
+func (c WorkOSConfig) Enabled() bool {
+	return c.APIKey != "" && c.ClientID != ""
 }
 
 func getEnv(key, fallback string) string {

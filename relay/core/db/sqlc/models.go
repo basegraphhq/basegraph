@@ -97,6 +97,7 @@ type User struct {
 	Name      string             `json:"name"`
 	Email     string             `json:"email"`
 	AvatarUrl *string            `json:"avatar_url"`
+	WorkosID  *string            `json:"workos_id"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }

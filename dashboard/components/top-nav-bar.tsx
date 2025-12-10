@@ -1,6 +1,7 @@
 "use client"
 
-import { useSession, signOut } from "@/lib/auth-client"
+import { useSession } from "@/hooks/use-session"
+import { signOut } from "@/lib/auth"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import * as React from "react"
@@ -58,7 +59,7 @@ export function TopNavBar() {
               style={{ transitionDuration: 'var(--duration-fast)' }}
             >
               <Avatar className="h-7 w-7">
-                <AvatarImage src={session?.user?.image || undefined} alt={session?.user?.name || ""} />
+                <AvatarImage src={session?.user?.avatar_url || undefined} alt={session?.user?.name || ""} />
                 <AvatarFallback className="text-xs bg-muted">
                   {session?.user?.name?.slice(0, 2).toUpperCase() || "U"}
                 </AvatarFallback>

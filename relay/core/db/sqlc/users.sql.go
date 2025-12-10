@@ -10,9 +10,9 @@ import (
 )
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO users (id, name, email, avatar_url, created_at, updated_at)
-VALUES ($1, $2, $3, $4, now(), now())
-RETURNING id, name, email, avatar_url, created_at, updated_at
+INSERT INTO users (id, name, email, avatar_url, workos_id, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, now(), now())
+RETURNING id, name, email, avatar_url, workos_id, created_at, updated_at
 `
 
 type CreateUserParams struct {
@@ -20,6 +20,7 @@ type CreateUserParams struct {
 	Name      string  `json:"name"`
 	Email     string  `json:"email"`
 	AvatarUrl *string `json:"avatar_url"`
+	WorkosID  *string `json:"workos_id"`
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
@@ -28,6 +29,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		arg.Name,
 		arg.Email,
 		arg.AvatarUrl,
+		arg.WorkosID,
 	)
 	var i User
 	err := row.Scan(
@@ -35,6 +37,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Name,
 		&i.Email,
 		&i.AvatarUrl,
+		&i.WorkosID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -51,7 +54,7 @@ func (q *Queries) DeleteUser(ctx context.Context, id int64) error {
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, name, email, avatar_url, created_at, updated_at FROM users WHERE id = $1
+SELECT id, name, email, avatar_url, workos_id, created_at, updated_at FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
@@ -62,6 +65,7 @@ func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
 		&i.Name,
 		&i.Email,
 		&i.AvatarUrl,
+		&i.WorkosID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -69,7 +73,7 @@ func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, name, email, avatar_url, created_at, updated_at FROM users WHERE email = $1
+SELECT id, name, email, avatar_url, workos_id, created_at, updated_at FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -80,6 +84,26 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.Name,
 		&i.Email,
 		&i.AvatarUrl,
+		&i.WorkosID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getUserByWorkOSID = `-- name: GetUserByWorkOSID :one
+SELECT id, name, email, avatar_url, workos_id, created_at, updated_at FROM users WHERE workos_id = $1
+`
+
+func (q *Queries) GetUserByWorkOSID(ctx context.Context, workosID *string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByWorkOSID, workosID)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.AvatarUrl,
+		&i.WorkosID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -88,9 +112,9 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 
 const updateUser = `-- name: UpdateUser :one
 UPDATE users
-SET name = $2, email = $3, avatar_url = $4, updated_at = now()
+SET name = $2, email = $3, avatar_url = $4, workos_id = $5, updated_at = now()
 WHERE id = $1
-RETURNING id, name, email, avatar_url, created_at, updated_at
+RETURNING id, name, email, avatar_url, workos_id, created_at, updated_at
 `
 
 type UpdateUserParams struct {
@@ -98,6 +122,7 @@ type UpdateUserParams struct {
 	Name      string  `json:"name"`
 	Email     string  `json:"email"`
 	AvatarUrl *string `json:"avatar_url"`
+	WorkosID  *string `json:"workos_id"`
 }
 
 func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, error) {
@@ -106,6 +131,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		arg.Name,
 		arg.Email,
 		arg.AvatarUrl,
+		arg.WorkosID,
 	)
 	var i User
 	err := row.Scan(
@@ -113,6 +139,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		&i.Name,
 		&i.Email,
 		&i.AvatarUrl,
+		&i.WorkosID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -120,13 +147,14 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 }
 
 const upsertUser = `-- name: UpsertUser :one
-INSERT INTO users (id, name, email, avatar_url, created_at, updated_at)
-VALUES ($1, $2, $3, $4, now(), now())
+INSERT INTO users (id, name, email, avatar_url, workos_id, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, now(), now())
 ON CONFLICT (email) DO UPDATE SET
   name = EXCLUDED.name,
   avatar_url = EXCLUDED.avatar_url,
+  workos_id = EXCLUDED.workos_id,
   updated_at = now()
-RETURNING id, name, email, avatar_url, created_at, updated_at
+RETURNING id, name, email, avatar_url, workos_id, created_at, updated_at
 `
 
 type UpsertUserParams struct {
@@ -134,6 +162,7 @@ type UpsertUserParams struct {
 	Name      string  `json:"name"`
 	Email     string  `json:"email"`
 	AvatarUrl *string `json:"avatar_url"`
+	WorkosID  *string `json:"workos_id"`
 }
 
 func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, error) {
@@ -142,6 +171,7 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		arg.Name,
 		arg.Email,
 		arg.AvatarUrl,
+		arg.WorkosID,
 	)
 	var i User
 	err := row.Scan(
@@ -149,6 +179,47 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 		&i.Name,
 		&i.Email,
 		&i.AvatarUrl,
+		&i.WorkosID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertUserByWorkOSID = `-- name: UpsertUserByWorkOSID :one
+INSERT INTO users (id, name, email, avatar_url, workos_id, created_at, updated_at)
+VALUES ($1, $2, $3, $4, $5, now(), now())
+ON CONFLICT (workos_id) DO UPDATE SET
+  name = EXCLUDED.name,
+  email = EXCLUDED.email,
+  avatar_url = EXCLUDED.avatar_url,
+  updated_at = now()
+RETURNING id, name, email, avatar_url, workos_id, created_at, updated_at
+`
+
+type UpsertUserByWorkOSIDParams struct {
+	ID        int64   `json:"id"`
+	Name      string  `json:"name"`
+	Email     string  `json:"email"`
+	AvatarUrl *string `json:"avatar_url"`
+	WorkosID  *string `json:"workos_id"`
+}
+
+func (q *Queries) UpsertUserByWorkOSID(ctx context.Context, arg UpsertUserByWorkOSIDParams) (User, error) {
+	row := q.db.QueryRow(ctx, upsertUserByWorkOSID,
+		arg.ID,
+		arg.Name,
+		arg.Email,
+		arg.AvatarUrl,
+		arg.WorkosID,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.AvatarUrl,
+		&i.WorkosID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

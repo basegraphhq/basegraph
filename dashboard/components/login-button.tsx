@@ -1,18 +1,11 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import { signIn } from "@/lib/auth-client"
+import { getLoginUrl } from "@/lib/auth"
 
 export function LoginButton() {
-  const handleLogin = async () => {
-    try {
-      await signIn.social({
-        provider: "gitlab",
-        callbackURL: "/dashboard",
-      })
-    } catch (error) {
-      console.error("Login failed:", error)
-    }
+  const handleLogin = () => {
+    window.location.href = getLoginUrl()
   }
 
   return (

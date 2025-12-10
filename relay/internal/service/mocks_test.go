@@ -9,12 +9,14 @@ import (
 )
 
 type mockUserStore struct {
-	createFn     func(ctx context.Context, user *model.User) error
-	getByIDFn    func(ctx context.Context, id int64) (*model.User, error)
-	getByEmailFn func(ctx context.Context, email string) (*model.User, error)
-	upsertFn     func(ctx context.Context, user *model.User) error
-	updateFn     func(ctx context.Context, user *model.User) error
-	deleteFn     func(ctx context.Context, id int64) error
+	createFn           func(ctx context.Context, user *model.User) error
+	getByIDFn          func(ctx context.Context, id int64) (*model.User, error)
+	getByEmailFn       func(ctx context.Context, email string) (*model.User, error)
+	getByWorkOSIDFn    func(ctx context.Context, workosID string) (*model.User, error)
+	upsertFn           func(ctx context.Context, user *model.User) error
+	upsertByWorkOSIDFn func(ctx context.Context, user *model.User) error
+	updateFn           func(ctx context.Context, user *model.User) error
+	deleteFn           func(ctx context.Context, id int64) error
 }
 
 func (m *mockUserStore) Create(ctx context.Context, user *model.User) error {
@@ -38,9 +40,23 @@ func (m *mockUserStore) GetByEmail(ctx context.Context, email string) (*model.Us
 	return nil, nil
 }
 
+func (m *mockUserStore) GetByWorkOSID(ctx context.Context, workosID string) (*model.User, error) {
+	if m.getByWorkOSIDFn != nil {
+		return m.getByWorkOSIDFn(ctx, workosID)
+	}
+	return nil, nil
+}
+
 func (m *mockUserStore) Upsert(ctx context.Context, user *model.User) error {
 	if m.upsertFn != nil {
 		return m.upsertFn(ctx, user)
+	}
+	return nil
+}
+
+func (m *mockUserStore) UpsertByWorkOSID(ctx context.Context, user *model.User) error {
+	if m.upsertByWorkOSIDFn != nil {
+		return m.upsertByWorkOSIDFn(ctx, user)
 	}
 	return nil
 }

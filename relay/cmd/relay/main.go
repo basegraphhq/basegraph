@@ -59,7 +59,7 @@ func main() {
 	slog.InfoContext(ctx, "database connected")
 
 	stores := store.NewStores(database.Queries())
-	services := service.NewServices(stores, service.NewTxRunner(database))
+	services := service.NewServices(stores, service.NewTxRunner(database), cfg.WorkOS, cfg.DashboardURL)
 
 	if cfg.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
@@ -112,7 +112,10 @@ func setupRouter(cfg config.Config, services *service.Services) *gin.Engine {
 	router.Use(middleware.Recovery())
 	router.Use(middleware.Logger())
 
-	httprouter.SetupRoutes(router, services)
+	httprouter.SetupRoutes(router, services, httprouter.RouterConfig{
+		DashboardURL: cfg.DashboardURL,
+		IsProduction: cfg.IsProduction(),
+	})
 
 	return router
 }
