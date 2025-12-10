@@ -10,11 +10,11 @@ import (
 )
 
 type Config struct {
+	Features Features
+	OTel     OTelConfig
 	Env      string
 	Port     string
 	DB       db.Config
-	OTel     OTelConfig
-	Features Features
 }
 
 type OTelConfig struct {
@@ -36,8 +36,8 @@ func Load() Config {
 		Port: getEnv("PORT", "8080"),
 		DB: db.Config{
 			DSN:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/basegraph?sslmode=disable"),
-			MaxConns: int32(getEnvInt("DB_MAX_CONNS", 10)),
-			MinConns: int32(getEnvInt("DB_MIN_CONNS", 2)),
+			MaxConns: getEnvInt32("DB_MAX_CONNS", 10),
+			MinConns: getEnvInt32("DB_MIN_CONNS", 2),
 		},
 		OTel: OTelConfig{
 			Endpoint:       getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
@@ -68,18 +68,11 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func getEnvInt(key string, fallback int) int {
+func getEnvInt32(key string, fallback int32) int32 {
 	if value, ok := os.LookupEnv(key); ok {
-		if i, err := strconv.Atoi(value); err == nil {
-			return i
+		if i, err := strconv.ParseInt(value, 10, 32); err == nil {
+			return int32(i)
 		}
-	}
-	return fallback
-}
-
-func getEnvBool(key string, fallback bool) bool {
-	if value, ok := os.LookupEnv(key); ok {
-		return value == "true" || value == "1"
 	}
 	return fallback
 }
