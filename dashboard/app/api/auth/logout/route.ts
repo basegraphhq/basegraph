@@ -3,6 +3,7 @@ import { cookies } from 'next/headers'
 import { RELAY_API_URL } from '@/lib/config'
 
 const SESSION_COOKIE = 'relay_session'
+const ONBOARDING_COOKIE = 'relay_onboarding_complete'
 
 export async function POST() {
   const cookieStore = await cookies()
@@ -23,6 +24,7 @@ export async function POST() {
   }
 
   cookieStore.delete(SESSION_COOKIE)
+  cookieStore.delete(ONBOARDING_COOKIE)
 
   return NextResponse.json({ message: 'logged out' })
 }

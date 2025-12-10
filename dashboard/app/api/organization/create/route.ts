@@ -29,7 +29,8 @@ export async function POST(req: Request) {
       )
     }
 
-    const user = await validateResponse.json()
+    const validateData = await validateResponse.json()
+    const user = validateData.user
 
     const { name, slug } = await req.json()
 
@@ -64,7 +65,7 @@ export async function POST(req: Request) {
     const orgData = await createOrgResponse.json()
 
     const res = NextResponse.json(orgData)
-    res.cookies.set('relay-onboarding-complete', 'true', {
+    res.cookies.set('relay_onboarding_complete', 'true', {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
