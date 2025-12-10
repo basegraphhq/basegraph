@@ -2,9 +2,17 @@ package router
 
 import (
 	"basegraph.app/relay/internal/http/handler"
+	"basegraph.app/relay/internal/http/handler/webhook"
 	"github.com/gin-gonic/gin"
 )
 
 func GitLabRouter(router *gin.RouterGroup, handler *handler.GitLabHandler) {
-	router.POST("/test-connection", handler.TestConnection)
+	router.POST("/projects", handler.ListProjects)
+	router.POST("/setup", handler.SetupIntegration)
+	router.GET("/status", handler.GetStatus)
+	router.POST("/refresh", handler.RefreshIntegration)
+}
+
+func GitLabWebhookRouter(router *gin.RouterGroup, handler *webhook.GitLabWebhookHandler) {
+	router.POST("/:integration_id", handler.HandleEvent)
 }

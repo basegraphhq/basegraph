@@ -5,10 +5,11 @@ import "time"
 type CredentialType string
 
 const (
-	CredentialTypeUserOAuth  CredentialType = "user_oauth" //nolint:gosec // False positive: enum constant, not hardcoded credential
-	CredentialTypeBot        CredentialType = "bot"
-	CredentialTypeAppInstall CredentialType = "app_installation"
-	CredentialTypeAPIKey     CredentialType = "api_key"
+	CredentialTypeUserOAuth     CredentialType = "user_oauth" //nolint:gosec // False positive: enum constant, not hardcoded credential
+	CredentialTypeBot           CredentialType = "bot"
+	CredentialTypeAppInstall    CredentialType = "app_installation"
+	CredentialTypeAPIKey        CredentialType = "api_key"
+	CredentialTypeWebhookSecret CredentialType = "webhook_secret"
 )
 
 type IntegrationCredential struct {

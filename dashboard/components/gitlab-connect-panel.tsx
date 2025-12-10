@@ -19,29 +19,27 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
 import {
+  AlertCircle,
   ChevronDown,
   ExternalLink,
   Eye,
   EyeOff,
-  Check,
   Loader2,
-  AlertCircle,
   User,
   Key,
+  X,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { relayClient, type GitLabSetupResponse } from '@/lib/relay-client'
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 
 interface GitLabConnectPanelProps {
   children: React.ReactNode
-  onConnect?: (data: { instanceUrl: string; token: string }) => void
+  onConnect?: (data: GitLabSetupResponse) => void
+  onError?: (error: string) => void
 }
 
-export function GitLabConnectPanel({ children, onConnect }: GitLabConnectPanelProps) {
+export function GitLabConnectPanel({ children, onConnect, onError }: GitLabConnectPanelProps) {
   const [open, setOpen] = useState(false)
   const [step1Open, setStep1Open] = useState(true)
   const [step2Open, setStep2Open] = useState(false)
@@ -50,64 +48,33 @@ export function GitLabConnectPanel({ children, onConnect }: GitLabConnectPanelPr
   const [token, setToken] = useState('')
   const [showToken, setShowToken] = useState(false)
   
-  const [testStatus, setTestStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle')
-  const [testResult, setTestResult] = useState<{ username?: string; projectCount?: number } | null>(null)
   const [connectLoading, setConnectLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const isValidUrl = instanceUrl.startsWith('https://') && instanceUrl.length > 10
   const isValidToken = token.length > 10
 
-  const handleTestConnection = async () => {
+  const handleConnect = async () => {
     if (!isValidUrl || !isValidToken) return
     
-    setTestStatus('loading')
-    setTestResult(null)
-
-    try {
-      const res = await fetch('/api/integrations/gitlab/test-connection', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          instance_url: instanceUrl,
-          token,
-        }),
-      })
-
-      if (!res.ok) {
-        setTestStatus('error')
-        return
-      }
-
-      const data: { username?: string; project_count?: number } = await res.json()
-      setTestStatus('success')
-      setTestResult({
-        username: data.username ?? 'unknown',
-        projectCount: data.project_count ?? 0,
-      })
-    } catch (error) {
-      console.error('Failed to test GitLab connection', error)
-      setTestStatus('error')
-    }
-  }
-
-  const handleConnect = async () => {
-    if (!isValidUrl || !isValidToken || testStatus !== 'success') return
-    
     setConnectLoading(true)
+    setError(null)
     
-    // Mock API call
-    await new Promise(resolve => setTimeout(resolve, 1000))
-    
-    onConnect?.({ instanceUrl, token })
-    setConnectLoading(false)
-    setOpen(false)
-    
-    // Reset state
-    setToken('')
-    setTestStatus('idle')
-    setTestResult(null)
+    try {
+      const data = await relayClient.gitlab.setup({
+        instanceUrl,
+        token,
+      })
+      onConnect?.(data)
+      setOpen(false)
+      setToken('')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to connect GitLab'
+      setError(message)
+      onError?.(message)
+    } finally {
+      setConnectLoading(false)
+    }
   }
 
   const resetState = () => {
@@ -116,8 +83,7 @@ export function GitLabConnectPanel({ children, onConnect }: GitLabConnectPanelPr
     setInstanceUrl('https://gitlab.com')
     setToken('')
     setShowToken(false)
-    setTestStatus('idle')
-    setTestResult(null)
+    setError(null)
   }
 
   return (
@@ -174,7 +140,7 @@ export function GitLabConnectPanel({ children, onConnect }: GitLabConnectPanelPr
                     <p className="font-medium text-foreground">To create a service account:</p>
                     <ol className="list-decimal list-inside space-y-1.5">
                       <li>Create a new GitLab user called <code className="text-mono text-xs bg-muted px-1.5 py-0.5 rounded">relay</code></li>
-                      <li>Add it to your group/projects with <strong>Developer</strong> role</li>
+                      <li>Add it to your group/projects with <strong>Maintainer</strong> role</li>
                       <li>Use this account to generate the access token</li>
                     </ol>
                   </div>
@@ -249,8 +215,6 @@ export function GitLabConnectPanel({ children, onConnect }: GitLabConnectPanelPr
                 value={instanceUrl}
                 onChange={(e) => {
                   setInstanceUrl(e.target.value)
-                  setTestStatus('idle')
-                  setTestResult(null)
                 }}
                 className="font-mono text-sm"
               />
@@ -266,8 +230,6 @@ export function GitLabConnectPanel({ children, onConnect }: GitLabConnectPanelPr
                   value={token}
                   onChange={(e) => {
                     setToken(e.target.value)
-                    setTestStatus('idle')
-                    setTestResult(null)
                   }}
                   className="font-mono text-sm pr-10"
                 />
@@ -281,70 +243,41 @@ export function GitLabConnectPanel({ children, onConnect }: GitLabConnectPanelPr
               </div>
             </div>
 
-            {/* Test Result */}
-            {testStatus === 'success' && testResult && (
-              <div className="flex items-center gap-2 text-sm text-success bg-success/10 px-3 py-2 rounded-md">
-                <Check className="size-4" />
-                <span>
-                  Connected as <strong>@{testResult.username}</strong> · {testResult.projectCount} projects found
-                </span>
-              </div>
-            )}
-            
-            {testStatus === 'error' && (
-              <div className="flex items-center gap-2 text-sm text-destructive bg-destructive/10 px-3 py-2 rounded-md">
+            {/* Error Display */}
+            {error && (
+              <Alert variant="destructive" className="relative">
                 <AlertCircle className="size-4" />
-                <span>Failed to connect. Check your URL and token.</span>
-              </div>
+                <AlertTitle>Connection Failed</AlertTitle>
+                <AlertDescription>
+                  {error.charAt(0).toUpperCase() + error.slice(1)}
+                </AlertDescription>
+                <button
+                  type="button"
+                  onClick={() => setError(null)}
+                  className="absolute right-2 top-2 p-1 rounded-sm opacity-70 hover:opacity-100 transition-opacity"
+                >
+                  <X className="size-3.5" />
+                  <span className="sr-only">Dismiss</span>
+                </button>
+              </Alert>
             )}
 
             {/* Actions */}
-            <div className="flex gap-3 pt-2">
+            <div className="pt-2">
               <Button
-                variant="outline"
-                className="flex-1"
-                disabled={!isValidUrl || !isValidToken || testStatus === 'loading'}
-                onClick={handleTestConnection}
+                className="w-full"
+                disabled={!isValidUrl || !isValidToken || connectLoading}
+                onClick={handleConnect}
               >
-                {testStatus === 'loading' ? (
+                {connectLoading ? (
                   <>
                     <Loader2 className="size-4 animate-spin" />
-                    Testing...
-                  </>
-                ) : testStatus === 'success' ? (
-                  <>
-                    <Check className="size-4" />
-                    Verified
+                    Connecting...
                   </>
                 ) : (
-                  'Test Connection'
+                  'Connect'
                 )}
               </Button>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <span className="flex-1">
-                    <Button
-                      className="w-full"
-                      disabled={testStatus !== 'success' || connectLoading}
-                      onClick={handleConnect}
-                    >
-                      {connectLoading ? (
-                        <>
-                          <Loader2 className="size-4 animate-spin" />
-                          Connecting...
-                        </>
-                      ) : (
-                        'Connect'
-                      )}
-                    </Button>
-                  </span>
-                </TooltipTrigger>
-                {testStatus !== 'success' && (
-                  <TooltipContent>
-                    Test the connection first
-                  </TooltipContent>
-                )}
-              </Tooltip>
             </div>
           </div>
         </div>

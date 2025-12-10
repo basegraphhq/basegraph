@@ -158,8 +158,12 @@ func (m *mockWorkspaceStore) ListByUser(ctx context.Context, userID int64) ([]mo
 }
 
 type mockStoreProvider struct {
-	org  store.OrganizationStore
-	work store.WorkspaceStore
+	org         store.OrganizationStore
+	work        store.WorkspaceStore
+	integration store.IntegrationStore
+	cred        store.IntegrationCredentialStore
+	config      store.IntegrationConfigStore
+	repo        store.RepoStore
 }
 
 func (m *mockStoreProvider) Organizations() store.OrganizationStore {
@@ -168,6 +172,22 @@ func (m *mockStoreProvider) Organizations() store.OrganizationStore {
 
 func (m *mockStoreProvider) Workspaces() store.WorkspaceStore {
 	return m.work
+}
+
+func (m *mockStoreProvider) Integrations() store.IntegrationStore {
+	return m.integration
+}
+
+func (m *mockStoreProvider) IntegrationCredentials() store.IntegrationCredentialStore {
+	return m.cred
+}
+
+func (m *mockStoreProvider) IntegrationConfigs() store.IntegrationConfigStore {
+	return m.config
+}
+
+func (m *mockStoreProvider) Repos() store.RepoStore {
+	return m.repo
 }
 
 type mockTxRunner struct {

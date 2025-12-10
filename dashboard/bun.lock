@@ -5,6 +5,7 @@
     "": {
       "name": "my-v0-project",
       "dependencies": {
+        "@fontsource/cal-sans": "^5.2.3",
         "@fontsource/libertinus-serif": "^5.2.1",
         "@hookform/resolvers": "^3.10.0",
         "@radix-ui/react-accordion": "1.2.2",
@@ -95,6 +96,8 @@
     "@floating-ui/react-dom": ["@floating-ui/react-dom@2.1.6", "", { "dependencies": { "@floating-ui/dom": "1.7.4" }, "peerDependencies": { "react": "19.2.0", "react-dom": "19.2.0" } }, "sha512-4JX6rEatQEvlmgU80wZyq9RT96HZJa88q8hp0pBd+LrczeDI4o6uA2M+uvxngVHo4Ihr8uibXxH6+70zhAFrVw=="],
 
     "@floating-ui/utils": ["@floating-ui/utils@0.2.10", "", {}, "sha512-aGTxbpbg8/b5JfU1HXSrbH3wXZuLPJcNEcZQFMxLs3oSzgtVu6nFPkbbGGUvBcUjKV2YyB9Wxxabo+HEH9tcRQ=="],
+
+    "@fontsource/cal-sans": ["@fontsource/cal-sans@5.2.3", "", {}, "sha512-cY9d2LWfzzge3jSgh2IJmNEJdubuPnjfct/5Q/L/4Q5W9LlXRRZO403P0c3i1iPH4Y+IQ0gHgnJroPzL3KuxQQ=="],
 
     "@fontsource/libertinus-serif": ["@fontsource/libertinus-serif@5.2.1", "", {}, "sha512-NguzrKW1PJjePz8o+DMGFoMfoCEB57pE4szdqTxajcOwqG4Rzonv4iFu3/5luEg3ZAsvek8azonpw1PkYQDwoQ=="],
 

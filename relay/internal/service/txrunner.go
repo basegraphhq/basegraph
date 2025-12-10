@@ -12,6 +12,10 @@ import (
 type StoreProvider interface {
 	Organizations() store.OrganizationStore
 	Workspaces() store.WorkspaceStore
+	Integrations() store.IntegrationStore
+	IntegrationCredentials() store.IntegrationCredentialStore
+	IntegrationConfigs() store.IntegrationConfigStore
+	Repos() store.RepoStore
 }
 
 // TxRunner runs functions within a transaction and provides stores bound to that transaction.
