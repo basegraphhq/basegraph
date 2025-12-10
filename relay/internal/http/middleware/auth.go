@@ -27,7 +27,7 @@ func RequireAuth(authService service.AuthService) gin.HandlerFunc {
 			return
 		}
 
-		user, err := authService.ValidateSession(c.Request.Context(), sessionID)
+		user, _, err := authService.ValidateSession(c.Request.Context(), sessionID)
 		if err != nil {
 			if errors.Is(err, service.ErrSessionExpired) || errors.Is(err, service.ErrUserNotFound) {
 				clearSessionCookie(c)
@@ -54,7 +54,7 @@ func OptionalAuth(authService service.AuthService) gin.HandlerFunc {
 			return
 		}
 
-		user, err := authService.ValidateSession(c.Request.Context(), sessionID)
+		user, _, err := authService.ValidateSession(c.Request.Context(), sessionID)
 		if err != nil {
 			c.Next()
 			return

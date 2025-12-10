@@ -11,6 +11,11 @@ type UserResponse = {
   avatar_url?: string
 }
 
+type ValidateResponse = {
+  user: UserResponse
+  has_organization: boolean
+}
+
 export async function GET() {
   const cookieStore = await cookies()
   const sessionId = cookieStore.get(SESSION_COOKIE)?.value
@@ -34,8 +39,8 @@ export async function GET() {
       return NextResponse.json({ error: 'validation failed' }, { status: res.status })
     }
 
-    const user: UserResponse = await res.json()
-    return NextResponse.json({ user })
+    const data: ValidateResponse = await res.json()
+    return NextResponse.json({ user: data.user, has_organization: data.has_organization })
   } catch (error) {
     console.error('Error validating session:', error)
     return NextResponse.json({ error: 'internal error' }, { status: 500 })
