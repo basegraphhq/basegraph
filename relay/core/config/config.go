@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 
@@ -13,6 +14,7 @@ type Config struct {
 	Features     Features
 	OTel         OTelConfig
 	WorkOS       WorkOSConfig
+	EventWebhook EventWebhookConfig
 	Env          string
 	Port         string
 	DashboardURL string
@@ -32,14 +34,18 @@ type OTelConfig struct {
 	ServiceVersion string
 }
 
+type EventWebhookConfig struct {
+	BaseURL string
+}
+
 type Features struct{}
 
-func Load() Config {
+func Load() (Config, error) {
 	if getEnv("RELAY_ENV", "development") == "development" {
 		_ = godotenv.Load(".env")
 	}
 
-	return Config{
+	cfg := Config{
 		Env:          getEnv("RELAY_ENV", "development"),
 		Port:         getEnv("PORT", "8080"),
 		DashboardURL: getEnv("DASHBOARD_URL", "http://localhost:3000"),
@@ -59,8 +65,21 @@ func Load() Config {
 			ClientID:    getEnv("WORKOS_CLIENT_ID", ""),
 			RedirectURI: getEnv("WORKOS_REDIRECT_URI", "http://localhost:8080/auth/callback"),
 		},
+		EventWebhook: EventWebhookConfig{
+			BaseURL: getEnv("WEBHOOK_BASE_URL", ""),
+		},
 		Features: Features{},
 	}
+
+	if cfg.EventWebhook.BaseURL == "" {
+		return Config{}, fmt.Errorf("WEBHOOK_BASE_URL is required")
+	}
+
+	if cfg.WorkOS.APIKey == "" || cfg.WorkOS.ClientID == "" {
+		return Config{}, fmt.Errorf("WORKOS_API_KEY and WORKOS_CLIENT_ID are required")
+	}
+
+	return cfg, nil
 }
 
 func (c Config) IsProduction() bool {

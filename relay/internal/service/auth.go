@@ -23,32 +23,41 @@ var (
 type AuthService interface {
 	GetAuthorizationURL(state string) (string, error)
 	HandleCallback(ctx context.Context, code string) (*model.User, *model.Session, error)
-	ValidateSession(ctx context.Context, sessionID int64) (*model.User, bool, error)
+	ValidateSession(ctx context.Context, sessionID int64) (*model.User, *UserContext, error)
 	Logout(ctx context.Context, sessionID int64) error
 }
 
+type UserContext struct {
+	OrganizationID  *int64
+	WorkspaceID     *int64
+	HasOrganization bool
+}
+
 type authService struct {
-	userStore    store.UserStore
-	sessionStore store.SessionStore
-	orgStore     store.OrganizationStore
-	cfg          config.WorkOSConfig
-	dashboardURL string
+	userStore      store.UserStore
+	sessionStore   store.SessionStore
+	orgStore       store.OrganizationStore
+	workspaceStore store.WorkspaceStore
+	cfg            config.WorkOSConfig
+	dashboardURL   string
 }
 
 func NewAuthService(
 	userStore store.UserStore,
 	sessionStore store.SessionStore,
 	orgStore store.OrganizationStore,
+	workspaceStore store.WorkspaceStore,
 	cfg config.WorkOSConfig,
 	dashboardURL string,
 ) AuthService {
 	usermanagement.SetAPIKey(cfg.APIKey)
 	return &authService{
-		userStore:    userStore,
-		sessionStore: sessionStore,
-		orgStore:     orgStore,
-		cfg:          cfg,
-		dashboardURL: dashboardURL,
+		userStore:      userStore,
+		sessionStore:   sessionStore,
+		orgStore:       orgStore,
+		workspaceStore: workspaceStore,
+		cfg:            cfg,
+		dashboardURL:   dashboardURL,
 	}
 }
 
@@ -122,30 +131,44 @@ func (s *authService) HandleCallback(ctx context.Context, code string) (*model.U
 	return user, session, nil
 }
 
-func (s *authService) ValidateSession(ctx context.Context, sessionID int64) (*model.User, bool, error) {
+func (s *authService) ValidateSession(ctx context.Context, sessionID int64) (*model.User, *UserContext, error) {
 	session, err := s.sessionStore.GetValid(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, false, ErrSessionExpired
+			return nil, nil, ErrSessionExpired
 		}
-		return nil, false, fmt.Errorf("getting session: %w", err)
+		return nil, nil, fmt.Errorf("getting session: %w", err)
 	}
 
 	user, err := s.userStore.GetByID(ctx, session.UserID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, false, ErrUserNotFound
+			return nil, nil, ErrUserNotFound
 		}
-		return nil, false, fmt.Errorf("getting user: %w", err)
+		return nil, nil, fmt.Errorf("getting user: %w", err)
 	}
+
+	userCtx := &UserContext{}
 
 	orgs, err := s.orgStore.ListByAdminUser(ctx, user.ID)
 	if err != nil {
-		return nil, false, fmt.Errorf("checking organization membership: %w", err)
+		return nil, nil, fmt.Errorf("checking organization membership: %w", err)
 	}
-	hasOrg := len(orgs) > 0
 
-	return user, hasOrg, nil
+	if len(orgs) > 0 {
+		userCtx.HasOrganization = true
+		userCtx.OrganizationID = &orgs[0].ID
+
+		workspaces, err := s.workspaceStore.ListByUser(ctx, user.ID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("listing workspaces: %w", err)
+		}
+		if len(workspaces) > 0 {
+			userCtx.WorkspaceID = &workspaces[0].ID
+		}
+	}
+
+	return user, userCtx, nil
 }
 
 func (s *authService) Logout(ctx context.Context, sessionID int64) error {

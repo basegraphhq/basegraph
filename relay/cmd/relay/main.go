@@ -25,7 +25,11 @@ import (
 func main() {
 	ctx := context.Background()
 
-	cfg := config.Load()
+	cfg, err := config.Load()
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to load config", "error", err)
+		os.Exit(1)
+	}
 
 	// OTel must init before logger (logger uses OTel provider in production)
 	telemetry, err := otel.Setup(ctx, cfg.OTel)
@@ -59,7 +63,7 @@ func main() {
 	slog.InfoContext(ctx, "database connected")
 
 	stores := store.NewStores(database.Queries())
-	services := service.NewServices(stores, service.NewTxRunner(database), cfg.WorkOS, cfg.DashboardURL)
+	services := service.NewServices(stores, service.NewTxRunner(database), cfg.WorkOS, cfg.DashboardURL, cfg.EventWebhook)
 
 	if cfg.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)

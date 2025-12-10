@@ -1,7 +1,10 @@
 package router
 
 import (
+	"log/slog"
+
 	"basegraph.app/relay/internal/http/handler"
+	"basegraph.app/relay/internal/http/handler/webhook"
 	"basegraph.app/relay/internal/service"
 	"github.com/gin-gonic/gin"
 )
@@ -27,7 +30,10 @@ func SetupRoutes(router *gin.Engine, services *service.Services, cfg RouterConfi
 		orgHandler := handler.NewOrganizationHandler(services.Organizations())
 		OrganizationRouter(v1.Group("/organizations"), orgHandler)
 
-		gitlabHandler := handler.NewGitLabHandler(services.GitLab())
+		gitlabHandler := handler.NewGitLabHandler(services.GitLab(), services.WebhookBaseURL())
 		GitLabRouter(v1.Group("/integrations/gitlab"), gitlabHandler)
 	}
+
+	webhookHandler := webhook.NewGitLabWebhookHandler(services.IntegrationCredentials(), slog.Default())
+	GitLabWebhookRouter(router.Group("/webhooks/gitlab"), webhookHandler)
 }

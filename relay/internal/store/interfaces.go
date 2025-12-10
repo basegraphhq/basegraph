@@ -66,6 +66,18 @@ type IntegrationCredentialStore interface {
 	ListActiveByIntegration(ctx context.Context, integrationID int64) ([]model.IntegrationCredential, error)
 }
 
+type IntegrationConfigStore interface {
+	GetByID(ctx context.Context, id int64) (*model.IntegrationConfig, error)
+	GetByIntegrationAndKey(ctx context.Context, integrationID int64, key string) (*model.IntegrationConfig, error)
+	ListByIntegration(ctx context.Context, integrationID int64) ([]model.IntegrationConfig, error)
+	ListByIntegrationAndType(ctx context.Context, integrationID int64, configType string) ([]model.IntegrationConfig, error)
+	Create(ctx context.Context, config *model.IntegrationConfig) error
+	Update(ctx context.Context, config *model.IntegrationConfig) error
+	Upsert(ctx context.Context, config *model.IntegrationConfig) error
+	Delete(ctx context.Context, id int64) error
+	DeleteByIntegration(ctx context.Context, integrationID int64) error
+}
+
 type RepoStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Repository, error)
 	GetByExternalID(ctx context.Context, integrationID int64, externalRepoID string) (*model.Repository, error)

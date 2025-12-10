@@ -32,6 +32,10 @@ func (s *Stores) IntegrationCredentials() IntegrationCredentialStore {
 	return newIntegrationCredentialStore(s.queries)
 }
 
+func (s *Stores) IntegrationConfigs() IntegrationConfigStore {
+	return newIntegrationConfigStore(s.queries)
+}
+
 func (s *Stores) Repos() RepoStore {
 	return newRepoStore(s.queries)
 }

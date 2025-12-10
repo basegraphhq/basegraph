@@ -37,7 +37,7 @@ var _ = Describe("OrganizationHandler", func() {
 
 		body, _ := json.Marshal(map[string]interface{}{
 			"name":          "Acme",
-			"admin_user_id": 10,
+			"admin_user_id": "10",
 		})
 
 		req := httptest.NewRequest(http.MethodPost, "/organizations", bytes.NewBuffer(body))
@@ -69,7 +69,7 @@ var _ = Describe("OrganizationHandler", func() {
 
 		body, _ := json.Marshal(map[string]interface{}{
 			"name":          "Acme",
-			"admin_user_id": 10,
+			"admin_user_id": "10",
 		})
 		req := httptest.NewRequest(http.MethodPost, "/organizations", bytes.NewBuffer(body))
 		req.Header.Set("Content-Type", "application/json")

@@ -282,6 +282,8 @@ func (h *AuthHandler) Exchange(c *gin.Context) {
 }
 
 type ValidateSessionResponse struct {
+	OrganizationID  *string      `json:"organization_id,omitempty"`
+	WorkspaceID     *string      `json:"workspace_id,omitempty"`
 	User            UserResponse `json:"user"`
 	HasOrganization bool         `json:"has_organization"`
 }
@@ -301,7 +303,7 @@ func (h *AuthHandler) ValidateSession(c *gin.Context) {
 		return
 	}
 
-	user, hasOrg, err := h.authService.ValidateSession(ctx, sessionID)
+	user, userCtx, err := h.authService.ValidateSession(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, service.ErrSessionExpired) || errors.Is(err, service.ErrUserNotFound) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "session expired"})
@@ -312,15 +314,26 @@ func (h *AuthHandler) ValidateSession(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, ValidateSessionResponse{
+	resp := ValidateSessionResponse{
 		User: UserResponse{
 			ID:        strconv.FormatInt(user.ID, 10),
 			Name:      user.Name,
 			Email:     user.Email,
 			AvatarURL: user.AvatarURL,
 		},
-		HasOrganization: hasOrg,
-	})
+		HasOrganization: userCtx.HasOrganization,
+	}
+
+	if userCtx.OrganizationID != nil {
+		orgIDStr := strconv.FormatInt(*userCtx.OrganizationID, 10)
+		resp.OrganizationID = &orgIDStr
+	}
+	if userCtx.WorkspaceID != nil {
+		wsIDStr := strconv.FormatInt(*userCtx.WorkspaceID, 10)
+		resp.WorkspaceID = &wsIDStr
+	}
+
+	c.JSON(http.StatusOK, resp)
 }
 
 type LogoutRequest struct {
