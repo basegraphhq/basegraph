@@ -90,6 +90,8 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+tsconfig.tsbuildinfo
+
 # Package manager lock files (optional - uncomment if you don't want to track them)
 # package-lock.json
 # yarn.lock
