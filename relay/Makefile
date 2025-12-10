@@ -1,14 +1,14 @@
-.PHONY: build run tidy format install-tools install-goose install-sqlc install-gofumpt install-ginkgo sqlc-generate migrate-up migrate-down migrate-status migrate-create test test-unit test-verbose
+.PHONY: build run tidy format sqlc-generate sqlc-verify migrate-up migrate-down migrate-status migrate-create test test-unit test-verbose test-pkg test-focus lint lint-fix lint-custom lint-all check-goose check-ginkgo check-golangci-lint
 
-# Tool versions
-GOOSE_VERSION := v3.24.3
-SQLC_VERSION := v1.30.0
-GOFUMPT_VERSION := latest
-GINKGO_VERSION := latest
+ENUMVALIDATOR_BIN := $(abspath bin/enumvalidator)
 
 # Build the relay service
 build:
 	go build -o bin/relay cmd/relay/main.go
+
+$(ENUMVALIDATOR_BIN):
+	@mkdir -p $(dir $(ENUMVALIDATOR_BIN))
+	go build -o $(ENUMVALIDATOR_BIN) ./tools/linters/enumvalidator/cmd
 
 # Run the relay service
 run: build
@@ -21,46 +21,9 @@ tidy:
 
 # Format all Go files (excluding generated code) using gofumpt
 format:
-	@command -v gofumpt >/dev/null 2>&1 || { \
-		echo "Error: gofumpt not found. Run 'make install-gofumpt' first."; \
-		exit 1; \
-	}
 	@echo "Formatting Go files (excluding generated code)..."
-	@find . -name '*.go' -not -path './core/db/sqlc/*' -not -path './vendor/*' -exec gofumpt -w {} +
+	@find . -name '*.go' -not -path './core/db/sqlc/*' -not -path './vendor/*' -exec go tool gofumpt -w {} +
 	@echo "Formatting complete"
-
-# ============================================================================
-# Tool Installation
-# ============================================================================
-
-# Install all CLI tools
-install-tools: install-goose install-sqlc install-gofumpt install-ginkgo
-	@echo "All tools installed successfully"
-
-# Install goose CLI with PostgreSQL-only support (excludes other DB drivers)
-install-goose:
-	@echo "Installing goose $(GOOSE_VERSION) with PostgreSQL-only support..."
-	@go install -tags='no_clickhouse no_libsql no_mssql no_mysql no_sqlite3 no_vertica no_ydb' \
-		github.com/pressly/goose/v3/cmd/goose@$(GOOSE_VERSION)
-	@echo "Goose installed to $$(go env GOPATH)/bin/goose"
-
-# Install sqlc for generating type-safe Go code from SQL
-install-sqlc:
-	@echo "Installing sqlc $(SQLC_VERSION)..."
-	@go install github.com/sqlc-dev/sqlc/cmd/sqlc@$(SQLC_VERSION)
-	@echo "sqlc installed to $$(go env GOPATH)/bin/sqlc"
-
-# Install gofumpt for stricter Go formatting
-install-gofumpt:
-	@echo "Installing gofumpt $(GOFUMPT_VERSION)..."
-	@go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
-	@echo "gofumpt installed to $$(go env GOPATH)/bin/gofumpt"
-
-# Install ginkgo CLI for BDD testing
-install-ginkgo:
-	@echo "Installing ginkgo $(GINKGO_VERSION)..."
-	@go install github.com/onsi/ginkgo/v2/ginkgo@$(GINKGO_VERSION)
-	@echo "ginkgo installed to $$(go env GOPATH)/bin/ginkgo"
 
 # ============================================================================
 # Code Generation
@@ -68,30 +31,19 @@ install-ginkgo:
 
 # Generate Go code from SQL queries using sqlc
 sqlc-generate:
-	@command -v sqlc >/dev/null 2>&1 || { \
-		echo "Error: sqlc not found. Run 'make install-sqlc' first."; \
-		exit 1; \
-	}
-	sqlc generate
+	go tool sqlc generate
 
 # Verify sqlc queries without generating (useful for CI)
 sqlc-verify:
-	@command -v sqlc >/dev/null 2>&1 || { \
-		echo "Error: sqlc not found. Run 'make install-sqlc' first."; \
-		exit 1; \
-	}
-	sqlc compile
+	go tool sqlc compile
 
 # ============================================================================
 # Database Migrations
 # ============================================================================
 
-# Check if goose is installed
+# Check if goose is available via go tool
 check-goose:
-	@command -v goose >/dev/null 2>&1 || { \
-		echo "Error: goose not found. Run 'make install-goose' first."; \
-		exit 1; \
-	}
+	@go tool goose --version >/dev/null 2>&1
 
 # Usage: make migrate-up DB_STRING="postgres://user:pass@localhost/dbname?sslmode=disable"
 migrate-up: check-goose
@@ -100,21 +52,21 @@ migrate-up: check-goose
 		echo "Example: make migrate-up DB_STRING='postgres://user:pass@localhost/dbname?sslmode=disable'"; \
 		exit 1; \
 	fi
-	goose -dir migrations postgres "$(DB_STRING)" up
+	go tool goose -dir migrations postgres "$(DB_STRING)" up
 
 migrate-down: check-goose
 	@if [ -z "$(DB_STRING)" ]; then \
 		echo "Usage: make migrate-down DB_STRING=<connection_string>"; \
 		exit 1; \
 	fi
-	goose -dir migrations postgres "$(DB_STRING)" down
+	go tool goose -dir migrations postgres "$(DB_STRING)" down
 
 migrate-status: check-goose
 	@if [ -z "$(DB_STRING)" ]; then \
 		echo "Usage: make migrate-status DB_STRING=<connection_string>"; \
 		exit 1; \
 	fi
-	goose -dir migrations postgres "$(DB_STRING)" status
+	go tool goose -dir migrations postgres "$(DB_STRING)" status
 
 migrate-create: check-goose
 	@if [ -z "$(NAME)" ]; then \
@@ -123,29 +75,26 @@ migrate-create: check-goose
 		exit 1; \
 	fi
 	@mkdir -p migrations
-	goose -dir migrations create $(NAME) sql
+	go tool goose -dir migrations create $(NAME) sql
 
 # ============================================================================
 # Testing
 # ============================================================================
 
-# Check if ginkgo is installed
+# Check if ginkgo is available via go tool
 check-ginkgo:
-	@command -v ginkgo >/dev/null 2>&1 || { \
-		echo "Error: ginkgo not found. Run 'make install-ginkgo' first."; \
-		exit 1; \
-	}
+	@go tool ginkgo version >/dev/null 2>&1
 
 # Run all tests (unit tests + BDD tests with Ginkgo)
 test: check-ginkgo
 	@echo "Running unit tests..."
 	@go test ./common/...
 	@echo "Running BDD tests..."
-	@ginkgo ./...
+	@go tool ginkgo ./...
 
 # Run tests with verbose output
 test-verbose: check-ginkgo
-	ginkgo -v ./...
+	go tool ginkgo -v ./...
 
 # Run only utility/common tests (standard Go tests, no Ginkgo needed)
 test-unit:
@@ -159,7 +108,7 @@ test-pkg: check-ginkgo
 		echo "Example: make test-pkg PKG=./internal/service/..."; \
 		exit 1; \
 	fi
-	ginkgo -v $(PKG)
+	go tool ginkgo -v $(PKG)
 
 # Run tests matching a specific pattern
 # Usage: make test-focus FOCUS="UserService"
@@ -169,4 +118,31 @@ test-focus: check-ginkgo
 		echo "Example: make test-focus FOCUS='UserService'"; \
 		exit 1; \
 	fi
-	ginkgo --focus "$(FOCUS)" ./...
+	go tool ginkgo --focus "$(FOCUS)" ./...
+
+# ============================================================================
+# Linting
+# ============================================================================
+
+# Check if golangci-lint is available via go tool
+check-golangci-lint:
+	@go tool golangci-lint --version >/dev/null 2>&1
+
+# Run golangci-lint
+lint: check-golangci-lint
+	@echo "Running golangci-lint..."
+	go tool golangci-lint run ./...
+	@$(MAKE) lint-custom
+
+# Run golangci-lint with auto-fix
+lint-fix: check-golangci-lint
+	@echo "Running golangci-lint with auto-fix..."
+	go tool golangci-lint run --fix ./...
+
+# Run custom analyzers separately (avoids plugin compatibility issues)
+lint-custom: $(ENUMVALIDATOR_BIN)
+	@echo "Running custom enum validator..."
+	@go vet -vettool=$(ENUMVALIDATOR_BIN) ./...
+
+# Run all linters including custom ones
+lint-all: lint
