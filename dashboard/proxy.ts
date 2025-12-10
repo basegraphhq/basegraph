@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { RELAY_API_URL } from '@/lib/config'
 
-const ONBOARDING_COOKIE = 'relay-onboarding-complete'
+const ONBOARDING_COOKIE = 'relay_onboarding_complete'
 const SESSION_COOKIE = 'relay_session'
 
 export async function proxy(request: NextRequest) {
