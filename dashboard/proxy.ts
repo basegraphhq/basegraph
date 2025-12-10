@@ -1,56 +1,40 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { fetchHasOrganization } from '@/lib/relay-client'
+import { RELAY_API_URL } from '@/lib/config'
 
 const ONBOARDING_COOKIE = 'relay-onboarding-complete'
-const SESSION_COOKIES = [
-  'better-auth.session_token',
-  'better-auth.session',
-  'auth_session',
-]
+const SESSION_COOKIE = 'relay_session'
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  const hasSession = SESSION_COOKIES.some(
-    (name) => request.cookies.get(name)?.value,
-  )
+  const sessionId = request.cookies.get(SESSION_COOKIE)?.value
   const hasOrgCookie =
     request.cookies.get(ONBOARDING_COOKIE)?.value === 'true'
 
-  // No session: treat as logged out
-  if (!hasSession) {
+  if (!sessionId) {
     if (pathname.startsWith('/dashboard')) {
       return NextResponse.redirect(new URL('/', request.url))
     }
     return NextResponse.next()
   }
 
-  // Session present, but missing onboarding cookie: re-derive from backend
   let hasOrganization = hasOrgCookie
   let responseToSetCookie: NextResponse | undefined
 
   if (!hasOrgCookie) {
-    const derived = await fetchHasOrganization({
-      baseUrl: request.nextUrl.origin,
-      headers: {
-        cookie: request.headers.get('cookie') ?? '',
-      },
-    })
+    const derived = await fetchHasOrganization(sessionId)
     if (derived === null) {
-      // If we cannot determine, fall back to logged-out behavior
       return NextResponse.redirect(new URL('/', request.url))
     }
     hasOrganization = derived
   }
 
-  // Landing page: redirect authenticated users appropriately
   if (pathname === '/') {
     const target = hasOrganization ? '/dashboard' : '/dashboard/onboarding'
     responseToSetCookie = NextResponse.redirect(new URL(target, request.url))
   }
 
-  // Dashboard pages (exclude onboarding page itself)
   if (!responseToSetCookie && pathname.startsWith('/dashboard') && pathname !== '/dashboard/onboarding') {
     if (!hasOrganization) {
       responseToSetCookie = NextResponse.redirect(
@@ -59,7 +43,6 @@ export async function proxy(request: NextRequest) {
     }
   }
 
-  // If on onboarding page but already has organization, redirect to dashboard
   if (!responseToSetCookie && pathname === '/dashboard/onboarding') {
     if (hasOrganization) {
       responseToSetCookie = NextResponse.redirect(
@@ -70,18 +53,37 @@ export async function proxy(request: NextRequest) {
 
   const res = responseToSetCookie ?? NextResponse.next()
 
-  // If we re-derived org status, persist the cookie for speed next time
   if (!hasOrgCookie) {
     res.cookies.set(ONBOARDING_COOKIE, String(hasOrganization), {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 365, // 1 year
+      maxAge: 60 * 60 * 24 * 365,
       path: '/',
     })
   }
 
   return res
+}
+
+async function fetchHasOrganization(sessionId: string): Promise<boolean | null> {
+  try {
+    const res = await fetch(`${RELAY_API_URL}/auth/validate`, {
+      headers: {
+        'X-Session-ID': sessionId,
+      },
+    })
+
+    if (!res.ok) {
+      return null
+    }
+
+    // TODO: Add org membership check to Relay's validate endpoint
+    // For now, assume user has org if session is valid
+    return true
+  } catch {
+    return null
+  }
 }
 
 export const config = {

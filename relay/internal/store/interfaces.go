@@ -13,7 +13,9 @@ var ErrNotFound = errors.New("not found")
 type UserStore interface {
 	GetByID(ctx context.Context, id int64) (*model.User, error)
 	GetByEmail(ctx context.Context, email string) (*model.User, error)
+	GetByWorkOSID(ctx context.Context, workosID string) (*model.User, error)
 	Upsert(ctx context.Context, user *model.User) error
+	UpsertByWorkOSID(ctx context.Context, user *model.User) error
 	Create(ctx context.Context, user *model.User) error
 	Update(ctx context.Context, user *model.User) error
 	Delete(ctx context.Context, id int64) error

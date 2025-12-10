@@ -1,26 +1,38 @@
-import { betterAuth } from "better-auth"
+export type User = {
+  id: string
+  name: string
+  email: string
+  avatar_url?: string
+}
 
-export const auth = betterAuth({
-  baseURL: process.env.NEXT_PUBLIC_APP_URL,
-  socialProviders: {
-    // google: {
-    //     clientId: process.env.GOOGLE_CLIENT_ID as string,
-    //     clientSecret: process.env.GOOGLE_CLIENT_SECRET as string,
-    // },
-    // github: {
-    //     clientId: process.env.GITHUB_CLIENT_ID as string,
-    //     clientSecret: process.env.GITHUB_CLIENT_SECRET as string,
-    //     callbackURL: "/api/auth/callback/github",
-    // },
-    gitlab: { 
-      clientId: process.env.GITLAB_CLIENT_ID as string, 
-      clientSecret: process.env.GITLAB_CLIENT_SECRET as string, 
-      issuer: process.env.GITLAB_ISSUER as string, 
-      scope: ['read_user']
-  }, 
-    // linear: {
-    //   clientId: process.env.LINEAR_CLIENT_ID as string,
-    //   clientSecret: process.env.LINEAR_CLIENT_SECRET as string,
-    // },
-  },
-})
+export type Session = {
+  user: User
+}
+
+export async function getSession(): Promise<Session | null> {
+  try {
+    const res = await fetch('/api/auth/me', {
+      credentials: 'include',
+    })
+
+    if (!res.ok) {
+      return null
+    }
+
+    const data = await res.json()
+    return { user: data.user }
+  } catch {
+    return null
+  }
+}
+
+export async function signOut(): Promise<void> {
+  await fetch('/api/auth/logout', {
+    method: 'POST',
+    credentials: 'include',
+  })
+}
+
+export function getLoginUrl(): string {
+  return '/api/auth/login'
+}

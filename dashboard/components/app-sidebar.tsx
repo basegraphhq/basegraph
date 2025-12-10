@@ -17,7 +17,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { ChevronsUpDown, LogOut, Moon, Sun, Plug } from "lucide-react"
-import { useSession, signOut } from "@/lib/auth-client"
+import { useSession } from "@/hooks/use-session"
+import { signOut } from "@/lib/auth"
 import { useTheme } from "next-themes"
 import { useRouter } from "next/navigation"
 import * as React from "react"
@@ -70,7 +71,7 @@ export function AppSidebar() {
                   className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground focus-visible:ring-0"
                 >
                   <Avatar className="h-8 w-8 rounded-lg">
-                    <AvatarImage src={session?.user?.image || undefined} alt={session?.user?.name || ""} />
+                    <AvatarImage src={session?.user?.avatar_url || undefined} alt={session?.user?.name || ""} />
                     <AvatarFallback className="rounded-lg">
                       {session?.user?.name?.slice(0, 2).toUpperCase() || "U"}
                     </AvatarFallback>

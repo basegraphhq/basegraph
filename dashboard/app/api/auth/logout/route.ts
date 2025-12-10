@@ -1,0 +1,28 @@
+import { NextResponse } from 'next/server'
+import { cookies } from 'next/headers'
+import { RELAY_API_URL } from '@/lib/config'
+
+const SESSION_COOKIE = 'relay_session'
+
+export async function POST() {
+  const cookieStore = await cookies()
+  const sessionId = cookieStore.get(SESSION_COOKIE)?.value
+
+  if (sessionId) {
+    try {
+      await fetch(`${RELAY_API_URL}/auth/logout-session`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ session_id: sessionId }),
+      })
+    } catch (error) {
+      console.error('Error logging out from Relay:', error)
+    }
+  }
+
+  cookieStore.delete(SESSION_COOKIE)
+
+  return NextResponse.json({ message: 'logged out' })
+}

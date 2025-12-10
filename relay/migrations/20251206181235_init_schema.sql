@@ -5,12 +5,14 @@ create table users (
     name text not null,
     email text not null unique,
     avatar_url text,
+    workos_id text unique,
 
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
 );
 
 create index idx_users_email on users (email);
+create index idx_users_workos_id on users (workos_id) where workos_id is not null;
 
 
 create table organizations (

@@ -39,12 +39,24 @@ func (s *userStore) GetByEmail(ctx context.Context, email string) (*model.User, 
 	return toUserModel(row), nil
 }
 
+func (s *userStore) GetByWorkOSID(ctx context.Context, workosID string) (*model.User, error) {
+	row, err := s.queries.GetUserByWorkOSID(ctx, &workosID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return toUserModel(row), nil
+}
+
 func (s *userStore) Create(ctx context.Context, user *model.User) error {
 	row, err := s.queries.CreateUser(ctx, sqlc.CreateUserParams{
 		ID:        user.ID,
 		Name:      user.Name,
 		Email:     user.Email,
 		AvatarUrl: user.AvatarURL,
+		WorkosID:  user.WorkOSID,
 	})
 	if err != nil {
 		return err
@@ -59,6 +71,22 @@ func (s *userStore) Upsert(ctx context.Context, user *model.User) error {
 		Name:      user.Name,
 		Email:     user.Email,
 		AvatarUrl: user.AvatarURL,
+		WorkosID:  user.WorkOSID,
+	})
+	if err != nil {
+		return err
+	}
+	*user = *toUserModel(row)
+	return nil
+}
+
+func (s *userStore) UpsertByWorkOSID(ctx context.Context, user *model.User) error {
+	row, err := s.queries.UpsertUserByWorkOSID(ctx, sqlc.UpsertUserByWorkOSIDParams{
+		ID:        user.ID,
+		Name:      user.Name,
+		Email:     user.Email,
+		AvatarUrl: user.AvatarURL,
+		WorkosID:  user.WorkOSID,
 	})
 	if err != nil {
 		return err
@@ -73,6 +101,7 @@ func (s *userStore) Update(ctx context.Context, user *model.User) error {
 		Name:      user.Name,
 		Email:     user.Email,
 		AvatarUrl: user.AvatarURL,
+		WorkosID:  user.WorkOSID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -94,6 +123,7 @@ func toUserModel(row sqlc.User) *model.User {
 		Name:      row.Name,
 		Email:     row.Email,
 		AvatarURL: row.AvatarUrl,
+		WorkOSID:  row.WorkosID,
 		CreatedAt: row.CreatedAt.Time,
 		UpdatedAt: row.UpdatedAt.Time,
 	}
