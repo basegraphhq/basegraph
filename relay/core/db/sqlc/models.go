@@ -26,13 +26,13 @@ type Integration struct {
 	ID                  int64              `json:"id"`
 	WorkspaceID         int64              `json:"workspace_id"`
 	OrganizationID      int64              `json:"organization_id"`
+	SetupByUserID       int64              `json:"setup_by_user_id"`
 	Provider            string             `json:"provider"`
+	Capabilities        []string           `json:"capabilities"`
 	ProviderBaseUrl     *string            `json:"provider_base_url"`
 	ExternalOrgID       *string            `json:"external_org_id"`
 	ExternalWorkspaceID *string            `json:"external_workspace_id"`
-	AccessToken         string             `json:"access_token"`
-	RefreshToken        *string            `json:"refresh_token"`
-	ExpiresAt           pgtype.Timestamptz `json:"expires_at"`
+	IsEnabled           bool               `json:"is_enabled"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
@@ -45,6 +45,21 @@ type IntegrationConfig struct {
 	ConfigType    string             `json:"config_type"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type IntegrationCredential struct {
+	ID             int64              `json:"id"`
+	IntegrationID  int64              `json:"integration_id"`
+	UserID         *int64             `json:"user_id"`
+	CredentialType string             `json:"credential_type"`
+	AccessToken    string             `json:"access_token"`
+	RefreshToken   *string            `json:"refresh_token"`
+	TokenExpiresAt pgtype.Timestamptz `json:"token_expires_at"`
+	Scopes         []string           `json:"scopes"`
+	IsPrimary      bool               `json:"is_primary"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
 }
 
 type Organization struct {

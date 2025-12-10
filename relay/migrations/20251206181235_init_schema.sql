@@ -56,28 +56,53 @@ create table integrations(
     id bigint primary key,
     workspace_id bigint not null references workspaces(id),
     organization_id bigint not null references organizations(id),
+    setup_by_user_id bigint not null references users(id),
 
     provider text not null,
+    capabilities text[] not null default '{}',
     provider_base_url text,
 
     external_org_id text,
     external_workspace_id text,
 
-    access_token text not null, -- stored as encrypted string
-    refresh_token text, -- stored as encrypted string
-    expires_at timestamptz,
+    is_enabled boolean not null default true,
 
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
 
-    -- There can only be one type of one integration of a provider for a workspace
     constraint unq_integrations_workspace_provider unique (workspace_id, provider)
 );
 
 create index idx_integrations_workspace_id on integrations (workspace_id);
 create index idx_integrations_organization_id on integrations (organization_id);
+create index idx_integrations_setup_by_user_id on integrations (setup_by_user_id);
 create index idx_integrations_provider_external_org_id on integrations (provider, external_org_id);
 create index idx_integrations_provider_external_workspace_id on integrations (provider, external_workspace_id);
+
+
+create table integration_credentials(
+    id bigint primary key,
+    integration_id bigint not null references integrations(id),
+    user_id bigint references users(id),
+
+    credential_type text not null,
+    
+    access_token text not null,
+    refresh_token text,
+    token_expires_at timestamptz,
+    scopes text[],
+
+    is_primary boolean not null default false,
+
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now(),
+    revoked_at timestamptz
+);
+
+create index idx_integration_credentials_integration_id on integration_credentials (integration_id);
+create index idx_integration_credentials_user_id on integration_credentials (user_id) where user_id is not null;
+create index idx_integration_credentials_is_primary on integration_credentials (integration_id, is_primary) where is_primary = true;
+
 
 create table repositories(
     id bigint primary key,
@@ -90,7 +115,7 @@ create table repositories(
     description text,
 
 
-    external_repo_id text not null, -- unique identifier for the repository in the provider
+    external_repo_id text not null,
 
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
@@ -157,6 +182,7 @@ drop table if exists sessions;
 drop table if exists event_logs;
 drop table if exists integration_configs;
 drop table if exists repositories;
+drop table if exists integration_credentials;
 drop table if exists integrations;
 drop table if exists workspaces;
 drop table if exists organizations;

@@ -3,12 +3,10 @@ package store
 import (
 	"context"
 	"errors"
-	"time"
 
 	"basegraph.app/relay/core/db/sqlc"
 	"basegraph.app/relay/internal/model"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type integrationStore struct {
@@ -49,13 +47,13 @@ func (s *integrationStore) Create(ctx context.Context, integration *model.Integr
 		ID:                  integration.ID,
 		WorkspaceID:         integration.WorkspaceID,
 		OrganizationID:      integration.OrganizationID,
+		SetupByUserID:       integration.SetupByUserID,
 		Provider:            string(integration.Provider),
+		Capabilities:        capabilitiesToStrings(integration.Capabilities),
 		ProviderBaseUrl:     integration.ProviderBaseURL,
 		ExternalOrgID:       integration.ExternalOrgID,
 		ExternalWorkspaceID: integration.ExternalWorkspaceID,
-		AccessToken:         integration.AccessToken,
-		RefreshToken:        integration.RefreshToken,
-		ExpiresAt:           timeToPgTimestamptz(integration.ExpiresAt),
+		IsEnabled:           integration.IsEnabled,
 	})
 	if err != nil {
 		return err
@@ -64,12 +62,12 @@ func (s *integrationStore) Create(ctx context.Context, integration *model.Integr
 	return nil
 }
 
-func (s *integrationStore) UpdateTokens(ctx context.Context, id int64, accessToken string, refreshToken *string, expiresAt *time.Time) error {
-	_, err := s.queries.UpdateIntegrationTokens(ctx, sqlc.UpdateIntegrationTokensParams{
-		ID:           id,
-		AccessToken:  accessToken,
-		RefreshToken: refreshToken,
-		ExpiresAt:    timeToPgTimestamptz(expiresAt),
+func (s *integrationStore) Update(ctx context.Context, integration *model.Integration) error {
+	row, err := s.queries.UpdateIntegration(ctx, sqlc.UpdateIntegrationParams{
+		ID:                  integration.ID,
+		ProviderBaseUrl:     integration.ProviderBaseURL,
+		ExternalOrgID:       integration.ExternalOrgID,
+		ExternalWorkspaceID: integration.ExternalWorkspaceID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -77,7 +75,15 @@ func (s *integrationStore) UpdateTokens(ctx context.Context, id int64, accessTok
 		}
 		return err
 	}
+	*integration = *toIntegrationModel(row)
 	return nil
+}
+
+func (s *integrationStore) SetEnabled(ctx context.Context, id int64, enabled bool) error {
+	return s.queries.SetIntegrationEnabled(ctx, sqlc.SetIntegrationEnabledParams{
+		ID:        id,
+		IsEnabled: enabled,
+	})
 }
 
 func (s *integrationStore) Delete(ctx context.Context, id int64) error {
@@ -100,23 +106,29 @@ func (s *integrationStore) ListByOrganization(ctx context.Context, orgID int64) 
 	return toIntegrationModels(rows), nil
 }
 
-func toIntegrationModel(row sqlc.Integration) *model.Integration {
-	var expiresAt *time.Time
-	if row.ExpiresAt.Valid {
-		expiresAt = &row.ExpiresAt.Time
+func (s *integrationStore) ListByCapability(ctx context.Context, workspaceID int64, capability model.Capability) ([]model.Integration, error) {
+	rows, err := s.queries.ListIntegrationsByCapability(ctx, sqlc.ListIntegrationsByCapabilityParams{
+		WorkspaceID: workspaceID,
+		Capability:  string(capability),
+	})
+	if err != nil {
+		return nil, err
 	}
+	return toIntegrationModels(rows), nil
+}
 
+func toIntegrationModel(row sqlc.Integration) *model.Integration {
 	return &model.Integration{
 		ID:                  row.ID,
 		WorkspaceID:         row.WorkspaceID,
 		OrganizationID:      row.OrganizationID,
+		SetupByUserID:       row.SetupByUserID,
 		Provider:            model.Provider(row.Provider),
+		Capabilities:        stringsToCapabilities(row.Capabilities),
 		ProviderBaseURL:     row.ProviderBaseUrl,
 		ExternalOrgID:       row.ExternalOrgID,
 		ExternalWorkspaceID: row.ExternalWorkspaceID,
-		AccessToken:         row.AccessToken,
-		RefreshToken:        row.RefreshToken,
-		ExpiresAt:           expiresAt,
+		IsEnabled:           row.IsEnabled,
 		CreatedAt:           row.CreatedAt.Time,
 		UpdatedAt:           row.UpdatedAt.Time,
 	}
@@ -130,9 +142,18 @@ func toIntegrationModels(rows []sqlc.Integration) []model.Integration {
 	return result
 }
 
-func timeToPgTimestamptz(t *time.Time) pgtype.Timestamptz {
-	if t == nil {
-		return pgtype.Timestamptz{Valid: false}
+func stringsToCapabilities(s []string) []model.Capability {
+	caps := make([]model.Capability, len(s))
+	for i, v := range s {
+		caps[i] = model.Capability(v)
 	}
-	return pgtype.Timestamptz{Time: *t, Valid: true}
+	return caps
+}
+
+func capabilitiesToStrings(caps []model.Capability) []string {
+	s := make([]string, len(caps))
+	for i, c := range caps {
+		s[i] = string(c)
+	}
+	return s
 }

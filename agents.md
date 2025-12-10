@@ -106,6 +106,13 @@ Next.js web application for the Relay UI.
 - `components/` - React components (shadcn/ui based)
 - `lib/` - Utilities and auth helpers
 - `hooks/` - Custom React hooks
+- `proxy.ts` - Route protection and onboarding checks
+
+**Onboarding:**
+- Next.js proxy enforces organization setup requirements server-side
+- Checks `relay-onboarding-complete` cookie before rendering `/dashboard/*` (and redirects landing `/` for signed-in users)
+- Cookie managed by API routes (`/api/user/sync`, `/api/organization/create`)
+- Architecture supports migration to JWT-based claims (planned with WorkOS)
 
 ---
 
@@ -205,6 +212,10 @@ If something doesn't make sense, ask. If there are multiple valid approaches, as
 - Vendor all dependencies: `go mod vendor`
 - Use Go 1.24+ (for tool directive support)
 
+**Configuration:**
+- Config is loaded from environment variables
+- `.env` file is loaded if present (for all environments)
+
 **Database:**
 - **sqlc** for type-safe query generation
 - **goose** for migrations
@@ -244,6 +255,13 @@ service/
 **Error handling:**
 - Return errors, don't panic
 - Wrap errors with context: `fmt.Errorf("creating spec: %w", err)`
+
+**Code formatting:**
+- Always use `make format` to format Go code (runs `gofumpt`, stricter than `gofmt`)
+- Format before committing, after generating code (sqlc, mocks), or when seeing inconsistencies
+- Never manually format Go code or use `gofmt` directly
+- `gofumpt` enforces consistent spacing, removes unnecessary blank lines, standardizes import grouping
+- Run from service root (`relay/` or `codegraph/`)
 
 **ID generation:**
 - All database primary keys use Snowflake IDs (64-bit integers)
@@ -416,12 +434,14 @@ A company or team using Relay. Contains users and workspaces.
 A container within an organization. Groups related repositories and integrations. Think of it as a "project" or "team space."
 
 ### Integration
-A connection to an external service:
-- **Git providers**: GitLab, GitHub
-- **Project management**: Linear, Jira
-- **Communication**: Slack (future)
+A connection to an external service. Each integration has one or more **capabilities**:
+- `code_repo`: Source code, MRs/PRs (GitLab, GitHub)
+- `issue_tracker`: Issues, projects, sprints (GitLab, GitHub, Linear, Jira)
+- `wiki`: Wiki pages (GitLab, GitHub, Notion)
+- `documentation`: Docs, knowledge base (Notion)
+- `communication`: Messages, threads (Slack)
 
-Each integration stores OAuth tokens and provider-specific configuration.
+Providers like GitLab and GitHub have multiple capabilities (both code_repo and issue_tracker). Each integration stores OAuth tokens and provider-specific configuration.
 
 ### Repository
 A codebase connected through an integration. Relay indexes repositories to build code graphs.

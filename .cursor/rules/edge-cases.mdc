@@ -1,0 +1,6 @@
+---
+alwaysApply: true
+---
+
+During ask mode and planning mode, think about both business edge cases, code gaps and code edge cases. Highlight them early.
+Ask lots of clarifying questions. User is more than happy to answer everything. The end goal is to ensure that we build correct, not fast.

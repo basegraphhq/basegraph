@@ -1,19 +1,20 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"strconv"
+
+	"github.com/joho/godotenv"
 
 	"basegraph.app/relay/core/db"
 )
 
 type Config struct {
+	Features Features
+	OTel     OTelConfig
 	Env      string
 	Port     string
 	DB       db.Config
-	OTel     OTelConfig
-	Features Features
 }
 
 type OTelConfig struct {
@@ -26,13 +27,17 @@ type OTelConfig struct {
 type Features struct{}
 
 func Load() Config {
+	if getEnv("RELAY_ENV", "development") == "development" {
+		_ = godotenv.Load(".env")
+	}
+
 	return Config{
 		Env:  getEnv("RELAY_ENV", "development"),
 		Port: getEnv("PORT", "8080"),
 		DB: db.Config{
-			DSN:      buildDSN(),
-			MaxConns: int32(getEnvInt("DB_MAX_CONNS", 10)),
-			MinConns: int32(getEnvInt("DB_MIN_CONNS", 2)),
+			DSN:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/basegraph?sslmode=disable"),
+			MaxConns: getEnvInt32("DB_MAX_CONNS", 10),
+			MinConns: getEnvInt32("DB_MIN_CONNS", 2),
 		},
 		OTel: OTelConfig{
 			Endpoint:       getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", ""),
@@ -42,20 +47,6 @@ func Load() Config {
 		},
 		Features: Features{},
 	}
-}
-
-func buildDSN() string {
-	host := getEnv("DATABASE_HOST", "localhost")
-	port := getEnv("DATABASE_PORT", "5432")
-	user := getEnv("DATABASE_USER", "postgres")
-	password := getEnv("DATABASE_PASSWORD", "postgres")
-	name := getEnv("DATABASE_NAME", "basegraph")
-	sslMode := getEnv("DATABASE_SSLMODE", "disable")
-
-	return fmt.Sprintf(
-		"postgres://%s:%s@%s:%s/%s?sslmode=%s",
-		user, password, host, port, name, sslMode,
-	)
 }
 
 func (c Config) IsProduction() bool {
@@ -77,18 +68,11 @@ func getEnv(key, fallback string) string {
 	return fallback
 }
 
-func getEnvInt(key string, fallback int) int {
+func getEnvInt32(key string, fallback int32) int32 {
 	if value, ok := os.LookupEnv(key); ok {
-		if i, err := strconv.Atoi(value); err == nil {
-			return i
+		if i, err := strconv.ParseInt(value, 10, 32); err == nil {
+			return int32(i)
 		}
-	}
-	return fallback
-}
-
-func getEnvBool(key string, fallback bool) bool {
-	if value, ok := os.LookupEnv(key); ok {
-		return value == "true" || value == "1"
 	}
 	return fallback
 }

@@ -118,3 +118,39 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 	)
 	return i, err
 }
+
+const upsertUser = `-- name: UpsertUser :one
+INSERT INTO users (id, name, email, avatar_url, created_at, updated_at)
+VALUES ($1, $2, $3, $4, now(), now())
+ON CONFLICT (email) DO UPDATE SET
+  name = EXCLUDED.name,
+  avatar_url = EXCLUDED.avatar_url,
+  updated_at = now()
+RETURNING id, name, email, avatar_url, created_at, updated_at
+`
+
+type UpsertUserParams struct {
+	ID        int64   `json:"id"`
+	Name      string  `json:"name"`
+	Email     string  `json:"email"`
+	AvatarUrl *string `json:"avatar_url"`
+}
+
+func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, upsertUser,
+		arg.ID,
+		arg.Name,
+		arg.Email,
+		arg.AvatarUrl,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Email,
+		&i.AvatarUrl,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

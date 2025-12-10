@@ -18,3 +18,12 @@ RETURNING *;
 -- name: DeleteUser :exec
 DELETE FROM users WHERE id = $1;
 
+-- name: UpsertUser :one
+INSERT INTO users (id, name, email, avatar_url, created_at, updated_at)
+VALUES ($1, $2, $3, $4, now(), now())
+ON CONFLICT (email) DO UPDATE SET
+  name = EXCLUDED.name,
+  avatar_url = EXCLUDED.avatar_url,
+  updated_at = now()
+RETURNING *;
+
