@@ -36,3 +36,4 @@ export async function signOut(): Promise<void> {
 export function getLoginUrl(): string {
   return '/api/auth/login'
 }
+
