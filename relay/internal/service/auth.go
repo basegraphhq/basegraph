@@ -23,7 +23,7 @@ var (
 type AuthService interface {
 	GetAuthorizationURL(state string) (string, error)
 	HandleCallback(ctx context.Context, code string) (*model.User, *model.Session, error)
-	ValidateSession(ctx context.Context, sessionID int64) (*model.User, error)
+	ValidateSession(ctx context.Context, sessionID int64) (*model.User, bool, error)
 	Logout(ctx context.Context, sessionID int64) error
 }
 
@@ -122,24 +122,30 @@ func (s *authService) HandleCallback(ctx context.Context, code string) (*model.U
 	return user, session, nil
 }
 
-func (s *authService) ValidateSession(ctx context.Context, sessionID int64) (*model.User, error) {
+func (s *authService) ValidateSession(ctx context.Context, sessionID int64) (*model.User, bool, error) {
 	session, err := s.sessionStore.GetValid(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, ErrSessionExpired
+			return nil, false, ErrSessionExpired
 		}
-		return nil, fmt.Errorf("getting session: %w", err)
+		return nil, false, fmt.Errorf("getting session: %w", err)
 	}
 
 	user, err := s.userStore.GetByID(ctx, session.UserID)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return nil, ErrUserNotFound
+			return nil, false, ErrUserNotFound
 		}
-		return nil, fmt.Errorf("getting user: %w", err)
+		return nil, false, fmt.Errorf("getting user: %w", err)
 	}
 
-	return user, nil
+	orgs, err := s.orgStore.ListByAdminUser(ctx, user.ID)
+	if err != nil {
+		return nil, false, fmt.Errorf("checking organization membership: %w", err)
+	}
+	hasOrg := len(orgs) > 0
+
+	return user, hasOrg, nil
 }
 
 func (s *authService) Logout(ctx context.Context, sessionID int64) error {

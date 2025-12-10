@@ -132,7 +132,7 @@ func (h *AuthHandler) Me(c *gin.Context) {
 		return
 	}
 
-	user, err := h.authService.ValidateSession(ctx, sessionID)
+	user, _, err := h.authService.ValidateSession(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, service.ErrSessionExpired) || errors.Is(err, service.ErrUserNotFound) {
 			h.clearSessionCookie(c)
@@ -281,6 +281,11 @@ func (h *AuthHandler) Exchange(c *gin.Context) {
 	})
 }
 
+type ValidateSessionResponse struct {
+	User            UserResponse `json:"user"`
+	HasOrganization bool         `json:"has_organization"`
+}
+
 func (h *AuthHandler) ValidateSession(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -296,7 +301,7 @@ func (h *AuthHandler) ValidateSession(c *gin.Context) {
 		return
 	}
 
-	user, err := h.authService.ValidateSession(ctx, sessionID)
+	user, hasOrg, err := h.authService.ValidateSession(ctx, sessionID)
 	if err != nil {
 		if errors.Is(err, service.ErrSessionExpired) || errors.Is(err, service.ErrUserNotFound) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "session expired"})
@@ -307,11 +312,14 @@ func (h *AuthHandler) ValidateSession(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, UserResponse{
-		ID:        strconv.FormatInt(user.ID, 10),
-		Name:      user.Name,
-		Email:     user.Email,
-		AvatarURL: user.AvatarURL,
+	c.JSON(http.StatusOK, ValidateSessionResponse{
+		User: UserResponse{
+			ID:        strconv.FormatInt(user.ID, 10),
+			Name:      user.Name,
+			Email:     user.Email,
+			AvatarURL: user.AvatarURL,
+		},
+		HasOrganization: hasOrg,
 	})
 }
 

@@ -78,9 +78,8 @@ async function fetchHasOrganization(sessionId: string): Promise<boolean | null> 
       return null
     }
 
-    // TODO: Add org membership check to Relay's validate endpoint
-    // For now, assume user has org if session is valid
-    return true
+    const data = await res.json()
+    return data.has_organization
   } catch {
     return null
   }
