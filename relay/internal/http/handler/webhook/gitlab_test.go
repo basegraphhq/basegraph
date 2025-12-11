@@ -147,6 +147,53 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		Expect(logStr).To(ContainSubstring("note=hello"))
 	})
 
+	It("accepts valid token and logs parsed wiki page payload", func() {
+		body := map[string]interface{}{
+			"object_kind": "wiki_page",
+			"user": map[string]interface{}{
+				"id":       1,
+				"name":     "Admin",
+				"username": "admin",
+			},
+			"project": map[string]interface{}{
+				"id":                  10,
+				"name":                "my-project",
+				"path_with_namespace": "group/my-project",
+			},
+			"wiki": map[string]interface{}{
+				"web_url":             "http://example.com/group/my-project/-/wikis",
+				"path_with_namespace": "group/my-project.wiki",
+			},
+			"object_attributes": map[string]interface{}{
+				"title":   "Getting Started",
+				"content": "# Welcome\n\nThis is the getting started guide.",
+				"format":  "markdown",
+				"message": "Add getting started page",
+				"slug":    "getting-started",
+				"url":     "http://example.com/group/my-project/-/wikis/getting-started",
+				"action":  "create",
+			},
+		}
+		payload, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBuffer(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Gitlab-Token", "secret")
+		req.Header.Set("X-Gitlab-Event", "Wiki Page Hook")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(http.StatusOK))
+		logStr := buf.String()
+		Expect(logStr).To(ContainSubstring("gitlab wiki webhook received"))
+		Expect(logStr).To(ContainSubstring("Wiki Page Hook"))
+		Expect(logStr).To(ContainSubstring("action=create"))
+		Expect(logStr).To(ContainSubstring("title=\"Getting Started\""))
+		Expect(logStr).To(ContainSubstring("slug=getting-started"))
+		Expect(logStr).To(ContainSubstring("format=markdown"))
+	})
+
 	It("rejects missing token", func() {
 		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBufferString(`{}`))
 		req.Header.Set("Content-Type", "application/json")
