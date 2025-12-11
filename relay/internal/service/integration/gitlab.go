@@ -298,7 +298,7 @@ func (s *gitLabService) SetupIntegration(ctx context.Context, params SetupIntegr
 		}
 	)
 
-	events := []string{"issues_events", "merge_requests_events", "note_events"}
+	events := []string{"issues_events", "merge_requests_events", "note_events", "wiki_page_events"}
 
 	for _, project := range projects {
 		externalID := strconv.FormatInt(project.ID, 10)
@@ -311,6 +311,7 @@ func (s *gitLabService) SetupIntegration(ctx context.Context, params SetupIntegr
 			IssuesEvents:          gitlab.Ptr(true),
 			MergeRequestsEvents:   gitlab.Ptr(true),
 			NoteEvents:            gitlab.Ptr(true),
+			WikiPageEvents:        gitlab.Ptr(true),
 			Token:                 gitlab.Ptr(webhookSecret),
 			EnableSSLVerification: gitlab.Ptr(true),
 		}, gitlab.WithContext(ctx))
@@ -520,6 +521,8 @@ func (s *gitLabService) RefreshIntegration(ctx context.Context, workspaceID int6
 		instanceURL = *integration.ProviderBaseURL
 	}
 
+	s.updateExistingWebhooksWithWikiEvents(ctx, integration.ID, instanceURL, primary.AccessToken)
+
 	return s.SetupIntegration(ctx, SetupIntegrationParams{
 		InstanceURL:    instanceURL,
 		Token:          primary.AccessToken,
@@ -528,6 +531,102 @@ func (s *gitLabService) RefreshIntegration(ctx context.Context, workspaceID int6
 		SetupByUserID:  integration.SetupByUserID,
 		WebhookBaseURL: webhookBaseURL,
 	})
+}
+
+func (s *gitLabService) updateExistingWebhooksWithWikiEvents(ctx context.Context, integrationID int64, instanceURL, token string) {
+	configs, err := s.stores.IntegrationConfigs().ListByIntegrationAndType(ctx, integrationID, "webhook")
+	if err != nil {
+		slog.WarnContext(ctx, "failed to list webhook configs for wiki update",
+			"integration_id", integrationID,
+			"error", err,
+		)
+		return
+	}
+
+	if len(configs) == 0 {
+		return
+	}
+
+	client, err := s.newClient(instanceURL, token)
+	if err != nil {
+		slog.WarnContext(ctx, "failed to create gitlab client for wiki update",
+			"integration_id", integrationID,
+			"error", err,
+		)
+		return
+	}
+
+	wikiEvent := "wiki_page_events"
+	for _, config := range configs {
+		var cfg webhookConfigValue
+		if err := json.Unmarshal(config.Value, &cfg); err != nil {
+			slog.WarnContext(ctx, "failed to unmarshal webhook config",
+				"config_id", config.ID,
+				"error", err,
+			)
+			continue
+		}
+
+		if cfg.WebhookID == 0 {
+			continue
+		}
+
+		hasWikiEvents := false
+		for _, event := range cfg.Events {
+			if event == wikiEvent {
+				hasWikiEvents = true
+				break
+			}
+		}
+		if hasWikiEvents {
+			continue
+		}
+
+		projectID, err := strconv.ParseInt(config.Key, 10, 64)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to parse project id from config key",
+				"config_key", config.Key,
+				"error", err,
+			)
+			continue
+		}
+
+		_, _, editErr := client.Projects.EditProjectHook(projectID, cfg.WebhookID, &gitlab.EditProjectHookOptions{
+			WikiPageEvents: gitlab.Ptr(true),
+		}, gitlab.WithContext(ctx))
+		if editErr != nil {
+			slog.WarnContext(ctx, "failed to update webhook with wiki events",
+				"project_id", projectID,
+				"webhook_id", cfg.WebhookID,
+				"error", editErr,
+			)
+			continue
+		}
+
+		cfg.Events = append(cfg.Events, wikiEvent)
+		updatedValue, err := json.Marshal(cfg)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to marshal updated config",
+				"config_id", config.ID,
+				"error", err,
+			)
+			continue
+		}
+		config.Value = updatedValue
+
+		if err := s.stores.IntegrationConfigs().Update(ctx, &config); err != nil {
+			slog.WarnContext(ctx, "failed to update config with wiki events",
+				"config_id", config.ID,
+				"error", err,
+			)
+			continue
+		}
+
+		slog.InfoContext(ctx, "updated webhook with wiki events",
+			"project_id", projectID,
+			"webhook_id", cfg.WebhookID,
+		)
+	}
 }
 
 func (s *gitLabService) newClient(instanceURL, token string) (*gitlab.Client, error) {

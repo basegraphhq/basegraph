@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
+	gitlab "gitlab.com/gitlab-org/api/client-go"
 
 	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/store"
@@ -84,6 +85,23 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 	}
 	if eventType == "" {
 		eventType = payload.ObjectKind
+	}
+
+	if eventType == string(gitlab.EventTypeWikiPage) || payload.ObjectKind == "wiki_page" {
+		var wikiEvent gitlab.WikiPageEvent
+		if err := json.Unmarshal(body, &wikiEvent); err == nil {
+			h.logger.InfoContext(ctx, "gitlab wiki webhook received",
+				"integration_id", integrationID,
+				"event_type", eventType,
+				"action", wikiEvent.ObjectAttributes.Action,
+				"title", wikiEvent.ObjectAttributes.Title,
+				"slug", wikiEvent.ObjectAttributes.Slug,
+				"url", wikiEvent.ObjectAttributes.URL,
+				"format", wikiEvent.ObjectAttributes.Format,
+			)
+			c.JSON(http.StatusOK, gin.H{"status": "ok"})
+			return
+		}
 	}
 
 	h.logger.InfoContext(ctx, "gitlab webhook received",

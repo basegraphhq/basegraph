@@ -201,6 +201,56 @@ var _ = Describe("GitLabService", func() {
 		})
 		Expect(err).To(HaveOccurred())
 	})
+
+	It("includes wiki_page_events when creating new webhooks", func() {
+		mock := newGitLabAPIMock()
+		mock.projects = []gitlabProject{
+			{ID: 10, Name: "p10", PathWithNamespace: "g/p10", WebURL: "http://git/p10"},
+		}
+		mock.start()
+		defer mock.close()
+
+		intStore := newFakeIntegrationStore()
+		credStore := newFakeCredentialStore()
+		repoStore := newFakeRepoStore()
+		configStore := newFakeIntegrationConfigStore()
+		tx := &fakeTxRunner{provider: &fakeStoreProvider{
+			integrationStore:       intStore,
+			credentialStore:        credStore,
+			integrationConfigStore: configStore,
+			repoStore:              repoStore,
+		}}
+
+		svc := &gitLabService{
+			txRunner:  tx,
+			repoStore: repoStore,
+		}
+
+		result, err := svc.SetupIntegration(ctx, SetupIntegrationParams{
+			InstanceURL:    mock.baseURL(),
+			Token:          "pat",
+			WorkspaceID:    1,
+			OrganizationID: 2,
+			SetupByUserID:  3,
+			WebhookBaseURL: "https://relay",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(result.WebhooksCreated).To(Equal(1))
+
+		var webhookConfig *model.IntegrationConfig
+		for i := range configStore.created {
+			if configStore.created[i].ConfigType == "webhook" {
+				webhookConfig = &configStore.created[i]
+				break
+			}
+		}
+		Expect(webhookConfig).NotTo(BeNil())
+
+		var cfg webhookConfigValue
+		err = json.Unmarshal(webhookConfig.Value, &cfg)
+		Expect(err).NotTo(HaveOccurred())
+		Expect(cfg.Events).To(ContainElement("wiki_page_events"))
+	})
 })
 
 // --- test fixtures ---
@@ -214,14 +264,21 @@ type gitlabProject struct {
 }
 
 type gitlabAPIMock struct {
-	hookErrors  map[int64]int
-	server      *httptest.Server
-	projects    []gitlabProject
-	hookCalls   []int64
-	hookDelay   time.Duration
-	hookMu      sync.Mutex
-	inFlight    int32
-	maxInFlight int32
+	hookErrors    map[int64]int
+	server        *httptest.Server
+	projects      []gitlabProject
+	hookCalls     []int64
+	editHookCalls []editHookCall
+	hookDelay     time.Duration
+	hookMu        sync.Mutex
+	inFlight      int32
+	maxInFlight   int32
+}
+
+type editHookCall struct {
+	ProjectID      int64
+	HookID         int64
+	WikiPageEvents bool
 }
 
 func newGitLabAPIMock() *gitlabAPIMock {
@@ -241,6 +298,8 @@ func (m *gitlabAPIMock) start() {
 			m.handleListProjects(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/v4/projects/") && strings.HasSuffix(r.URL.Path, "/hooks") && r.Method == http.MethodPost:
 			m.handleAddHook(w, r)
+		case strings.HasPrefix(r.URL.Path, "/api/v4/projects/") && strings.Contains(r.URL.Path, "/hooks/") && r.Method == http.MethodPut:
+			m.handleEditHook(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -318,13 +377,45 @@ func (m *gitlabAPIMock) handleAddHook(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"id":123}`))
 }
 
+func (m *gitlabAPIMock) handleEditHook(w http.ResponseWriter, r *http.Request) {
+	parts := strings.Split(r.URL.Path, "/")
+	if len(parts) < 6 {
+		http.Error(w, "bad path", http.StatusBadRequest)
+		return
+	}
+	projectIDStr := parts[len(parts)-3]
+	hookIDStr := parts[len(parts)-1]
+	projectID, _ := strconv.ParseInt(projectIDStr, 10, 64)
+	hookID, _ := strconv.ParseInt(hookIDStr, 10, 64)
+
+	var body struct {
+		WikiPageEvents *bool `json:"wiki_page_events"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+
+	m.hookMu.Lock()
+	m.editHookCalls = append(m.editHookCalls, editHookCall{
+		ProjectID:      projectID,
+		HookID:         hookID,
+		WikiPageEvents: body.WikiPageEvents != nil && *body.WikiPageEvents,
+	})
+	m.hookMu.Unlock()
+
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"id":` + hookIDStr + `}`))
+}
+
 func (m *gitlabAPIMock) maxConcurrentLoad() int32 {
 	return atomic.LoadInt32(&m.maxInFlight)
 }
 
 type fakeIntegrationStore struct {
-	created []*model.Integration
-	mu      sync.Mutex
+	existing *model.Integration
+	created  []*model.Integration
+	mu       sync.Mutex
 }
 
 func newFakeIntegrationStore() *fakeIntegrationStore {
@@ -332,10 +423,16 @@ func newFakeIntegrationStore() *fakeIntegrationStore {
 }
 
 func (f *fakeIntegrationStore) GetByID(ctx context.Context, id int64) (*model.Integration, error) {
+	if f.existing != nil && f.existing.ID == id {
+		return f.existing, nil
+	}
 	return nil, store.ErrNotFound
 }
 
 func (f *fakeIntegrationStore) GetByWorkspaceAndProvider(ctx context.Context, workspaceID int64, provider model.Provider) (*model.Integration, error) {
+	if f.existing != nil && f.existing.WorkspaceID == workspaceID && f.existing.Provider == provider {
+		return f.existing, nil
+	}
 	return nil, store.ErrNotFound
 }
 
@@ -372,8 +469,9 @@ func (f *fakeIntegrationStore) ListByCapability(ctx context.Context, workspaceID
 }
 
 type fakeCredentialStore struct {
-	created []model.IntegrationCredential
-	mu      sync.Mutex
+	existing []model.IntegrationCredential
+	created  []model.IntegrationCredential
+	mu       sync.Mutex
 }
 
 func newFakeCredentialStore() *fakeCredentialStore {
@@ -381,10 +479,20 @@ func newFakeCredentialStore() *fakeCredentialStore {
 }
 
 func (f *fakeCredentialStore) GetByID(ctx context.Context, id int64) (*model.IntegrationCredential, error) {
+	for _, c := range f.existing {
+		if c.ID == id {
+			return &c, nil
+		}
+	}
 	return nil, store.ErrNotFound
 }
 
 func (f *fakeCredentialStore) GetPrimaryByIntegration(ctx context.Context, integrationID int64) (*model.IntegrationCredential, error) {
+	for _, c := range f.existing {
+		if c.IntegrationID == integrationID && c.IsPrimary {
+			return &c, nil
+		}
+	}
 	return nil, store.ErrNotFound
 }
 
@@ -520,8 +628,10 @@ func (f *fakeRepoStore) ListByIntegration(ctx context.Context, integrationID int
 }
 
 type fakeIntegrationConfigStore struct {
-	created []model.IntegrationConfig
-	mu      sync.Mutex
+	existing []model.IntegrationConfig
+	created  []model.IntegrationConfig
+	updated  []model.IntegrationConfig
+	mu       sync.Mutex
 }
 
 func newFakeIntegrationConfigStore() *fakeIntegrationConfigStore {
@@ -529,19 +639,41 @@ func newFakeIntegrationConfigStore() *fakeIntegrationConfigStore {
 }
 
 func (f *fakeIntegrationConfigStore) GetByID(ctx context.Context, id int64) (*model.IntegrationConfig, error) {
+	for _, c := range f.existing {
+		if c.ID == id {
+			return &c, nil
+		}
+	}
 	return nil, store.ErrNotFound
 }
 
 func (f *fakeIntegrationConfigStore) GetByIntegrationAndKey(ctx context.Context, integrationID int64, key string) (*model.IntegrationConfig, error) {
+	for _, c := range f.existing {
+		if c.IntegrationID == integrationID && c.Key == key {
+			return &c, nil
+		}
+	}
 	return nil, store.ErrNotFound
 }
 
 func (f *fakeIntegrationConfigStore) ListByIntegration(ctx context.Context, integrationID int64) ([]model.IntegrationConfig, error) {
-	return nil, nil
+	var result []model.IntegrationConfig
+	for _, c := range f.existing {
+		if c.IntegrationID == integrationID {
+			result = append(result, c)
+		}
+	}
+	return result, nil
 }
 
 func (f *fakeIntegrationConfigStore) ListByIntegrationAndType(ctx context.Context, integrationID int64, configType string) ([]model.IntegrationConfig, error) {
-	return nil, nil
+	var result []model.IntegrationConfig
+	for _, c := range f.existing {
+		if c.IntegrationID == integrationID && c.ConfigType == configType {
+			result = append(result, c)
+		}
+	}
+	return result, nil
 }
 
 func (f *fakeIntegrationConfigStore) Create(ctx context.Context, config *model.IntegrationConfig) error {
@@ -553,6 +685,10 @@ func (f *fakeIntegrationConfigStore) Create(ctx context.Context, config *model.I
 }
 
 func (f *fakeIntegrationConfigStore) Update(ctx context.Context, config *model.IntegrationConfig) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	copy := *config
+	f.updated = append(f.updated, copy)
 	return nil
 }
 
