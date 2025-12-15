@@ -22,12 +22,12 @@ REPO_ROOT=$(git rev-parse --show-toplevel)
 cd "$REPO_ROOT"
 
 if ! command -v make >/dev/null 2>&1; then
-    fail "make is required for the Relay pre-commit hook"
+    fail "make is required for the api-server pre-commit hook"
 fi
 
-changed_relay_files=$(git diff --cached --name-only --relative | grep '^relay/' || true)
-if [ -z "$changed_relay_files" ]; then
-    printf "${YELLOW}No staged Relay changes detected; skipping Relay checks.${NC}\n"
+changed_api_server_files=$(git diff --cached --name-only --relative | grep '^api-server/' || true)
+if [ -z "$changed_api_server_files" ]; then
+    printf "${YELLOW}No staged api-server changes detected; skipping api-server checks.${NC}\n"
     exit 0
 fi
 
@@ -42,8 +42,8 @@ run_step() {
     fi
 }
 
-run_step "Building relay (make build)" bash -c 'cd relay && make build'
-run_step "Running relay tests (make test)" bash -c 'cd relay && make test'
-run_step "Running relay linters (make lint)" bash -c 'cd relay && make lint'
+run_step "Building api-server (make build)" bash -c 'cd api-server && make build'
+run_step "Running api-server tests (make test)" bash -c 'cd api-server && make test'
+run_step "Running api-server linters (make lint)" bash -c 'cd api-server && make lint'
 
-printf "${GREEN}All relay checks passed. Proceeding with commit.${NC}\n"
+printf "${GREEN}All api-server checks passed. Proceeding with commit.${NC}\n"
