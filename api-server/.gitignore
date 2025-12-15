@@ -1,0 +1,8 @@
+# Relay service .gitignore
+# (complements root .gitignore)
+
+# Binary built without -o flag
+/relay
+
+# Go build cache
+.gocache/
