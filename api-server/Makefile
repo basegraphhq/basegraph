@@ -2,17 +2,15 @@
 
 ENUMVALIDATOR_BIN := $(abspath bin/enumvalidator)
 
-# Build the relay service
 build:
-	go build -o bin/relay cmd/relay/main.go
+	go build -o bin/server cmd/server/main.go
 
 $(ENUMVALIDATOR_BIN):
 	@mkdir -p $(dir $(ENUMVALIDATOR_BIN))
 	go build -o $(ENUMVALIDATOR_BIN) ./tools/linters/enumvalidator/cmd
 
-# Run the relay service
 run: build
-	bin/relay
+	bin/server
 
 # Tidy up go.mod and go.sum
 tidy:

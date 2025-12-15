@@ -58,10 +58,53 @@ Fields
 Title, description, members, assignee, reporter, due_date, labels, discussion_thread, code_findings, domain_learnings, project_learnings, keywords, spec, token_cost, retriever_budget
 
 
-Planner
+## Planner
+#### Planner
+**Goal**
+Planner receives input, understand's what's missing with our understanding for a given ticket and then plans what contexts needs to be fetched.
+
+**Scope**
+1. Tracker event comes in - Source: Tracker
+2. Check if the context is sufficient or not.
+	1. Sufficient: Call Gap Detector
+	2. Insufficient:
+		1. Check what all contexts needs to be fetched.
+		2. Prepare a focused task for each retriever on what to retrieve.
+		3. Calls the Executor
+3. Executor comes back with retrieved focus
+	1. Source: Executor
+	2. Get the budget of retrieval cycles
+		1. No Budget: Call the Gap Detector anyways. Ensure that you are passing % confidence about context passed or incomplete context while calling Gap Detector. Gap detector should respond kindly saying that I've looked my best and found these. To explore further, I need more context about Y.
+		2. Budget: Run the retrievers based on the updated findings.
 
 
+**Open questions**
+Should Planner tell retrievers what to focus on, or should the retrievers decide themselves? **Planner should set the goal onto what should be searched**
+
+**Nuances**
+- Planner should be alloted a budget, ie, run retrievers for these many cycles. If it's still isn't satisfies. It should respond accordingly.
+- Planner should have reports from the retriever saying that, data was missing. Unable to find it 
+
+**Edge cases**
+- Planner and Executors running infinitely
+- Retrievers are unable to fetch due to db issue. No data in DB.
+- 
+
+**Callers**: 
+- Gitlab Event Webhook
+- Executor finishes planned jobs
+
+**Types of events**
+- Relay is tagged to a fresh issue
+- PM or dev replies on a comment
+	- Reply to relay
+	- Tags relay to check other's reply
+- Executor finishes the planned_jobs
+
+**Calls**:
+Gap Detector
 
 
-
-
+## Gap Detector
+Gap Detector runs when the planner decides that context is sufficient for a given event.
+Gap Detector checks the gaps in the requirements.

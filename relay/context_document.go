@@ -1,4 +1,4 @@
-package task
+package relay
 
 import (
 	"errors"
@@ -63,6 +63,7 @@ type ContextDocument struct {
 
 type CodeFinding struct {
 	Finding          string
+	Severity         Severity
 	Sources          []string
 	SuggestedActions []string
 }

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide covers the complete linting setup for the Relay project, including standard Go linters, custom analyzers, and pre-commit hooks.
+This guide covers the complete linting setup for the Relay project, including standard Go linters and custom analyzers.
 
 ## Quick Start
 
@@ -127,31 +127,15 @@ golangci-lint run path/to/file.go
 golangci-lint run --new-from-rev=main
 ```
 
-## Pre-commit Hook
+## Local developer workflow
 
-The pre-commit hook automatically runs on every commit to ensure code quality whenever staged files touch `relay/`.
+### Recommended workflow
 
-### What it does:
+- Run formatting locally: `make format`
+- Run tests locally: `make test`
+- Run linters locally: `make lint`
 
-1. **Builds Relay** - Runs `make build` from `relay/`
-2. **Runs Tests** - Executes `make test` (unit + Ginkgo)
-3. **Runs Linters** - Executes `make lint` (golangci-lint + custom analyzers)
-
-If any step fails, the commit is aborted. When no `relay/` files are staged the hook exits early.
-
-### Bypass (use sparingly):
-
-```bash
-git commit --no-verify -m "Emergency fix"
-```
-
-### Manual Installation:
-
-```bash
-# Copy the hook into your local git hooks directory
-cp scripts/pre-commit-hook .git/hooks/pre-commit
-chmod +x .git/hooks/pre-commit
-```
+CI remains the source of truth for checks on PRs.
 
 ## Troubleshooting
 
