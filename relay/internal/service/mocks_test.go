@@ -164,6 +164,9 @@ type mockStoreProvider struct {
 	cred        store.IntegrationCredentialStore
 	config      store.IntegrationConfigStore
 	repo        store.RepoStore
+	issue       store.IssueStore
+	eventLog    store.EventLogStore
+	pipelineRun store.PipelineRunStore
 }
 
 func (m *mockStoreProvider) Organizations() store.OrganizationStore {
@@ -178,6 +181,14 @@ func (m *mockStoreProvider) Integrations() store.IntegrationStore {
 	return m.integration
 }
 
+func (m *mockStoreProvider) EventLogs() store.EventLogStore {
+	return m.eventLog
+}
+
+func (m *mockStoreProvider) Issues() store.IssueStore {
+	return m.issue
+}
+
 func (m *mockStoreProvider) IntegrationCredentials() store.IntegrationCredentialStore {
 	return m.cred
 }
@@ -188,6 +199,10 @@ func (m *mockStoreProvider) IntegrationConfigs() store.IntegrationConfigStore {
 
 func (m *mockStoreProvider) Repos() store.RepoStore {
 	return m.repo
+}
+
+func (m *mockStoreProvider) PipelineRuns() store.PipelineRunStore {
+	return m.pipelineRun
 }
 
 type mockTxRunner struct {

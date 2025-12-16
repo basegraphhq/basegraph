@@ -8,4 +8,3 @@ import (
 func EventRouter(router *gin.RouterGroup, handler *handler.EventIngestHandler) {
 	router.POST("/ingest", handler.Ingest)
 }
-

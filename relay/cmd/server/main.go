@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"basegraph.app/relay/core/db"
 	"basegraph.app/relay/internal/http/middleware"
 	httprouter "basegraph.app/relay/internal/http/router"
+	"basegraph.app/relay/internal/llm"
 	"basegraph.app/relay/internal/queue"
 	"basegraph.app/relay/internal/service"
 	"basegraph.app/relay/internal/store"
@@ -49,8 +51,8 @@ func main() {
 		slog.InfoContext(ctx, "otel disabled (no endpoint configured)")
 	}
 
+	fmt.Printf("%s\n", banner)
 	slog.InfoContext(ctx, "relay starting", "env", cfg.Env, "service", cfg.OTel.ServiceName)
-
 	if err := id.Init(1); err != nil {
 		slog.ErrorContext(ctx, "failed to initialize snowflake id generator", "error", err)
 		os.Exit(1)
@@ -81,7 +83,19 @@ func main() {
 	defer eventProducer.Close()
 
 	stores := store.NewStores(database.Queries())
-	services := service.NewServices(stores, service.NewTxRunner(database), cfg.WorkOS, cfg.DashboardURL, cfg.EventWebhook, eventProducer)
+
+	// Initialize LLM client if enabled
+	var llmClient llm.Client
+	if cfg.Pipeline.LLMEnabled {
+		client, err := llm.NewClient(cfg.OpenAI.APIKey)
+		if err != nil {
+			slog.WarnContext(ctx, "LLM client initialization failed, continuing without LLM features", "error", err)
+		} else {
+			llmClient = client
+		}
+	}
+
+	services := service.NewServices(stores, service.NewTxRunner(database), cfg.WorkOS, cfg.DashboardURL, cfg.EventWebhook, eventProducer, llmClient)
 
 	if cfg.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
@@ -142,3 +156,12 @@ func setupRouter(cfg config.Config, services *service.Services) *gin.Engine {
 
 	return router
 }
+
+const banner = `
+██████╗ ███████╗██╗      █████╗ ██╗   ██╗    ███████╗███████╗██████╗ ██╗   ██╗███████╗██████╗ 
+██╔══██╗██╔════╝██║     ██╔══██╗╚██╗ ██╔╝    ██╔════╝██╔════╝██╔══██╗██║   ██║██╔════╝██╔══██╗
+██████╔╝█████╗  ██║     ███████║ ╚████╔╝     ███████╗█████╗  ██████╔╝██║   ██║█████╗  ██████╔╝
+██╔══██╗██╔══╝  ██║     ██╔══██║  ╚██╔╝      ╚════██║██╔══╝  ██╔══██╗╚██╗ ██╔╝██╔══╝  ██╔══██╗
+██║  ██║███████╗███████╗██║  ██║   ██║       ███████║███████╗██║  ██║ ╚████╔╝ ███████╗██║  ██║
+╚═╝  ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝   ╚═╝       ╚══════╝╚══════╝╚═╝  ╚═╝  ╚═══╝  ╚══════╝╚═╝  ╚═╝
+`

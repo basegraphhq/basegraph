@@ -69,4 +69,3 @@ func (p *redisProducer) Enqueue(ctx context.Context, msg EventMessage) error {
 func (p *redisProducer) Close() error {
 	return p.client.Close()
 }
-

@@ -5,9 +5,12 @@ import (
 	"fmt"
 
 	"basegraph.app/relay/core/config"
-	"basegraph.app/relay/internal/service/integration"
-	"basegraph.app/relay/internal/store"
+	"basegraph.app/relay/internal/gap"
+	"basegraph.app/relay/internal/llm"
 	"basegraph.app/relay/internal/queue"
+	"basegraph.app/relay/internal/service/integration"
+	"basegraph.app/relay/internal/spec"
+	"basegraph.app/relay/internal/store"
 )
 
 type Services struct {
@@ -17,9 +20,20 @@ type Services struct {
 	dashboardURL string
 	webhookCfg   config.EventWebhookConfig
 	eventIngest  EventIngestService
+	llmClient    llm.Client
+	gapDetector  gap.Detector
+	specGen      spec.Generator
 }
 
-func NewServices(stores *store.Stores, txRunner TxRunner, workOSCfg config.WorkOSConfig, dashboardURL string, webhookCfg config.EventWebhookConfig, eventProducer queue.Producer) *Services {
+func NewServices(stores *store.Stores, txRunner TxRunner, workOSCfg config.WorkOSConfig, dashboardURL string, webhookCfg config.EventWebhookConfig, eventProducer queue.Producer, llmClient llm.Client) *Services {
+	var gapDetector gap.Detector
+	var specGen spec.Generator
+
+	if llmClient != nil {
+		gapDetector = gap.New(llmClient, nil)
+		specGen = spec.New(llmClient, nil)
+	}
+
 	return &Services{
 		stores:       stores,
 		txRunner:     txRunner,
@@ -27,6 +41,9 @@ func NewServices(stores *store.Stores, txRunner TxRunner, workOSCfg config.WorkO
 		dashboardURL: dashboardURL,
 		webhookCfg:   webhookCfg,
 		eventIngest:  NewEventIngestService(stores, txRunner, eventProducer, nil),
+		llmClient:    llmClient,
+		gapDetector:  gapDetector,
+		specGen:      specGen,
 	}
 }
 
@@ -66,6 +83,14 @@ func (s *Services) WebhookBaseURL() string {
 
 func (s *Services) Events() EventIngestService {
 	return s.eventIngest
+}
+
+func (s *Services) GapDetector() gap.Detector {
+	return s.gapDetector
+}
+
+func (s *Services) SpecGenerator() spec.Generator {
+	return s.specGen
 }
 
 type gitLabTxRunnerAdapter struct {

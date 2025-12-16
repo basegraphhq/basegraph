@@ -27,4 +27,3 @@ type IngestEventResponse struct {
 	Enqueued   bool   `json:"enqueued"`
 	Duplicated bool   `json:"duplicated"`
 }
-

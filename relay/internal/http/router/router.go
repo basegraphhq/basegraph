@@ -10,8 +10,8 @@ import (
 )
 
 type RouterConfig struct {
-	DashboardURL string
-	IsProduction bool
+	DashboardURL    string
+	IsProduction    bool
 	TraceHeaderName string
 }
 

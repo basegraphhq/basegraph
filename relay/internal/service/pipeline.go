@@ -14,12 +14,12 @@ import (
 type Pipeline struct {
 	store     *store.Store
 	consumer  *queue.RedisConsumer
-	llmClient llm.LLMClient
+	llmClient llm.Client
 	logger    *slog.Logger
 }
 
 // NewPipeline creates a new pipeline instance
-func NewPipeline(database *db.DB, consumer *queue.RedisConsumer, llmClient llm.LLMClient, logger *slog.Logger) *Pipeline {
+func NewPipeline(database *db.DB, consumer *queue.RedisConsumer, llmClient llm.Client, logger *slog.Logger) *Pipeline {
 	if logger == nil {
 		logger = slog.Default()
 	}

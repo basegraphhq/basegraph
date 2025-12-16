@@ -79,4 +79,3 @@ func (h *EventIngestHandler) Ingest(c *gin.Context) {
 		Duplicated: result.Duplicated,
 	})
 }
-

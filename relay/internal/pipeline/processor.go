@@ -88,7 +88,7 @@ func (p *Processor) processBatch(ctx context.Context) error {
 		Block:    5 * time.Second,
 	}
 
-	streams, err := p.redisClient.XReadGroup(ctx, args).Result()
+	streams, err := p.redisClient.XReadGroup(ctx, &args).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return nil // No messages

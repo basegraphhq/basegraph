@@ -198,4 +198,3 @@ func computeDedupeKey(source, eventType, externalIssueID string, externalEventID
 	hash := sha256.Sum256(data)
 	return fmt.Sprintf("%s:%s", source, hex.EncodeToString(hash[:])), nil
 }
-

@@ -2,40 +2,28 @@ package llm
 
 import (
 	"context"
-	"strings"
+	"fmt"
+
+	"basegraph.app/relay/internal/domain"
 )
 
-// LLMClient exposes the LLM powered capabilities used within the pipeline.
-type LLMClient interface {
+// Client exposes the LLM powered capabilities used within the pipeline.
+type Client interface {
 	// ExtractKeywords extracts keywords from issue text
-	ExtractKeywords(ctx context.Context, issueText string) ([]string, error)
+	ExtractKeywords(ctx context.Context, req KeywordRequest) ([]domain.Keyword, error)
 	// DetectGaps detects gaps in requirements
-	DetectGaps(ctx context.Context, issueText string) ([]string, error)
+	DetectGaps(ctx context.Context, req GapRequest) (*domain.GapAnalysis, error)
+	// GenerateSpec generates a technical specification
+	GenerateSpec(ctx context.Context, req SpecRequest) (string, error)
 }
 
-// NewClient creates a new LLM client (mock implementation for now)
-func NewClient(apiKey string) LLMClient {
-	return &mockClient{}
-}
-
-type mockClient struct{}
-
-func (c *mockClient) ExtractKeywords(ctx context.Context, issueText string) ([]string, error) {
-	// Simple mock implementation - extract words that look like technical terms
-	words := strings.Fields(issueText)
-	var keywords []string
-	for _, word := range words {
-		if len(word) > 4 && strings.ContainsAny(word, "-_.") {
-			keywords = append(keywords, word)
-		}
+// NewClient creates a new LLM client (returns error if no API key provided)
+func NewClient(apiKey string) (Client, error) {
+	if apiKey == "" {
+		return nil, fmt.Errorf("OpenAI API key is required")
 	}
-	if len(keywords) == 0 {
-		keywords = []string{"API", "integration", "backend"}
-	}
-	return keywords, nil
-}
 
-func (c *mockClient) DetectGaps(ctx context.Context, issueText string) ([]string, error) {
-	// Simple mock implementation
-	return []string{"Need more details about expected behavior", "Missing acceptance criteria"}, nil
+	// For now, return an error indicating that OpenAI integration is not implemented
+	// TODO: Implement proper OpenAI integration with the official SDK
+	return nil, fmt.Errorf("OpenAI integration not yet implemented - API key provided but SDK not configured")
 }
