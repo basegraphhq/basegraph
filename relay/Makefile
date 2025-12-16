@@ -1,0 +1,72 @@
+.PHONY: build build-server build-worker run-server run-worker test clean sqlc-generate migrate-up migrate-down format lint install-tools
+
+# Build binaries
+build: build-server build-worker
+
+build-server:
+	go build -o bin/server ./cmd/server
+
+build-worker:
+	go build -o bin/worker ./cmd/worker
+
+# Run binaries
+run-server:
+	go run ./cmd/server
+
+run-worker:
+	go run ./cmd/worker
+
+# Testing
+test:
+	go test ./...
+
+# Database operations
+sqlc-generate:
+	sqlc generate
+
+migrate-up:
+	goose -dir migrations postgres "$(DATABASE_URL)" up
+
+migrate-down:
+	goose -dir migrations postgres "$(DATABASE_URL)" down
+
+migrate-create:
+	goose -dir migrations create $(NAME) sql
+
+# Code quality
+format:
+	gofumpt -w .
+
+lint:
+	golangci-lint run
+
+# Install required tools
+install-tools:
+	go install github.com/sqlc-dev/sqlc/cmd/sqlc@latest
+	go install github.com/pressly/goose/v3/cmd/goose@latest
+	go install github.com/onsi/ginkgo/v2/ginkgo@latest
+	go install mvdan.cc/gofumpt@latest
+	go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+
+# Clean
+clean:
+	rm -rf bin/
+
+# Development helpers
+dev-db:
+	docker compose -f dev/compose.yml up -d
+
+dev-down:
+	docker compose -f dev/compose.yml down
+
+# Environment setup
+.env:
+	@echo "Creating .env file..."
+	@echo "DATABASE_URL=postgres://postgres:postgres@localhost:5432/relay?sslmode=disable" > .env
+	@echo "REDIS_URL=redis://localhost:6379/0" >> .env
+	@echo "REDIS_STREAM=relay_events" >> .env
+	@echo "REDIS_CONSUMER_GROUP=relay_group" >> .env
+	@echo "REDIS_CONSUMER=relay_worker_1" >> .env
+	@echo "REDIS_DLQ_STREAM=relay_events_dlq" >> .env
+	@echo "PORT=8080" >> .env
+	@echo "ENV=development" >> .env

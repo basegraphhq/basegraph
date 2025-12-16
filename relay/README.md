@@ -1,110 +1,249 @@
-# Relay's Thinking Layer
+# Relay - Turn Tickets into Production-Ready Specs
 
-Relay is an LLM powered teammate that lives in issue trackers (currently Gitlab, with Github, Linear etc integrations coming soon).
+Relay analyzes your tickets, gathers context from your team, and maps your codebase to generate specs that actually ship. Hand them to any developer or AI agent.
 
-This is a prototype project for Relay 
+## What Relay Does
 
-Relay can
-1. Understand the ticket.
-2. Has access to explore codebase through graph based retrieval(for code), project's past learnings(postgres query), domain's knowledgebase(postgres query).
-3. Spot the gaps in expectations vs what's there. gaps in requirements. gaps in assumptions, gaps in incomplete context. gaps in current implementation, domain edge cases, code edge cases, side effects, impacted areas, pitfalls, things to be careful of.
-business edge cases and code edge cases and pitfalls.
-4. Offers suggested actions. 
-5. Can understand the replies. Based on the reply, it check if this adds new context to our existing context and should we retrieve more context based on reply.
-6. At each reply, after fetching updated context, we run Gap detection which is either going to ask follow-up question if gap exists, or marks a gap/concern as closed and updates its learnings about the project.
-7. If sufficient amount of Relay's gaps are closed, gap detection finally sends the ticket for Spec generation. Which can be handed off to a human developer or a coding agent. Basically has the entire implementation plan.
+**The Problem**: When engineers ship bugs, it's almost never a code mistake. It's because they misunderstood a requirement or missed an edge case while rushing. Vague tickets like "Add Twilio support" don't help, and current AI coding tools ask surface-level questions before jumping to write code.
 
+**The Solution**: Relay is a planning agent that deeply understands your codebase and asks the right questions to extract the right context from your team's heads—before any code is written.
 
+### Example in Action
 
-Example: 
-Title: Add Twilio Support
-Description: To enable International calling, we should integrate with Twilio.
+**Ticket**: "Add Twilio support"
 
+Relay analyzes the codebase and asks:
+- @pm: Calls, SMS? What's actually needed?
+- @pm: Outbound, inbound, or both?
+- @dev_lead: We don't support rate limiting yet. How should we proceed? (Relay knows to tag the dev lead because it found rate limiting gaps in NotificationService via code graph analysis)
 
-Gaps could be:
-Requirements:
-1. Calling: Inbound, outbound or both?
-2. Callbacks: Twilio sends us status callbacks for each state that the call has gone through. But as of now, we don't support incoming webhooks because
-the previous discussion (link), we decided that we'll check the call status manually through a async task. To ensure we are not tying ourselves with one dialer.
-3. Twilio uses credit systems. If we run out of credits, what kind of notifier are we relying on? Human monitor who can receive emails, grafana alerts?
+**Output**: A clear technical spec covering decisions, pitfalls, edge cases, and affected services.
 
-Devs:
-1. What's our rate limit strategy. As of now, we just log it if we receive any other status_code than 200?
-    Suggested action: Implement exponential backoff based retries when we hit rate limits. 
-    Sources: [@call_tasks.go:410]
-2. Twilio offers uLaw as well as mp3. Currently we only support mp3. Should we keep it at that?
-    Suggestion: uLaw offers better audio quality. Adding support is not much engineering effort. Do consider, or what do you say?
-    Sources: [@exotel.go:164, @audio_utils.go:101]
-etc etc.. Just 3-5 important questions to ask
-3. As of now, we're not storing which dialer was used to make the call.
-    Suggestion: Add a column called 'dialer' to call table 
-    Sources: [@init_schema.sql, @add_call_table.sql]
+## Why Relay is Different
 
+### Context Lives in People, Not Just Code
 
-Impact areas to be careful:
-1. Our go-based caller microservice does not expect websocket_url in the outbound_call request. 
-    Sources: [@core_client.go:12]
+Edge cases don't live in your codebase—they live in your team's heads. Business logic nuances. Production gotchas. That one integration everyone forgets about.
 
-Based on the replies, for each reply, we should plan further steps
+Relay asks the right questions. It pulls context from the people who know your product, then maps that against your actual codebase constraints. What you get is a spec that accounts for both the business logic edge cases humans catch and the architectural limitations code analysis reveals.
 
----
+This is the step most AI tools skip. We built Relay because planning is too important to automate away.
 
-### High level components
+### Deterministic Code Understanding vs Semantic Search
 
-Issue Context Service
-Can crud on issue_context. 
-This is a postgres table that we maintain for a given ticket_id.
-Fields
-Title, description, members, assignee, reporter, due_date, labels, discussion_thread, code_findings, domain_learnings, project_learnings, keywords, spec, token_cost, retriever_budget
+**Semantic Search (Cursor, Aider, etc.)**
+- ❌ Embeddings miss exact import chains and call graphs
+- ❌ Can't verify if a function actually exists or trace its dependencies
+- ❌ Guesses at architecture based on similarity, not structure
+- ❌ Reads 50+ files hoping to find the right context
 
+**Relay's Codegraph (Compiler-Based)**
+- ✅ Traces exact import paths and function call chains
+- ✅ Verifies every symbol exists and maps its relationships
+- ✅ Understands actual architecture from parse trees, not vibes
+- ✅ Fetches only the 3-5 files that actually matter
 
-## Planner
-#### Planner
-**Goal**
-Planner receives input, understand's what's missing with our understanding for a given ticket and then plans what contexts needs to be fetched.
+**Result**: Your AI agent gets a spec with verified imports, actual function signatures, and real architectural constraints—not hallucinated ones. No more "this function doesn't exist" or "wrong number of parameters" errors after 20 minutes of generation.
 
-**Scope**
-1. Tracker event comes in - Source: Tracker
-2. Check if the context is sufficient or not.
-	1. Sufficient: Call Gap Detector
-	2. Insufficient:
-		1. Check what all contexts needs to be fetched.
-		2. Prepare a focused task for each retriever on what to retrieve.
-		3. Calls the Executor
-3. Executor comes back with retrieved focus
-	1. Source: Executor
-	2. Get the budget of retrieval cycles
-		1. No Budget: Call the Gap Detector anyways. Ensure that you are passing % confidence about context passed or incomplete context while calling Gap Detector. Gap detector should respond kindly saying that I've looked my best and found these. To explore further, I need more context about Y.
-		2. Budget: Run the retrievers based on the updated findings.
+## Architecture
 
+This repository contains the unified Relay codebase that produces two binaries:
 
-**Open questions**
-Should Planner tell retrievers what to focus on, or should the retrievers decide themselves? **Planner should set the goal onto what should be searched**
+```
+relay/
+├── cmd/
+│   ├── server/    # HTTP server + webhook ingestion
+│   └── worker/    # Event processing pipeline
+├── internal/
+│   ├── service/   # Business logic (shared)
+│   ├── store/   # Data access (shared)
+│   ├── model/   # Domain models (shared)
+│   └── ...
+```
 
-**Nuances**
-- Planner should be alloted a budget, ie, run retrievers for these many cycles. If it's still isn't satisfies. It should respond accordingly.
-- Planner should have reports from the retriever saying that, data was missing. Unable to find it 
+### Event Flow
 
-**Edge cases**
-- Planner and Executors running infinitely
-- Retrievers are unable to fetch due to db issue. No data in DB.
-- 
+```
+Webhook → Server → Redis Stream → Worker → Analysis → Spec
+```
 
-**Callers**: 
-- Gitlab Event Webhook
-- Executor finishes planned jobs
+1. **Server** receives webhooks from issue trackers (Linear, GitHub, etc.)
+2. **Server** converts webhooks to events and publishes to Redis
+3. **Worker** consumes events from Redis and processes them
+4. **Worker** analyzes issues, asks questions, and generates specs
+5. **Worker** posts specs back to the issue tracker
 
-**Types of events**
-- Relay is tagged to a fresh issue
-- PM or dev replies on a comment
-	- Reply to relay
-	- Tags relay to check other's reply
-- Executor finishes the planned_jobs
+## Quick Start
 
-**Calls**:
-Gap Detector
+### Prerequisites
+- Go 1.24+
+- PostgreSQL 15+
+- Redis 7+
 
+### Development Setup
 
-## Gap Detector
-Gap Detector runs when the planner decides that context is sufficient for a given event.
-Gap Detector checks the gaps in the requirements.
+1. **Start infrastructure:**
+```bash
+make dev-db
+```
+
+2. **Set up environment:**
+```bash
+cp .env.example .env
+# Edit .env with your configuration
+```
+
+3. **Run migrations:**
+```bash
+make migrate-up
+```
+
+4. **Build binaries:**
+```bash
+make build
+```
+
+5. **Run server:**
+```bash
+make run-server
+```
+
+6. **Run worker (in another terminal):**
+```bash
+make run-worker
+```
+
+## Configuration
+
+Both binaries share configuration but use different subsets:
+
+### Server Configuration
+- `PORT`: HTTP server port (default: 8080)
+- `WEBHOOK_BASE_URL`: Base URL for webhooks
+- `WORKOS_*`: WorkOS authentication settings
+- `DATABASE_URL`: PostgreSQL connection
+- `REDIS_*`: Redis connection for event queuing
+
+### Worker Configuration  
+- `DATABASE_URL`: PostgreSQL connection (shared)
+- `REDIS_*`: Redis connection for event consumption
+- `OPENAI_API_KEY`: LLM processing (optional for now)
+
+## Development
+
+### Building
+```bash
+make build          # Build both binaries
+make build-server   # Build server only
+make build-worker   # Build worker only
+```
+
+### Running
+```bash
+make run-server     # Run server
+make run-worker     # Run worker
+```
+
+### Database
+```bash
+make migrate-up     # Run migrations
+make migrate-down   # Rollback migrations
+make sqlc-generate  # Regenerate SQLC code
+```
+
+### Code Quality
+```bash
+make format       # Format code with gofumpt
+make lint         # Run golangci-lint
+make test         # Run tests
+```
+
+## How It Works
+
+### Issue Analysis Process
+
+1. **Webhook Reception**: Server receives webhook from issue tracker
+2. **Event Creation**: Server creates canonical event from webhook data
+3. **Queue Publishing**: Server publishes event to Redis stream
+4. **Event Consumption**: Worker consumes event from Redis
+5. **Code Analysis**: Worker analyzes codebase related to the issue
+6. **Question Generation**: Worker generates targeted questions based on gaps
+7. **Human Input**: Questions are posted back to the issue for team response
+8. **Spec Generation**: After gathering context, worker generates technical spec
+9. **Spec Delivery**: Final spec is posted as a comment on the issue
+
+### Key Components
+
+**Server (`cmd/server`)**:
+- HTTP server with Gin framework
+- Webhook handlers for multiple issue trackers
+- Event normalization and publishing
+- Authentication via WorkOS
+
+**Worker (`cmd/worker`)**:
+- Redis stream consumer
+- Event processing pipeline (currently empty)
+- LLM integration for analysis
+- Integration with issue tracker APIs
+
+**Shared Components**:
+- Domain models and business logic
+- Database access layer with SQLC
+- Configuration management
+- Common utilities and helpers
+
+## Current Status
+
+✅ **Server**: Fully functional with webhook endpoints  
+✅ **Worker**: Basic structure ready for pipeline implementation  
+✅ **Database**: PostgreSQL schema from both services merged  
+✅ **Build System**: Unified Makefile for both binaries  
+
+🔜 **Pipeline**: Empty service ready for your Relay logic implementation
+
+## Integration Support
+
+Currently supports:
+- ✅ Linear (primary)
+- ✅ GitHub 
+- ✅ GitLab
+- 🔄 Jira (coming Q1 2026)
+
+## Self-Hosting vs Cloud
+
+**Current**: Cloud-hosted with code indexing on our servers  
+**Roadmap**: Self-hosted deployments for teams with strict data residency requirements
+
+## Why This Architecture
+
+**Single Codebase Benefits**:
+- One git repository to maintain
+- Shared business logic eliminates consistency issues  
+- Single CI/CD pipeline and deployment process
+- Unified monitoring, logging, and alerting
+
+**Binary Separation Benefits**:
+- Independent scaling (webhooks vs processing)
+- Different resource profiles (I/O vs CPU intensive)
+- Separate failure domains
+- Clean operational separation
+
+This is exactly how experienced Go teams handle microservices that share heavy domain logic - shared code with operational separation.
+
+## Contributing
+
+This follows standard Go project conventions:
+- Domain-driven design in `internal/`
+- Interface-based dependencies for testability
+- Comprehensive error handling
+- Structured logging with context
+
+Run `make install-tools` to install development dependencies.
+
+## Contact
+
+**Early Access**: Relay is in private beta  
+**Feedback**: nithinsj@basegraph.app, nithinsudarsan@basegraph.app  
+**Discord**: Join our Discord server  
+
+© 2025 Basegraph
