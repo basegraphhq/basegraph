@@ -47,7 +47,9 @@ This is the step most AI tools skip. We built Relay because planning is too impo
 
 ## Architecture
 
-This repository contains the unified Relay codebase that produces two binaries:
+Relay follows **Clean Architecture** principles with clear separation between business logic and data access. See the [detailed architecture section](#architecture-1) for comprehensive documentation of design patterns and the veteran CTO's implementation decisions.
+
+### Repository Structure
 
 ```
 relay/
@@ -55,9 +57,9 @@ relay/
 │   ├── server/    # HTTP server + webhook ingestion
 │   └── worker/    # Event processing pipeline
 ├── internal/
-│   ├── service/   # Business logic (shared)
-│   ├── store/   # Data access (shared)
-│   ├── model/   # Domain models (shared)
+│   ├── domain/    # Business logic layer (enriched data)
+│   ├── model/     # Data access layer (clean data)
+│   ├── store/     # Database access with SQLC
 │   └── ...
 ```
 
@@ -176,23 +178,47 @@ make test         # Run tests
 
 **Server (`cmd/server`)**:
 - HTTP server with Gin framework
-- Webhook handlers for multiple issue trackers
+- Webhook handlers for multiple issue trackers  
 - Event normalization and publishing
 - Authentication via WorkOS
 
 **Worker (`cmd/worker`)**:
 - Redis stream consumer
-- Event processing pipeline (currently empty)
-- LLM integration for analysis
+- Event processing pipeline with deterministic job execution
+- LLM integration for analysis (ready for implementation)
 - Integration with issue tracker APIs
 
 **Shared Components**:
-- Domain models and business logic
-- Database access layer with SQLC
-- Configuration management
-- Common utilities and helpers
+- **Domain models** (`internal/domain/`) - Business logic with enriched data
+- **Clean models** (`internal/model/`) - Data access layer for APIs
+- **Database access** (`internal/store/`) - SQLC-based data layer
+- **Configuration management** - Environment-based config
+- **Common utilities** - Logging, error handling, ID generation
 
 ## Current Status
+
+### ✅ Implemented & Working
+- **Clean Architecture**: Domain/model separation with proper boundaries
+- **Database Schema**: Complete schema with learnings table and JSONB enrichment
+- **Store Layer**: Full CRUD operations for all entities following veteran CTO patterns
+- **SQLC Integration**: Type-safe database operations
+- **Build System**: Unified Makefile for both binaries
+- **Event Pipeline**: Infrastructure ready for business logic
+
+### 🔜 Ready for Implementation
+- **Learning Retriever**: MVP implementation to fetch workspace learnings
+- **Gap Detector**: Business logic for identifying missing requirements
+- **Spec Generator**: LLM integration for technical spec creation
+- **Question Router**: Smart routing of questions to right team members
+
+### 🏗️ Architecture Foundation
+The codebase provides a solid foundation with:
+- Deterministic context retrieval pipeline
+- Workspace-scoped knowledge management
+- Clean separation between data and business logic
+- Interface-based dependencies for easy testing
+
+### Key Components
 
 ✅ **Server**: Fully functional with webhook endpoints  
 ✅ **Worker**: Basic structure ready for pipeline implementation  
