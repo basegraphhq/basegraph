@@ -24,17 +24,12 @@ type Producer interface {
 type redisProducer struct {
 	client *redis.Client
 	stream string
-	logger *slog.Logger
 }
 
-func NewRedisProducer(client *redis.Client, stream string, logger *slog.Logger) Producer {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func NewRedisProducer(client *redis.Client, stream string) Producer {
 	return &redisProducer{
 		client: client,
 		stream: stream,
-		logger: logger,
 	}
 }
 
@@ -62,7 +57,7 @@ func (p *redisProducer) Enqueue(ctx context.Context, msg EventMessage) error {
 		return fmt.Errorf("enqueue event: %w", err)
 	}
 
-	p.logger.InfoContext(ctx, "enqueued event log", "event_log_id", msg.EventLogID, "issue_id", msg.IssueID, "event_type", msg.EventType, "attempt", attempt)
+	slog.InfoContext(ctx, "enqueued event log", "event_log_id", msg.EventLogID, "issue_id", msg.IssueID, "event_type", msg.EventType, "attempt", attempt)
 	return nil
 }
 

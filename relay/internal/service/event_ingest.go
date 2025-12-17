@@ -24,13 +24,14 @@ type EventIngestParams struct {
 	DedupeKey       *string         `json:"dedupe_key,omitempty"`
 	Payload         json.RawMessage `json:"payload"`
 
-	Title       *string  `json:"title,omitempty"`
-	Description *string  `json:"description,omitempty"`
-	Labels      []string `json:"labels,omitempty"`
-	Members     []string `json:"members,omitempty"`
-	Assignees   []string `json:"assignees,omitempty"`
-	Reporter    *string  `json:"reporter,omitempty"`
-	Keywords    []string `json:"keywords,omitempty"`
+	Title            *string  `json:"title,omitempty"`
+	Description      *string  `json:"description,omitempty"`
+	Labels           []string `json:"labels,omitempty"`
+	Members          []string `json:"members,omitempty"`
+	Assignees        []string `json:"assignees,omitempty"`
+	Reporter         *string  `json:"reporter,omitempty"`
+	ExternalIssueURL *string  `json:"external_issue_url,omitempty"`
+	Keywords         []string `json:"keywords,omitempty"`
 
 	TraceID *string `json:"trace_id,omitempty"`
 }
@@ -53,18 +54,13 @@ type eventIngestService struct {
 	stores   *store.Stores
 	txRunner TxRunner
 	queue    queue.Producer
-	logger   *slog.Logger
 }
 
-func NewEventIngestService(stores *store.Stores, txRunner TxRunner, queue queue.Producer, logger *slog.Logger) EventIngestService {
-	if logger == nil {
-		logger = slog.Default()
-	}
+func NewEventIngestService(stores *store.Stores, txRunner TxRunner, queue queue.Producer) EventIngestService {
 	return &eventIngestService{
 		stores:   stores,
 		txRunner: txRunner,
 		queue:    queue,
-		logger:   logger,
 	}
 }
 
@@ -105,16 +101,17 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 
 	if err := s.txRunner.WithTx(ctx, func(sp StoreProvider) error {
 		issueModel := &model.Issue{
-			ID:              id.New(),
-			IntegrationID:   params.IntegrationID,
-			ExternalIssueID: params.ExternalIssueID,
-			Title:           params.Title,
-			Description:     params.Description,
-			Labels:          params.Labels,
-			Members:         params.Members,
-			Assignees:       params.Assignees,
-			Reporter:        params.Reporter,
-			Keywords:        params.Keywords,
+			ID:               id.New(),
+			IntegrationID:    params.IntegrationID,
+			ExternalIssueID:  params.ExternalIssueID,
+			Title:            params.Title,
+			Description:      params.Description,
+			Labels:           params.Labels,
+			Members:          params.Members,
+			Assignees:        params.Assignees,
+			Reporter:         params.Reporter,
+			ExternalIssueURL: params.ExternalIssueURL,
+			Keywords:         params.Keywords,
 		}
 
 		var err error
@@ -157,7 +154,7 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		}
 		enqueued = true
 	} else {
-		s.logger.InfoContext(ctx, "duplicate event deduped", "event_log_id", eventLog.ID, "issue_id", issue.ID, "dedupe_key", dedupeKey)
+		slog.InfoContext(ctx, "duplicate event deduped", "event_log_id", eventLog.ID, "issue_id", issue.ID, "dedupe_key", dedupeKey)
 	}
 
 	return &EventIngestResult{

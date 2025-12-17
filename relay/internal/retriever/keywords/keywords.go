@@ -3,7 +3,6 @@ package keywords
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"basegraph.app/relay/internal/domain"
 	"basegraph.app/relay/internal/llm"
@@ -15,15 +14,11 @@ type Extractor interface {
 }
 
 type extractor struct {
-	llm    llm.Client
-	logger *slog.Logger
+	llm llm.Client
 }
 
-func New(llmClient llm.Client, logger *slog.Logger) Extractor {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &extractor{llm: llmClient, logger: logger}
+func New(llmClient llm.Client) Extractor {
+	return &extractor{llm: llmClient}
 }
 
 func (e *extractor) Extract(ctx context.Context, event domain.Event, issue *domain.Issue, payload map[string]any) ([]domain.Keyword, error) {

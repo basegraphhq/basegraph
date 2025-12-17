@@ -15,25 +15,19 @@ type Retriever interface {
 	Retrieve(ctx context.Context, event domain.Event, issue *domain.Issue, keywords []domain.Keyword) ([]domain.CodeFinding, error)
 }
 
-type retriever struct {
-	logger *slog.Logger
+type retriever struct{}
+
+func New() Retriever {
+	return &retriever{}
 }
 
-func New(logger *slog.Logger) Retriever {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &retriever{logger: logger}
-}
-
-func (r *retriever) Retrieve(ctx context.Context, event domain.Event, issue *domain.Issue, keywords []domain.Keyword) ([]domain.CodeFinding, error) { //nolint: revive // ctx reserved for future use
-	_ = ctx
+func (r *retriever) Retrieve(ctx context.Context, event domain.Event, issue *domain.Issue, keywords []domain.Keyword) ([]domain.CodeFinding, error) {
 	if issue == nil {
 		return nil, fmt.Errorf("issue context required")
 	}
 
 	if len(keywords) == 0 {
-		r.logger.Info("code retriever received no keywords", "issue_id", issue.ID, "event_id", event.ID)
+		slog.InfoContext(ctx, "code retriever received no keywords", "issue_id", issue.ID, "event_id", event.ID)
 		return nil, nil
 	}
 

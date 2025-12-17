@@ -79,7 +79,7 @@ func main() {
 	}
 	slog.InfoContext(ctx, "redis connected", "stream", cfg.Pipeline.RedisStream)
 
-	eventProducer := queue.NewRedisProducer(redisClient, cfg.Pipeline.RedisStream, slog.Default())
+	eventProducer := queue.NewRedisProducer(redisClient, cfg.Pipeline.RedisStream)
 	defer eventProducer.Close()
 
 	stores := store.NewStores(database.Queries())

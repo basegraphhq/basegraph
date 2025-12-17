@@ -10,7 +10,7 @@ import (
 )
 
 const getIssue = `-- name: GetIssue :one
-SELECT id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, keywords, code_findings, learnings, discussions, spec, created_at, updated_at FROM issues WHERE id = $1
+SELECT id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, created_at, updated_at FROM issues WHERE id = $1
 `
 
 func (q *Queries) GetIssue(ctx context.Context, id int64) (Issue, error) {
@@ -26,6 +26,7 @@ func (q *Queries) GetIssue(ctx context.Context, id int64) (Issue, error) {
 		&i.Members,
 		&i.Assignees,
 		&i.Reporter,
+		&i.ExternalIssueUrl,
 		&i.Keywords,
 		&i.CodeFindings,
 		&i.Learnings,
@@ -38,7 +39,7 @@ func (q *Queries) GetIssue(ctx context.Context, id int64) (Issue, error) {
 }
 
 const getIssueByIntegrationAndExternalID = `-- name: GetIssueByIntegrationAndExternalID :one
-SELECT id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, keywords, code_findings, learnings, discussions, spec, created_at, updated_at FROM issues WHERE integration_id = $1 AND external_issue_id = $2
+SELECT id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, created_at, updated_at FROM issues WHERE integration_id = $1 AND external_issue_id = $2
 `
 
 type GetIssueByIntegrationAndExternalIDParams struct {
@@ -59,6 +60,7 @@ func (q *Queries) GetIssueByIntegrationAndExternalID(ctx context.Context, arg Ge
 		&i.Members,
 		&i.Assignees,
 		&i.Reporter,
+		&i.ExternalIssueUrl,
 		&i.Keywords,
 		&i.CodeFindings,
 		&i.Learnings,
@@ -107,7 +109,7 @@ SET
     discussions = EXCLUDED.discussions,
     spec = EXCLUDED.spec,
     updated_at = now()
-RETURNING id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, keywords, code_findings, learnings, discussions, spec, created_at, updated_at
+RETURNING id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, created_at, updated_at
 `
 
 type UpsertIssueParams struct {
@@ -155,6 +157,7 @@ func (q *Queries) UpsertIssue(ctx context.Context, arg UpsertIssueParams) (Issue
 		&i.Members,
 		&i.Assignees,
 		&i.Reporter,
+		&i.ExternalIssueUrl,
 		&i.Keywords,
 		&i.CodeFindings,
 		&i.Learnings,

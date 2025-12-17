@@ -11,7 +11,6 @@ type EventType string
 const (
 	EventTypeIssueCreated EventType = "issue_created"
 	EventTypeReply        EventType = "reply"
-	EventTypePostReply    EventType = "post_reply"
 )
 
 // Event represents a canonical event pulled from the event_logs table and queued to Relay.

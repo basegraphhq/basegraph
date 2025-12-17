@@ -157,6 +157,7 @@ create table issues (
     members text[],
     assignees text[],
     reporter text,
+    external_issue_url text,
 
     keywords text[],
     code_findings jsonb,

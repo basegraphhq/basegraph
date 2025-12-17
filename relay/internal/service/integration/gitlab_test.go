@@ -324,7 +324,10 @@ func (m *gitlabAPIMock) handleListProjects(w http.ResponseWriter, r *http.Reques
 
 	start := (pageNum - 1) * perPage
 	if start >= len(m.projects) {
-		json.NewEncoder(w).Encode([]gitlabProject{})
+		if err := json.NewEncoder(w).Encode([]gitlabProject{}); err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		return
 	}
 	end := start + perPage

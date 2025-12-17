@@ -3,7 +3,6 @@ package gap
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"basegraph.app/relay/internal/domain"
 	"basegraph.app/relay/internal/llm"
@@ -15,15 +14,11 @@ type Detector interface {
 }
 
 type detector struct {
-	llm    llm.Client
-	logger *slog.Logger
+	llm llm.Client
 }
 
-func New(llmClient llm.Client, logger *slog.Logger) Detector {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &detector{llm: llmClient, logger: logger}
+func New(llmClient llm.Client) Detector {
+	return &detector{llm: llmClient}
 }
 
 func (d *detector) Detect(ctx context.Context, event domain.Event, issue *domain.Issue) (*domain.GapAnalysis, error) {

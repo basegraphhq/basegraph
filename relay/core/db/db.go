@@ -108,9 +108,3 @@ func (db *DB) WithTx(ctx context.Context, fn func(q *sqlc.Queries) error) error 
 
 	return nil
 }
-
-// Pool returns the underlying connection pool.
-// Use sparingly - prefer Queries() or WithTx() for most operations.
-func (db *DB) Pool() *pgxpool.Pool {
-	return db.pool
-}

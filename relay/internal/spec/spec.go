@@ -3,7 +3,6 @@ package spec
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"basegraph.app/relay/internal/domain"
 	"basegraph.app/relay/internal/llm"
@@ -15,15 +14,11 @@ type Generator interface {
 }
 
 type generator struct {
-	llm    llm.Client
-	logger *slog.Logger
+	llm llm.Client
 }
 
-func New(llmClient llm.Client, logger *slog.Logger) Generator {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &generator{llm: llmClient, logger: logger}
+func New(llmClient llm.Client) Generator {
+	return &generator{llm: llmClient}
 }
 
 func (g *generator) Generate(ctx context.Context, issue *domain.Issue, context domain.ContextSnapshot, gaps []domain.Gap) (string, error) {

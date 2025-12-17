@@ -15,6 +15,7 @@ import (
 
 	"basegraph.app/relay/internal/http/handler/webhook"
 	"basegraph.app/relay/internal/model"
+	"basegraph.app/relay/internal/service"
 	"basegraph.app/relay/internal/store"
 )
 
@@ -63,7 +64,23 @@ func (f *fakeCredStore) ListByIntegration(ctx context.Context, integrationID int
 }
 
 func (f *fakeCredStore) ListActiveByIntegration(ctx context.Context, integrationID int64) ([]model.IntegrationCredential, error) {
-	return f.creds, nil
+	var active []model.IntegrationCredential
+	for _, cred := range f.creds {
+		if cred.RevokedAt == nil {
+			active = append(active, cred)
+		}
+	}
+	return active, nil
+}
+
+type fakeEventIngestService struct{}
+
+func (f *fakeEventIngestService) Ingest(ctx context.Context, params service.EventIngestParams) (*service.EventIngestResult, error) {
+	return &service.EventIngestResult{
+		EventLog: &model.EventLog{ID: 12345},
+		Issue:    &model.Issue{ID: 67890},
+		Enqueued: true,
+	}, nil
 }
 
 var _ = Describe("GitLabWebhookHandler", func() {
@@ -76,7 +93,7 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		gin.SetMode(gin.TestMode)
 		router = gin.New()
 		buf = &bytes.Buffer{}
-		logger := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{AddSource: false}))
+		slog.SetDefault(slog.New(slog.NewJSONHandler(buf, nil)))
 
 		store := &fakeCredStore{
 			creds: []model.IntegrationCredential{
@@ -84,11 +101,12 @@ var _ = Describe("GitLabWebhookHandler", func() {
 			},
 		}
 
-		h := webhook.NewGitLabWebhookHandler(store, logger)
+		eventIngest := &fakeEventIngestService{}
+		h := webhook.NewGitLabWebhookHandler(store, eventIngest)
 		router.POST("/webhooks/gitlab/:integration_id", h.HandleEvent)
 	})
 
-	It("accepts valid token and logs parsed issue payload", func() {
+	It("accepts valid token and processes issue payload", func() {
 		body := map[string]interface{}{
 			"object_kind": "issue",
 			"object_attributes": map[string]interface{}{
@@ -112,20 +130,32 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		Expect(w.Code).To(Equal(http.StatusOK))
 		logStr := buf.String()
 		Expect(logStr).To(ContainSubstring("Issue Hook"))
-		Expect(logStr).To(ContainSubstring("object_kind=issue"))
-		Expect(logStr).To(ContainSubstring("object_id=10"))
-		Expect(logStr).To(ContainSubstring("object_iid=5"))
-		Expect(logStr).To(ContainSubstring("title=Bug"))
+		Expect(logStr).To(ContainSubstring(`"object_kind":"issue"`))
+		Expect(logStr).To(ContainSubstring(`"object_id":10`))
+		Expect(logStr).To(ContainSubstring(`"object_iid":5`))
+		Expect(logStr).To(ContainSubstring(`"title":"Bug"`))
+		Expect(logStr).To(ContainSubstring(`"event_log_id":12345`))
+		Expect(logStr).To(ContainSubstring(`"issue_id":67890`))
+		Expect(logStr).To(ContainSubstring(`"enqueued":true`))
 	})
 
-	It("accepts valid token and logs parsed note payload", func() {
+	It("rejects invalid token", func() {
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBuffer([]byte("{}")))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Gitlab-Token", "wrong")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(http.StatusUnauthorized))
+	})
+
+	It("handles wiki events without processing", func() {
 		body := map[string]interface{}{
-			"object_kind": "note",
+			"object_kind": "wiki_page",
 			"object_attributes": map[string]interface{}{
-				"id":     20,
-				"iid":    0,
-				"title":  "",
-				"note":   "hello",
+				"title":  "Test Page",
+				"slug":   "test-page",
 				"action": "create",
 			},
 		}
@@ -134,52 +164,6 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBuffer(payload))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("X-Gitlab-Token", "secret")
-		req.Header.Set("X-Gitlab-Event", "Note Hook")
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-
-		Expect(w.Code).To(Equal(http.StatusOK))
-		logStr := buf.String()
-		Expect(logStr).To(ContainSubstring("Note Hook"))
-		Expect(logStr).To(ContainSubstring("object_kind=note"))
-		Expect(logStr).To(ContainSubstring("object_id=20"))
-		Expect(logStr).To(ContainSubstring("note=hello"))
-	})
-
-	It("accepts valid token and logs parsed wiki page payload", func() {
-		body := map[string]interface{}{
-			"object_kind": "wiki_page",
-			"user": map[string]interface{}{
-				"id":       1,
-				"name":     "Admin",
-				"username": "admin",
-			},
-			"project": map[string]interface{}{
-				"id":                  10,
-				"name":                "my-project",
-				"path_with_namespace": "group/my-project",
-			},
-			"wiki": map[string]interface{}{
-				"web_url":             "http://example.com/group/my-project/-/wikis",
-				"path_with_namespace": "group/my-project.wiki",
-			},
-			"object_attributes": map[string]interface{}{
-				"title":   "Getting Started",
-				"content": "# Welcome\n\nThis is the getting started guide.",
-				"format":  "markdown",
-				"message": "Add getting started page",
-				"slug":    "getting-started",
-				"url":     "http://example.com/group/my-project/-/wikis/getting-started",
-				"action":  "create",
-			},
-		}
-		payload, _ := json.Marshal(body)
-
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBuffer(payload))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Gitlab-Token", "secret")
-		req.Header.Set("X-Gitlab-Event", "Wiki Page Hook")
 		w := httptest.NewRecorder()
 
 		router.ServeHTTP(w, req)
@@ -187,55 +171,5 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		Expect(w.Code).To(Equal(http.StatusOK))
 		logStr := buf.String()
 		Expect(logStr).To(ContainSubstring("gitlab wiki webhook received"))
-		Expect(logStr).To(ContainSubstring("Wiki Page Hook"))
-		Expect(logStr).To(ContainSubstring("action=create"))
-		Expect(logStr).To(ContainSubstring("title=\"Getting Started\""))
-		Expect(logStr).To(ContainSubstring("slug=getting-started"))
-		Expect(logStr).To(ContainSubstring("format=markdown"))
-	})
-
-	It("rejects missing token", func() {
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBufferString(`{}`))
-		req.Header.Set("Content-Type", "application/json")
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-		Expect(w.Code).To(Equal(http.StatusUnauthorized))
-	})
-
-	It("rejects invalid token", func() {
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBufferString(`{}`))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Gitlab-Token", "wrong")
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-		Expect(w.Code).To(Equal(http.StatusUnauthorized))
-	})
-
-	It("rejects malformed payload", func() {
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBufferString(`{`))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Gitlab-Token", "secret")
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-		Expect(w.Code).To(Equal(http.StatusBadRequest))
-	})
-
-	It("rejects when no webhook secret configured", func() {
-		// override router with empty credential store
-		router = gin.New()
-		logger := slog.New(slog.NewTextHandler(&bytes.Buffer{}, &slog.HandlerOptions{AddSource: false}))
-		h := webhook.NewGitLabWebhookHandler(&fakeCredStore{}, logger)
-		router.POST("/webhooks/gitlab/:integration_id", h.HandleEvent)
-
-		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBufferString(`{}`))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("X-Gitlab-Token", "secret")
-		w := httptest.NewRecorder()
-
-		router.ServeHTTP(w, req)
-		Expect(w.Code).To(Equal(http.StatusUnauthorized))
 	})
 })

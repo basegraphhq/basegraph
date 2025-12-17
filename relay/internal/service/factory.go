@@ -25,13 +25,22 @@ type Services struct {
 	specGen      spec.Generator
 }
 
+// Services is a factory that creates all service instances with their dependencies.
+// It follows the factory pattern to centralize service construction and dependency injection.
+//
+// Production code uses this factory to get service instances:
+//
+//	services := service.NewServices(stores, txRunner, ...)
+//	userService := services.Users()
+//
+// Tests use individual constructors (e.g., NewUserService) to inject mocks directly.
 func NewServices(stores *store.Stores, txRunner TxRunner, workOSCfg config.WorkOSConfig, dashboardURL string, webhookCfg config.EventWebhookConfig, eventProducer queue.Producer, llmClient llm.Client) *Services {
 	var gapDetector gap.Detector
 	var specGen spec.Generator
 
 	if llmClient != nil {
-		gapDetector = gap.New(llmClient, nil)
-		specGen = spec.New(llmClient, nil)
+		gapDetector = gap.New(llmClient)
+		specGen = spec.New(llmClient)
 	}
 
 	return &Services{
@@ -40,7 +49,7 @@ func NewServices(stores *store.Stores, txRunner TxRunner, workOSCfg config.WorkO
 		workOSCfg:    workOSCfg,
 		dashboardURL: dashboardURL,
 		webhookCfg:   webhookCfg,
-		eventIngest:  NewEventIngestService(stores, txRunner, eventProducer, nil),
+		eventIngest:  NewEventIngestService(stores, txRunner, eventProducer),
 		llmClient:    llmClient,
 		gapDetector:  gapDetector,
 		specGen:      specGen,

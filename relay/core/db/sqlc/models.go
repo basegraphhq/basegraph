@@ -63,22 +63,23 @@ type IntegrationCredential struct {
 }
 
 type Issue struct {
-	ID              int64              `json:"id"`
-	IntegrationID   int64              `json:"integration_id"`
-	ExternalIssueID string             `json:"external_issue_id"`
-	Title           *string            `json:"title"`
-	Description     *string            `json:"description"`
-	Labels          []string           `json:"labels"`
-	Members         []string           `json:"members"`
-	Assignees       []string           `json:"assignees"`
-	Reporter        *string            `json:"reporter"`
-	Keywords        []string           `json:"keywords"`
-	CodeFindings    []byte             `json:"code_findings"`
-	Learnings       []byte             `json:"learnings"`
-	Discussions     []byte             `json:"discussions"`
-	Spec            *string            `json:"spec"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	ID               int64              `json:"id"`
+	IntegrationID    int64              `json:"integration_id"`
+	ExternalIssueID  string             `json:"external_issue_id"`
+	Title            *string            `json:"title"`
+	Description      *string            `json:"description"`
+	Labels           []string           `json:"labels"`
+	Members          []string           `json:"members"`
+	Assignees        []string           `json:"assignees"`
+	Reporter         *string            `json:"reporter"`
+	ExternalIssueUrl *string            `json:"external_issue_url"`
+	Keywords         []string           `json:"keywords"`
+	CodeFindings     []byte             `json:"code_findings"`
+	Learnings        []byte             `json:"learnings"`
+	Discussions      []byte             `json:"discussions"`
+	Spec             *string            `json:"spec"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Learning struct {

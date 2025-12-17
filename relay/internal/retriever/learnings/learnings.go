@@ -3,7 +3,6 @@ package learnings
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"basegraph.app/relay/internal/domain"
@@ -14,18 +13,13 @@ type Provider interface {
 	Retrieve(ctx context.Context, event domain.Event, issue *domain.Issue, keywords []domain.Keyword) ([]domain.Learning, error)
 }
 
-type provider struct {
-	logger *slog.Logger
+type provider struct{}
+
+func New() Provider {
+	return &provider{}
 }
 
-func New(logger *slog.Logger) Provider {
-	if logger == nil {
-		logger = slog.Default()
-	}
-	return &provider{logger: logger}
-}
-
-func (p *provider) Retrieve(ctx context.Context, event domain.Event, issue *domain.Issue, keywords []domain.Keyword) ([]domain.Learning, error) { //nolint: revive // ctx reserved for future use
+func (p *provider) Retrieve(ctx context.Context, _ domain.Event, issue *domain.Issue, keywords []domain.Keyword) ([]domain.Learning, error) {
 	_ = ctx
 	if issue == nil {
 		return nil, fmt.Errorf("issue context required")

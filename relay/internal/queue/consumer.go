@@ -35,18 +35,12 @@ type Message struct {
 type RedisConsumer struct {
 	client *redis.Client
 	cfg    ConsumerConfig
-	logger *slog.Logger
 }
 
-func NewRedisConsumer(client *redis.Client, cfg ConsumerConfig, logger *slog.Logger) (*RedisConsumer, error) {
-	if logger == nil {
-		logger = slog.Default()
-	}
-
+func NewRedisConsumer(client *redis.Client, cfg ConsumerConfig) (*RedisConsumer, error) {
 	consumer := &RedisConsumer{
 		client: client,
 		cfg:    cfg,
-		logger: logger,
 	}
 
 	if err := consumer.ensureGroup(context.Background()); err != nil { //nolint:contextcheck
@@ -83,7 +77,7 @@ func (c *RedisConsumer) Read(ctx context.Context) ([]Message, error) {
 		for _, msg := range stream.Messages {
 			parsed, parseErr := parseMessage(msg)
 			if parseErr != nil {
-				c.logger.ErrorContext(ctx, "failed to parse message", "error", parseErr, "message_id", msg.ID)
+				slog.ErrorContext(ctx, "failed to parse message", "error", parseErr, "message_id", msg.ID)
 				_ = c.Ack(ctx, Message{ID: msg.ID, Raw: msg})
 				continue
 			}

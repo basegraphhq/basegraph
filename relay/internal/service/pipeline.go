@@ -4,36 +4,39 @@ import (
 	"context"
 	"log/slog"
 
-	"basegraph.app/relay/core/db"
 	"basegraph.app/relay/internal/llm"
 	"basegraph.app/relay/internal/queue"
 	"basegraph.app/relay/internal/store"
 )
 
-// Pipeline handles the event processing pipeline (currently empty)
+// Pipeline handles the event processing pipeline (currently empty).
 type Pipeline struct {
-	store     *store.Store
+	stores    PipelineStores
 	consumer  *queue.RedisConsumer
 	llmClient llm.Client
-	logger    *slog.Logger
 }
 
-// NewPipeline creates a new pipeline instance
-func NewPipeline(database *db.DB, consumer *queue.RedisConsumer, llmClient llm.Client, logger *slog.Logger) *Pipeline {
-	if logger == nil {
-		logger = slog.Default()
-	}
+// PipelineStores defines the minimal set of stores required by the pipeline.
+// This keeps the pipeline implementation aligned with the main store
+// abstractions while allowing focused dependencies for testing.
+type PipelineStores interface {
+	EventLogs() store.EventLogStore
+	Issues() store.IssueStore
+	PipelineRuns() store.PipelineRunStore
+}
+
+// NewPipeline creates a new pipeline instance.
+func NewPipeline(stores PipelineStores, consumer *queue.RedisConsumer, llmClient llm.Client) *Pipeline {
 	return &Pipeline{
-		store:     store.New(database.Queries()),
+		stores:    stores,
 		consumer:  consumer,
 		llmClient: llmClient,
-		logger:    logger,
 	}
 }
 
 // ProcessIssue processes a single issue event (placeholder implementation)
 func (p *Pipeline) ProcessIssue(ctx context.Context, eventLogID int64) error {
-	p.logger.InfoContext(ctx, "processing issue event", "event_log_id", eventLogID)
+	slog.InfoContext(ctx, "processing issue event", "event_log_id", eventLogID)
 	// TODO: Implement actual pipeline processing
 	return nil
 }

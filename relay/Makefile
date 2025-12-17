@@ -1,4 +1,4 @@
-.PHONY: build build-server build-worker run-server run-worker test clean sqlc-generate migrate-up migrate-down format lint install-tools
+.PHONY: build build-server build-worker run-server run-worker test test-unit test-bdd test-integration clean sqlc-generate migrate-up migrate-down format lint install-tools
 
 # Build binaries
 build: build-server build-worker
@@ -17,8 +17,19 @@ run-worker:
 	go run ./cmd/worker
 
 # Testing
-test:
-	go test ./...
+test: test-unit test-bdd test-integration
+
+test-unit:
+	@echo "Running unit tests..."
+	@go test -short ./...
+
+test-bdd:
+	@echo "Running BDD tests with Ginkgo..."
+	@ginkgo -r --skip-package=vendor
+
+test-integration:
+	@echo "Running integration tests..."
+	@go test -tags=integration ./...
 
 # Database operations
 sqlc-generate:
