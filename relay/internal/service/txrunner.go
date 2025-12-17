@@ -2,9 +2,11 @@ package service
 
 import (
 	"context"
+	"fmt"
 
 	"basegraph.app/relay/core/db"
 	"basegraph.app/relay/core/db/sqlc"
+	"basegraph.app/relay/internal/service/integration"
 	"basegraph.app/relay/internal/store"
 )
 
@@ -39,5 +41,33 @@ func (r *dbTxRunner) WithTx(ctx context.Context, fn func(stores StoreProvider) e
 	return r.db.WithTx(ctx, func(q *sqlc.Queries) error {
 		stores := store.NewStores(q)
 		return fn(stores)
+	})
+}
+
+// ================================
+// Adapters for subpackages
+// ================================
+
+// gitLabTxRunnerAdapter bridges the service.TxRunner and integration.TxRunner interfaces.
+//
+// The integration package defines its own TxRunner interface (with integration.StoreProvider)
+// rather than importing service.TxRunner (which uses service.StoreProvider). This avoids an
+// import cycle: service → integration → service.
+//
+// Each subpackage that needs transactions defines a narrow TxRunner interface scoped to its
+// own StoreProvider type. The service factory then adapts its TxRunner to satisfy the
+// subpackage's interface, keeping dependencies flowing in one direction.
+type gitLabTxRunnerAdapter struct {
+	tx TxRunner
+}
+
+// Note that we are sending integration.StoreProvider to the callback, not service.StoreProvider.
+func (a *gitLabTxRunnerAdapter) WithTx(ctx context.Context, fn func(stores integration.StoreProvider) error) error {
+	return a.tx.WithTx(ctx, func(sp StoreProvider) error {
+		s, ok := sp.(*store.Stores)
+		if !ok {
+			return fmt.Errorf("unexpected store provider type %T", sp)
+		}
+		return fn(s)
 	})
 }

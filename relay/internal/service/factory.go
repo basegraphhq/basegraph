@@ -1,9 +1,6 @@
 package service
 
 import (
-	"context"
-	"fmt"
-
 	"basegraph.app/relay/core/config"
 	"basegraph.app/relay/internal/gap"
 	"basegraph.app/relay/internal/llm"
@@ -100,18 +97,4 @@ func (s *Services) GapDetector() gap.Detector {
 
 func (s *Services) SpecGenerator() spec.Generator {
 	return s.specGen
-}
-
-type gitLabTxRunnerAdapter struct {
-	tx TxRunner
-}
-
-func (a *gitLabTxRunnerAdapter) WithTx(ctx context.Context, fn func(stores integration.StoreProvider) error) error {
-	return a.tx.WithTx(ctx, func(sp StoreProvider) error {
-		stores, ok := sp.(*store.Stores)
-		if !ok {
-			return fmt.Errorf("unexpected store provider type %T", sp)
-		}
-		return fn(stores)
-	})
 }

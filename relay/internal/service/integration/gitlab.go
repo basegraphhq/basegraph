@@ -62,6 +62,9 @@ type StatusResult struct {
 	Synced            bool
 }
 
+// StoreProvider is the minimal view of stores needed by GitLab when running
+// inside a transaction. It is implemented by *store.Stores in production and
+// by fakes in tests.
 type StoreProvider interface {
 	Integrations() store.IntegrationStore
 	IntegrationCredentials() store.IntegrationCredentialStore
@@ -69,6 +72,9 @@ type StoreProvider interface {
 	Repos() store.RepoStore
 }
 
+// TxRunner is a narrow transaction runner dependency for the GitLab service.
+// It is intentionally defined here to avoid a dependency cycle back into the
+// main service package while still allowing transactional operations.
 type TxRunner interface {
 	WithTx(ctx context.Context, fn func(stores StoreProvider) error) error
 }
