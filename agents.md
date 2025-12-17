@@ -263,6 +263,9 @@ service/
 - `gofumpt` enforces consistent spacing, removes unnecessary blank lines, standardizes import grouping
 - Run from service root (`relay/` or `codegraph/`)
 
+**Building and Testing**
+- Always refer to Makefile
+
 **ID generation:**
 - All database primary keys use Snowflake IDs (64-bit integers)
 - Use `common/id.New()` to generate new IDs in the service layer

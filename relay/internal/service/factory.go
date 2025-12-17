@@ -1,6 +1,8 @@
 package service
 
 import (
+	"errors"
+
 	"basegraph.app/relay/core/config"
 	"basegraph.app/relay/internal/gap"
 	"basegraph.app/relay/internal/llm"
@@ -10,46 +12,56 @@ import (
 	"basegraph.app/relay/internal/store"
 )
 
-type Services struct {
-	stores       *store.Stores
-	txRunner     TxRunner
-	workOSCfg    config.WorkOSConfig
-	dashboardURL string
-	webhookCfg   config.EventWebhookConfig
-	eventIngest  EventIngestService
-	llmClient    llm.Client
-	gapDetector  gap.Detector
-	specGen      spec.Generator
+type ServicesConfig struct {
+	Stores        *store.Stores
+	TxRunner      TxRunner
+	WorkOS        config.WorkOSConfig
+	DashboardURL  string
+	WebhookCfg    config.EventWebhookConfig
+	EventProducer queue.Producer
+	LLMClient     llm.Client
 }
 
-// Services is a factory that creates all service instances with their dependencies.
-// It follows the factory pattern to centralize service construction and dependency injection.
+type Services struct {
+	stores                *store.Stores
+	txRunner              TxRunner
+	workOSCfg             config.WorkOSConfig
+	dashboardURL          string
+	webhookCfg            config.EventWebhookConfig
+	eventIngest           EventIngestService
+	llmClient             llm.Client
+	gapDetector           gap.Detector
+	specGen               spec.Generator
+	integrationCredential IntegrationCredentialService
+}
+
+// Services is a factory that initializes all services with their dependencies.
+// Usage:
 //
-// Production code uses this factory to get service instances:
-//
-//	services := service.NewServices(stores, txRunner, ...)
+//	services := service.NewServices(service.ServicesConfig{...})
 //	userService := services.Users()
 //
 // Tests use individual constructors (e.g., NewUserService) to inject mocks directly.
-func NewServices(stores *store.Stores, txRunner TxRunner, workOSCfg config.WorkOSConfig, dashboardURL string, webhookCfg config.EventWebhookConfig, eventProducer queue.Producer, llmClient llm.Client) *Services {
+func NewServices(cfg ServicesConfig) *Services {
 	var gapDetector gap.Detector
 	var specGen spec.Generator
 
-	if llmClient != nil {
-		gapDetector = gap.New(llmClient)
-		specGen = spec.New(llmClient)
+	if cfg.LLMClient != nil {
+		gapDetector = gap.New(cfg.LLMClient)
+		specGen = spec.New(cfg.LLMClient)
 	}
 
 	return &Services{
-		stores:       stores,
-		txRunner:     txRunner,
-		workOSCfg:    workOSCfg,
-		dashboardURL: dashboardURL,
-		webhookCfg:   webhookCfg,
-		eventIngest:  NewEventIngestService(stores, txRunner, eventProducer),
-		llmClient:    llmClient,
-		gapDetector:  gapDetector,
-		specGen:      specGen,
+		stores:                cfg.Stores,
+		txRunner:              cfg.TxRunner,
+		workOSCfg:             cfg.WorkOS,
+		dashboardURL:          cfg.DashboardURL,
+		webhookCfg:            cfg.WebhookCfg,
+		eventIngest:           NewEventIngestService(cfg.Stores, cfg.TxRunner, cfg.EventProducer),
+		llmClient:             cfg.LLMClient,
+		gapDetector:           gapDetector,
+		specGen:               specGen,
+		integrationCredential: NewIntegrationCredentialService(cfg.Stores.IntegrationCredentials()),
 	}
 }
 
@@ -79,8 +91,8 @@ func (s *Services) GitLab() integration.GitLabService {
 	)
 }
 
-func (s *Services) IntegrationCredentials() store.IntegrationCredentialStore {
-	return s.stores.IntegrationCredentials()
+func (s *Services) IntegrationCredentials() IntegrationCredentialService {
+	return s.integrationCredential
 }
 
 func (s *Services) WebhookBaseURL() string {
@@ -91,10 +103,16 @@ func (s *Services) Events() EventIngestService {
 	return s.eventIngest
 }
 
-func (s *Services) GapDetector() gap.Detector {
-	return s.gapDetector
+func (s *Services) GapDetector() (gap.Detector, error) {
+	if s.gapDetector == nil {
+		return nil, errors.New("gap detector unavailable: LLM client not configured")
+	}
+	return s.gapDetector, nil
 }
 
-func (s *Services) SpecGenerator() spec.Generator {
-	return s.specGen
+func (s *Services) SpecGenerator() (spec.Generator, error) {
+	if s.specGen == nil {
+		return nil, errors.New("spec generator unavailable: LLM client not configured")
+	}
+	return s.specGen, nil
 }

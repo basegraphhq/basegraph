@@ -12,20 +12,18 @@ import (
 	"github.com/gin-gonic/gin"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 
-	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/service"
-	"basegraph.app/relay/internal/store"
 )
 
 type GitLabWebhookHandler struct {
-	credentialStore store.IntegrationCredentialStore
-	eventIngest     service.EventIngestService
+	credentialService service.IntegrationCredentialService
+	eventIngest       service.EventIngestService
 }
 
-func NewGitLabWebhookHandler(credentialStore store.IntegrationCredentialStore, eventIngest service.EventIngestService) *GitLabWebhookHandler {
+func NewGitLabWebhookHandler(credentialService service.IntegrationCredentialService, eventIngest service.EventIngestService) *GitLabWebhookHandler {
 	return &GitLabWebhookHandler{
-		credentialStore: credentialStore,
-		eventIngest:     eventIngest,
+		credentialService: credentialService,
+		eventIngest:       eventIngest,
 	}
 }
 
@@ -45,26 +43,7 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 		return
 	}
 
-	creds, err := h.credentialStore.ListActiveByIntegration(ctx, integrationID)
-	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "integration not found"})
-		return
-	}
-
-	var webhookSecret *string
-	for _, cred := range creds {
-		if cred.CredentialType == model.CredentialTypeWebhookSecret {
-			webhookSecret = &cred.AccessToken
-			break
-		}
-	}
-
-	if webhookSecret == nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "webhook secret not configured"})
-		return
-	}
-
-	if secretHeader != *webhookSecret {
+	if err := h.credentialService.ValidateWebhookToken(ctx, integrationID, secretHeader); err != nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid webhook token"})
 		return
 	}

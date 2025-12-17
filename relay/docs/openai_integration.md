@@ -135,14 +135,28 @@ The LLM client is automatically integrated into Relay's service layer:
 
 ```go
 // In your service or handler
-services := service.NewServices(stores, txRunner, workOSCfg, dashboardURL, webhookCfg, eventProducer, llmClient)
+services := service.NewServices(service.ServicesConfig{
+	Stores:        stores,
+	TxRunner:      txRunner,
+	WorkOS:        workOSCfg,
+	DashboardURL:  dashboardURL,
+	WebhookCfg:    webhookCfg,
+	EventProducer: eventProducer,
+	LLMClient:     llmClient,
+})
 
 // Use gap detector
-gapDetector := services.GapDetector()
+gapDetector, err := services.GapDetector()
+if err != nil {
+    // Handle error - LLM client not configured
+}
 analysis, err := gapDetector.Detect(ctx, event, issue)
 
 // Use spec generator  
-specGen := services.SpecGenerator()
+specGen, err := services.SpecGenerator()
+if err != nil {
+    // Handle error - LLM client not configured
+}
 spec, err := specGen.Generate(ctx, issue, context, gaps)
 ```
 

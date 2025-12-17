@@ -95,7 +95,15 @@ func main() {
 		}
 	}
 
-	services := service.NewServices(stores, service.NewTxRunner(database), cfg.WorkOS, cfg.DashboardURL, cfg.EventWebhook, eventProducer, llmClient)
+	services := service.NewServices(service.ServicesConfig{
+		Stores:        stores,
+		TxRunner:      service.NewTxRunner(database),
+		WorkOS:        cfg.WorkOS,
+		DashboardURL:  cfg.DashboardURL,
+		WebhookCfg:    cfg.EventWebhook,
+		EventProducer: eventProducer,
+		LLMClient:     llmClient,
+	})
 
 	if cfg.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)

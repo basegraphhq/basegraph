@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"log/slog"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"time"
@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"log/slog"
 
 	"basegraph.app/relay/internal/http/handler/webhook"
 	"basegraph.app/relay/internal/model"
@@ -71,6 +72,30 @@ func (f *fakeCredStore) ListActiveByIntegration(ctx context.Context, integration
 		}
 	}
 	return active, nil
+}
+
+func (f *fakeCredStore) GetWebhookSecret(ctx context.Context, integrationID int64) (string, error) {
+	active, err := f.ListActiveByIntegration(ctx, integrationID)
+	if err != nil {
+		return "", err
+	}
+	for _, cred := range active {
+		if cred.CredentialType == model.CredentialTypeWebhookSecret {
+			return cred.AccessToken, nil
+		}
+	}
+	return "", fmt.Errorf("webhook secret not found")
+}
+
+func (f *fakeCredStore) ValidateWebhookToken(ctx context.Context, integrationID int64, token string) error {
+	webhookSecret, err := f.GetWebhookSecret(ctx, integrationID)
+	if err != nil {
+		return err
+	}
+	if webhookSecret != token {
+		return fmt.Errorf("invalid webhook token")
+	}
+	return nil
 }
 
 type fakeEventIngestService struct{}
