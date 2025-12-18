@@ -165,13 +165,23 @@ create table issues (
     discussions jsonb,
     spec text,
 
+    processing_status text not null default 'idle',
+    processing_started_at timestamptz,
+    last_processed_at timestamptz,
+
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
 
     constraint unq_issues_integration_external_issue_id unique (integration_id, external_issue_id)
 );
 
+comment on column issues.processing_status is 'idle | queued | processing';
+
+alter table issues add constraint chk_issues_processing_status
+    check (processing_status in ('idle', 'queued', 'processing'));
+
 create index idx_issues_integration_id on issues (integration_id);
+create index idx_issues_processing_status on issues (processing_status) where processing_status != 'idle';
 
 
 create table event_logs(
@@ -195,20 +205,7 @@ create table event_logs(
 create index idx_event_logs_workspace_source on event_logs (workspace_id, source);
 create index idx_event_logs_created_at on event_logs (created_at);
 create unique index unq_event_logs_workspace_dedupe_key on event_logs (workspace_id, dedupe_key);
-
-
-create table pipeline_runs (
-    id bigint primary key,
-    event_log_id bigint not null references event_logs(id),
-    attempt int not null default 1,
-    status text not null,
-    error text,
-    started_at timestamptz not null default now(),
-    finished_at timestamptz
-);
-
-create index idx_pipeline_runs_event_log_id on pipeline_runs (event_log_id);
-create index idx_pipeline_runs_status on pipeline_runs (status);
+create index idx_event_logs_issue_unprocessed on event_logs (issue_id, created_at) where processed_at is null;
 
 create table sessions (
     id              bigint primary key,
@@ -243,7 +240,6 @@ create index idx_learnings_type on learnings (type);
 
 drop table if exists learnings;
 drop table if exists sessions;
-drop table if exists pipeline_runs;
 drop table if exists event_logs;
 drop table if exists issues;
 drop table if exists integration_configs;
