@@ -52,10 +52,6 @@ func (s *Stores) EventLogs() EventLogStore {
 	return newEventLogStore(s.queries)
 }
 
-func (s *Stores) PipelineRuns() PipelineRunStore {
-	return newPipelineRunStore(s.queries)
-}
-
 func (s *Stores) Learnings() LearningStore {
 	return newLearningStore(s.queries)
 }

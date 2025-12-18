@@ -1,14 +1,10 @@
 package service
 
 import (
-	"errors"
-
 	"basegraph.app/relay/core/config"
-	"basegraph.app/relay/internal/gap"
 	"basegraph.app/relay/internal/llm"
 	"basegraph.app/relay/internal/queue"
 	"basegraph.app/relay/internal/service/integration"
-	"basegraph.app/relay/internal/spec"
 	"basegraph.app/relay/internal/store"
 )
 
@@ -30,8 +26,6 @@ type Services struct {
 	webhookCfg            config.EventWebhookConfig
 	eventIngest           EventIngestService
 	llmClient             llm.Client
-	gapDetector           gap.Detector
-	specGen               spec.Generator
 	integrationCredential IntegrationCredentialService
 }
 
@@ -43,13 +37,6 @@ type Services struct {
 //
 // Tests use individual constructors (e.g., NewUserService) to inject mocks directly.
 func NewServices(cfg ServicesConfig) *Services {
-	var gapDetector gap.Detector
-	var specGen spec.Generator
-
-	if cfg.LLMClient != nil {
-		gapDetector = gap.New(cfg.LLMClient)
-		specGen = spec.New(cfg.LLMClient)
-	}
 
 	return &Services{
 		stores:                cfg.Stores,
@@ -59,8 +46,6 @@ func NewServices(cfg ServicesConfig) *Services {
 		webhookCfg:            cfg.WebhookCfg,
 		eventIngest:           NewEventIngestService(cfg.Stores, cfg.TxRunner, cfg.EventProducer),
 		llmClient:             cfg.LLMClient,
-		gapDetector:           gapDetector,
-		specGen:               specGen,
 		integrationCredential: NewIntegrationCredentialService(cfg.Stores.IntegrationCredentials()),
 	}
 }
@@ -101,18 +86,4 @@ func (s *Services) WebhookBaseURL() string {
 
 func (s *Services) Events() EventIngestService {
 	return s.eventIngest
-}
-
-func (s *Services) GapDetector() (gap.Detector, error) {
-	if s.gapDetector == nil {
-		return nil, errors.New("gap detector unavailable: LLM client not configured")
-	}
-	return s.gapDetector, nil
-}
-
-func (s *Services) SpecGenerator() (spec.Generator, error) {
-	if s.specGen == nil {
-		return nil, errors.New("spec generator unavailable: LLM client not configured")
-	}
-	return s.specGen, nil
 }
