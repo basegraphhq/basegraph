@@ -14,20 +14,13 @@ type DB struct {
 	pool *pgxpool.Pool
 }
 
-// Config holds database connection configuration.
 type Config struct {
-	// DSN is the database connection string
 	// ! TODO: @nithinsj -- Use sslmode in production
-	// Format: postgres://user:password@host:port/dbname?sslmode=disable
 	DSN string
 
-	// MaxConns is the maximum number of connections in the pool.
 	// With PgBouncer, this can be relatively low per replica.
-	// Default: 10
 	MaxConns int32
 
-	// MinConns is the minimum number of connections kept open.
-	// Default: 2
 	MinConns int32
 }
 
@@ -38,7 +31,6 @@ func New(ctx context.Context, cfg Config) (*DB, error) {
 		return nil, fmt.Errorf("parsing database config: %w", err)
 	}
 
-	// Apply pool settings
 	if cfg.MaxConns > 0 {
 		poolCfg.MaxConns = cfg.MaxConns
 	} else {
@@ -56,7 +48,6 @@ func New(ctx context.Context, cfg Config) (*DB, error) {
 		return nil, fmt.Errorf("creating connection pool: %w", err)
 	}
 
-	// Verify connection
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("pinging database: %w", err)
@@ -65,7 +56,6 @@ func New(ctx context.Context, cfg Config) (*DB, error) {
 	return &DB{pool: pool}, nil
 }
 
-// Close closes the database connection pool.
 func (db *DB) Close() {
 	db.pool.Close()
 }

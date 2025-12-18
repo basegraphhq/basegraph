@@ -26,10 +26,10 @@ type GitLabService interface {
 }
 
 type GitLabProject struct {
-	Name        string
-	PathWithNS  string
-	WebURL      string
-	Description string
+	Name        string // e.g. "api-service"
+	PathWithNS  string // e.g. "acme-corp/backend/api-service"
+	WebURL      string // e.g. "https://gitlab.com/acme-corp/backend/api-service"
+	Description string // e.g. "API service for the Acme Corp backend"
 	ID          int64
 }
 

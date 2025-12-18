@@ -33,6 +33,7 @@ type dbTxRunner struct {
 }
 
 // NewTxRunner builds a TxRunner backed by the core DB.
+// Returns interface (not concrete type) to avoid exposing the internal db field.
 func NewTxRunner(db *db.DB) TxRunner {
 	return &dbTxRunner{db: db}
 }
