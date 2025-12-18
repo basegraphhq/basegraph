@@ -440,8 +440,7 @@ A container within an organization. Groups related repositories and integrations
 A connection to an external service. Each integration has one or more **capabilities**:
 - `code_repo`: Source code, MRs/PRs (GitLab, GitHub)
 - `issue_tracker`: Issues, projects, sprints (GitLab, GitHub, Linear, Jira)
-- `wiki`: Wiki pages (GitLab, GitHub, Notion)
-- `documentation`: Docs, knowledge base (Notion)
+- `documentation`: Docs, wikis, knowledge base (GitLab, GitHub, Notion)
 - `communication`: Messages, threads (Slack)
 
 Providers like GitLab and GitHub have multiple capabilities (both code_repo and issue_tracker). Each integration stores OAuth tokens and provider-specific configuration.

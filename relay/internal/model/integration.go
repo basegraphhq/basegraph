@@ -20,7 +20,6 @@ const (
 	CapabilityIssueTracker  Capability = "issue_tracker"
 	CapabilityDocumentation Capability = "documentation"
 	CapabilityCommunication Capability = "communication"
-	CapabilityWiki          Capability = "wiki"
 )
 
 type Integration struct {
@@ -39,12 +38,12 @@ type Integration struct {
 }
 
 var ProviderCapabilities = map[Provider][]Capability{
-	ProviderGitLab: {CapabilityCodeRepo, CapabilityIssueTracker, CapabilityWiki},
-	ProviderGitHub: {CapabilityCodeRepo, CapabilityIssueTracker, CapabilityWiki},
+	ProviderGitLab: {CapabilityCodeRepo, CapabilityIssueTracker, CapabilityDocumentation},
+	ProviderGitHub: {CapabilityCodeRepo, CapabilityIssueTracker, CapabilityDocumentation},
 	ProviderLinear: {CapabilityIssueTracker},
 	ProviderJira:   {CapabilityIssueTracker},
 	ProviderSlack:  {CapabilityCommunication},
-	ProviderNotion: {CapabilityDocumentation, CapabilityWiki},
+	ProviderNotion: {CapabilityDocumentation},
 }
 
 func (p Provider) DefaultCapabilities() []Capability {

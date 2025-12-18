@@ -203,6 +203,8 @@ func (s *gitLabService) SetupIntegration(ctx context.Context, params SetupIntegr
 				return fmt.Errorf("creating integration: %w", err)
 			}
 
+			// Store the GitLab Personal Access Token (PAT) as the primary integration credential.
+			// This credential is required for authenticating API requests such as creating webhooks.
 			pat := &model.IntegrationCredential{
 				ID:             id.New(),
 				IntegrationID:  integration.ID,
