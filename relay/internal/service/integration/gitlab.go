@@ -399,15 +399,12 @@ func (s *gitLabService) SetupIntegration(ctx context.Context, params SetupIntegr
 		}
 	}
 
-	synced := webhooksCreated > 0 || repositoriesAdded > 0
 	stateValue, err := json.Marshal(struct {
 		UpdatedAt         time.Time `json:"updated_at"`
 		Errors            []string  `json:"errors"`
 		WebhooksCreated   int       `json:"webhooks_created"`
 		RepositoriesAdded int       `json:"repositories_added"`
-		Synced            bool      `json:"synced"`
 	}{
-		Synced:            synced,
 		WebhooksCreated:   webhooksCreated,
 		RepositoriesAdded: repositoriesAdded,
 		Errors:            errs,
@@ -478,7 +475,6 @@ func (s *gitLabService) Status(ctx context.Context, workspaceID int64) (*StatusR
 			Errors            []string   `json:"errors"`
 			WebhooksCreated   int        `json:"webhooks_created"`
 			RepositoriesAdded int        `json:"repositories_added"`
-			Synced            bool       `json:"synced"`
 		}
 		if err := json.Unmarshal(config.Value, &state); err == nil {
 			webhooksCreated = state.WebhooksCreated
