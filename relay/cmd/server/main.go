@@ -27,6 +27,7 @@ import (
 )
 
 func main() {
+	fmt.Printf("%s\n", banner)
 	ctx := context.Background()
 
 	cfg, err := config.Load()
@@ -51,7 +52,6 @@ func main() {
 		slog.InfoContext(ctx, "otel disabled (no endpoint configured)")
 	}
 
-	fmt.Printf("%s\n", banner)
 	slog.InfoContext(ctx, "relay starting", "env", cfg.Env, "service", cfg.OTel.ServiceName)
 	if err := id.Init(1); err != nil {
 		slog.ErrorContext(ctx, "failed to initialize snowflake id generator", "error", err)
