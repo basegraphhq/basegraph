@@ -10,7 +10,7 @@ import (
 type RouterConfig struct {
 	DashboardURL    string
 	IsProduction    bool
-	TraceHeaderName string
+	TraceHeaderName string // header name for distributed tracing (e.g., "X-Trace-ID")
 }
 
 func SetupRoutes(router *gin.Engine, services *service.Services, cfg RouterConfig) {

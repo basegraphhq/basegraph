@@ -13,7 +13,8 @@ Basegraph is a monorepo for tools that build property graphs from source code an
 
 ## Additional Resources
 
-- `docs/onboarding.md` – Onboarding notes for the monorepo
+- `docs/dev-setup.md` – Developer environment setup
+- `docs/onboarding.md` – User and organization onboarding flow
 - `execution_trace.md` – Historical experiments and architectural context
 
 ## Contributing

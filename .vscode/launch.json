@@ -1,0 +1,47 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Relay Server",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/relay/cmd/server",
+      "cwd": "${workspaceFolder}/relay",
+      "envFile": "${workspaceFolder}/relay/.env"
+    },
+    {
+      "name": "Relay Worker",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/relay/cmd/worker",
+      "cwd": "${workspaceFolder}/relay",
+      "envFile": "${workspaceFolder}/relay/.env"
+    },
+    {
+      "name": "Codegraph CLI",
+      "type": "go",
+      "request": "launch",
+      "mode": "auto",
+      "program": "${workspaceFolder}/codegraph/cmd/codegraph",
+      "cwd": "${workspaceFolder}/codegraph",
+      "args": []
+    },
+    {
+      "name": "Dashboard (Next.js)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "bun",
+      "runtimeArgs": ["run", "dev"],
+      "cwd": "${workspaceFolder}/dashboard",
+      "console": "integratedTerminal"
+    }
+  ],
+  "compounds": [
+    {
+      "name": "Relay (Server + Worker)",
+      "configurations": ["Relay Server", "Relay Worker"]
+    }
+  ]
+}

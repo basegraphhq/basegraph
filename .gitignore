@@ -131,12 +131,12 @@ ENV/
 # ============================================
 # IDE / Editor Files
 # ============================================
-# VSCode
-.vscode/
-!.vscode/settings.json
-!.vscode/tasks.json
+# VSCode - ignore contents but allow shared configs
+.vscode/*
 !.vscode/launch.json
+!.vscode/tasks.json
 !.vscode/extensions.json
+
 *.code-workspace
 
 # IntelliJ IDEA / WebStorm / GoLand

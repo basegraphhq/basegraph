@@ -112,7 +112,7 @@ Next.js web application for the Relay UI.
 - Next.js proxy enforces organization setup requirements server-side
 - Checks `relay-onboarding-complete` cookie before rendering `/dashboard/*` (and redirects landing `/` for signed-in users)
 - Cookie managed by API routes (`/api/user/sync`, `/api/organization/create`)
-- Architecture supports migration to JWT-based claims (planned with WorkOS)
+- Architecture uses WorkOS AuthKit with JWT-based claims
 
 ---
 
@@ -423,7 +423,7 @@ type UserResponse struct {
 - CSS variables for theming (see `globals.css`)
 
 **Auth:**
-- Better Auth for authentication
+- WorkOS AuthKit for authentication
 - Auth helpers in `lib/auth.ts`
 
 ---
