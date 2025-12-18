@@ -20,7 +20,6 @@ type StoreProvider interface {
 	Repos() store.RepoStore
 	Issues() store.IssueStore
 	EventLogs() store.EventLogStore
-	PipelineRuns() store.PipelineRunStore
 }
 
 // TxRunner runs functions within a transaction and provides stores bound to that transaction.

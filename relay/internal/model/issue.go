@@ -8,10 +8,18 @@ type DiscussionStatus string
 
 type DiscussionType string
 
+type ProcessingStatus string
+
 const (
 	SeverityLow    Severity = "low"
 	SeverityMedium Severity = "medium"
 	SeverityHigh   Severity = "high"
+)
+
+const (
+	ProcessingStatusIdle       ProcessingStatus = "idle"
+	ProcessingStatusQueued     ProcessingStatus = "queued"
+	ProcessingStatusProcessing ProcessingStatus = "processing"
 )
 
 const (
@@ -65,6 +73,12 @@ type Issue struct {
 	Learnings        []Learning    `json:"learnings,omitempty"`
 	Discussions      []Discussion  `json:"discussions,omitempty"`
 	Spec             *string       `json:"spec,omitempty"`
-	CreatedAt        time.Time     `json:"created_at"`
-	UpdatedAt        time.Time     `json:"updated_at"`
+
+	// Processing state for issue-centric queue handling
+	ProcessingStatus    ProcessingStatus `json:"processing_status"`
+	ProcessingStartedAt *time.Time       `json:"processing_started_at,omitempty"`
+	LastProcessedAt     *time.Time       `json:"last_processed_at,omitempty"`
+
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }

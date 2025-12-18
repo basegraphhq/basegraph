@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"time"
@@ -12,7 +13,6 @@ import (
 	"github.com/gin-gonic/gin"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"log/slog"
 
 	"basegraph.app/relay/internal/http/handler/webhook"
 	"basegraph.app/relay/internal/model"

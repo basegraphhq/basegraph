@@ -19,6 +19,7 @@ const (
 	sessionIDContextKey contextKey = "session_id"
 )
 
+// ! TODO: @nithinsj -- Add this middleware to all routes that require authentication.
 func RequireAuth(authService service.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessionID, err := getSessionID(c)
@@ -46,6 +47,8 @@ func RequireAuth(authService service.AuthService) gin.HandlerFunc {
 	}
 }
 
+// OptionalAuth attaches the user to context if a valid session exists, but never aborts.
+// Use for routes that work for both guests and authenticated users.
 func OptionalAuth(authService service.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		sessionID, err := getSessionID(c)

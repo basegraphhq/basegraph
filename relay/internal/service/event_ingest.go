@@ -42,6 +42,7 @@ type EventIngestResult struct {
 	DedupeKey  string
 	Enqueued   bool
 	Duplicated bool
+	Queued     bool // true if issue was transitioned from 'idle' to 'queued'
 }
 
 type EventIngestService interface {
@@ -97,6 +98,7 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		issue        *model.Issue
 		eventLog     *model.EventLog
 		createdEvent bool
+		queued       bool
 	)
 
 	if err := s.txRunner.WithTx(ctx, func(sp StoreProvider) error {
@@ -136,6 +138,14 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 			return fmt.Errorf("creating event log: %w", err)
 		}
 
+		// Queue issue if idle (atomic transition inside transaction)
+		if createdEvent {
+			queued, err = sp.Issues().QueueIfIdle(ctx, issue.ID)
+			if err != nil {
+				return fmt.Errorf("queueing issue: %w", err)
+			}
+		}
+
 		return nil
 	}); err != nil {
 		return nil, err
@@ -163,6 +173,7 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		DedupeKey:  dedupeKey,
 		Enqueued:   enqueued,
 		Duplicated: !createdEvent,
+		Queued:     queued,
 	}, nil
 }
 

@@ -166,7 +166,6 @@ type mockStoreProvider struct {
 	repo        store.RepoStore
 	issue       store.IssueStore
 	eventLog    store.EventLogStore
-	pipelineRun store.PipelineRunStore
 }
 
 func (m *mockStoreProvider) Organizations() store.OrganizationStore {
@@ -199,10 +198,6 @@ func (m *mockStoreProvider) IntegrationConfigs() store.IntegrationConfigStore {
 
 func (m *mockStoreProvider) Repos() store.RepoStore {
 	return m.repo
-}
-
-func (m *mockStoreProvider) PipelineRuns() store.PipelineRunStore {
-	return m.pipelineRun
 }
 
 type mockTxRunner struct {

@@ -61,9 +61,10 @@ func (c *RedisConsumer) Read(ctx context.Context) ([]Message, error) {
 	streams, err := c.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    c.cfg.Group,
 		Consumer: c.cfg.Consumer,
-		Streams:  []string{c.cfg.Stream, ">"},
-		Count:    c.cfg.BatchSize,
-		Block:    c.cfg.Block,
+		// > = New messages not yet delivered to anyone. 0 = this consumer's pending message
+		Streams: []string{c.cfg.Stream, ">"},
+		Count:   c.cfg.BatchSize,
+		Block:   c.cfg.Block,
 	}).Result()
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
