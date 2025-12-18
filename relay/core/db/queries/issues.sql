@@ -43,3 +43,33 @@ SELECT * FROM issues WHERE id = $1;
 -- name: GetIssueByIntegrationAndExternalID :one
 SELECT * FROM issues WHERE integration_id = $1 AND external_issue_id = $2;
 
+-- name: QueueIssueIfIdle :one
+-- Atomically transition issue from 'idle' to 'queued'.
+-- Returns the issue if transition happened, no rows if already queued/processing.
+UPDATE issues
+SET processing_status = 'queued',
+    updated_at = now()
+WHERE id = $1
+  AND processing_status = 'idle'
+RETURNING *;
+
+-- name: ClaimQueuedIssue :one
+-- Atomically transition issue from 'queued' to 'processing'.
+-- Returns the issue if claimed, no rows if already claimed by another worker.
+UPDATE issues
+SET processing_status = 'processing',
+    processing_started_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND processing_status = 'queued'
+RETURNING *;
+
+-- name: SetIssueProcessed :execrows
+-- Mark issue processing complete. Transition from 'processing' to 'idle'.
+UPDATE issues
+SET processing_status = 'idle',
+    last_processed_at = now(),
+    processing_started_at = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND processing_status = 'processing';

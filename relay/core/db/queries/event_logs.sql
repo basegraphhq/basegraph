@@ -49,3 +49,16 @@ UPDATE event_logs
 SET processed_at = now(), processing_error = $2
 WHERE id = $1;
 
+-- name: ListUnprocessedEventLogsByIssue :many
+-- Get all unprocessed events for an issue, ordered by creation time.
+-- Used by worker to batch-process all pending events.
+SELECT * FROM event_logs
+WHERE issue_id = $1
+  AND processed_at IS NULL
+ORDER BY created_at ASC;
+
+-- name: MarkEventLogsBatchProcessed :exec
+-- Mark multiple event logs as processed in a single query.
+UPDATE event_logs
+SET processed_at = now()
+WHERE id = ANY($1::bigint[]);

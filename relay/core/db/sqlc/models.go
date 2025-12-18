@@ -63,23 +63,27 @@ type IntegrationCredential struct {
 }
 
 type Issue struct {
-	ID               int64              `json:"id"`
-	IntegrationID    int64              `json:"integration_id"`
-	ExternalIssueID  string             `json:"external_issue_id"`
-	Title            *string            `json:"title"`
-	Description      *string            `json:"description"`
-	Labels           []string           `json:"labels"`
-	Members          []string           `json:"members"`
-	Assignees        []string           `json:"assignees"`
-	Reporter         *string            `json:"reporter"`
-	ExternalIssueUrl *string            `json:"external_issue_url"`
-	Keywords         []string           `json:"keywords"`
-	CodeFindings     []byte             `json:"code_findings"`
-	Learnings        []byte             `json:"learnings"`
-	Discussions      []byte             `json:"discussions"`
-	Spec             *string            `json:"spec"`
-	CreatedAt        pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	ID               int64    `json:"id"`
+	IntegrationID    int64    `json:"integration_id"`
+	ExternalIssueID  string   `json:"external_issue_id"`
+	Title            *string  `json:"title"`
+	Description      *string  `json:"description"`
+	Labels           []string `json:"labels"`
+	Members          []string `json:"members"`
+	Assignees        []string `json:"assignees"`
+	Reporter         *string  `json:"reporter"`
+	ExternalIssueUrl *string  `json:"external_issue_url"`
+	Keywords         []string `json:"keywords"`
+	CodeFindings     []byte   `json:"code_findings"`
+	Learnings        []byte   `json:"learnings"`
+	Discussions      []byte   `json:"discussions"`
+	Spec             *string  `json:"spec"`
+	// idle | queued | processing
+	ProcessingStatus    string             `json:"processing_status"`
+	ProcessingStartedAt pgtype.Timestamptz `json:"processing_started_at"`
+	LastProcessedAt     pgtype.Timestamptz `json:"last_processed_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Learning struct {
@@ -100,16 +104,6 @@ type Organization struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	IsDeleted   bool               `json:"is_deleted"`
-}
-
-type PipelineRun struct {
-	ID         int64              `json:"id"`
-	EventLogID int64              `json:"event_log_id"`
-	Attempt    int32              `json:"attempt"`
-	Status     string             `json:"status"`
-	Error      *string            `json:"error"`
-	StartedAt  pgtype.Timestamptz `json:"started_at"`
-	FinishedAt pgtype.Timestamptz `json:"finished_at"`
 }
 
 type Repository struct {

@@ -9,8 +9,48 @@ import (
 	"context"
 )
 
+const claimQueuedIssue = `-- name: ClaimQueuedIssue :one
+UPDATE issues
+SET processing_status = 'processing',
+    processing_started_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND processing_status = 'queued'
+RETURNING id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
+`
+
+// Atomically transition issue from 'queued' to 'processing'.
+// Returns the issue if claimed, no rows if already claimed by another worker.
+func (q *Queries) ClaimQueuedIssue(ctx context.Context, id int64) (Issue, error) {
+	row := q.db.QueryRow(ctx, claimQueuedIssue, id)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.IntegrationID,
+		&i.ExternalIssueID,
+		&i.Title,
+		&i.Description,
+		&i.Labels,
+		&i.Members,
+		&i.Assignees,
+		&i.Reporter,
+		&i.ExternalIssueUrl,
+		&i.Keywords,
+		&i.CodeFindings,
+		&i.Learnings,
+		&i.Discussions,
+		&i.Spec,
+		&i.ProcessingStatus,
+		&i.ProcessingStartedAt,
+		&i.LastProcessedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getIssue = `-- name: GetIssue :one
-SELECT id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, created_at, updated_at FROM issues WHERE id = $1
+SELECT id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at FROM issues WHERE id = $1
 `
 
 func (q *Queries) GetIssue(ctx context.Context, id int64) (Issue, error) {
@@ -32,6 +72,9 @@ func (q *Queries) GetIssue(ctx context.Context, id int64) (Issue, error) {
 		&i.Learnings,
 		&i.Discussions,
 		&i.Spec,
+		&i.ProcessingStatus,
+		&i.ProcessingStartedAt,
+		&i.LastProcessedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
@@ -39,7 +82,7 @@ func (q *Queries) GetIssue(ctx context.Context, id int64) (Issue, error) {
 }
 
 const getIssueByIntegrationAndExternalID = `-- name: GetIssueByIntegrationAndExternalID :one
-SELECT id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, created_at, updated_at FROM issues WHERE integration_id = $1 AND external_issue_id = $2
+SELECT id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at FROM issues WHERE integration_id = $1 AND external_issue_id = $2
 `
 
 type GetIssueByIntegrationAndExternalIDParams struct {
@@ -66,10 +109,71 @@ func (q *Queries) GetIssueByIntegrationAndExternalID(ctx context.Context, arg Ge
 		&i.Learnings,
 		&i.Discussions,
 		&i.Spec,
+		&i.ProcessingStatus,
+		&i.ProcessingStartedAt,
+		&i.LastProcessedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const queueIssueIfIdle = `-- name: QueueIssueIfIdle :one
+UPDATE issues
+SET processing_status = 'queued',
+    updated_at = now()
+WHERE id = $1
+  AND processing_status = 'idle'
+RETURNING id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
+`
+
+// Atomically transition issue from 'idle' to 'queued'.
+// Returns the issue if transition happened, no rows if already queued/processing.
+func (q *Queries) QueueIssueIfIdle(ctx context.Context, id int64) (Issue, error) {
+	row := q.db.QueryRow(ctx, queueIssueIfIdle, id)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.IntegrationID,
+		&i.ExternalIssueID,
+		&i.Title,
+		&i.Description,
+		&i.Labels,
+		&i.Members,
+		&i.Assignees,
+		&i.Reporter,
+		&i.ExternalIssueUrl,
+		&i.Keywords,
+		&i.CodeFindings,
+		&i.Learnings,
+		&i.Discussions,
+		&i.Spec,
+		&i.ProcessingStatus,
+		&i.ProcessingStartedAt,
+		&i.LastProcessedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const setIssueProcessed = `-- name: SetIssueProcessed :execrows
+UPDATE issues
+SET processing_status = 'idle',
+    last_processed_at = now(),
+    processing_started_at = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND processing_status = 'processing'
+`
+
+// Mark issue processing complete. Transition from 'processing' to 'idle'.
+func (q *Queries) SetIssueProcessed(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, setIssueProcessed, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const upsertIssue = `-- name: UpsertIssue :one
@@ -109,7 +213,7 @@ SET
     discussions = EXCLUDED.discussions,
     spec = EXCLUDED.spec,
     updated_at = now()
-RETURNING id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, created_at, updated_at
+RETURNING id, integration_id, external_issue_id, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
 `
 
 type UpsertIssueParams struct {
@@ -163,6 +267,9 @@ func (q *Queries) UpsertIssue(ctx context.Context, arg UpsertIssueParams) (Issue
 		&i.Learnings,
 		&i.Discussions,
 		&i.Spec,
+		&i.ProcessingStatus,
+		&i.ProcessingStartedAt,
+		&i.LastProcessedAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 	)

@@ -208,6 +208,47 @@ func (q *Queries) ListUnprocessedEventLogs(ctx context.Context, limit int32) ([]
 	return items, nil
 }
 
+const listUnprocessedEventLogsByIssue = `-- name: ListUnprocessedEventLogsByIssue :many
+SELECT id, workspace_id, issue_id, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at FROM event_logs
+WHERE issue_id = $1
+  AND processed_at IS NULL
+ORDER BY created_at ASC
+`
+
+// Get all unprocessed events for an issue, ordered by creation time.
+// Used by worker to batch-process all pending events.
+func (q *Queries) ListUnprocessedEventLogsByIssue(ctx context.Context, issueID int64) ([]EventLog, error) {
+	rows, err := q.db.Query(ctx, listUnprocessedEventLogsByIssue, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []EventLog
+	for rows.Next() {
+		var i EventLog
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.IssueID,
+			&i.Source,
+			&i.EventType,
+			&i.Payload,
+			&i.ExternalID,
+			&i.DedupeKey,
+			&i.ProcessedAt,
+			&i.ProcessingError,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markEventLogFailed = `-- name: MarkEventLogFailed :exec
 UPDATE event_logs
 SET processed_at = now(), processing_error = $2
@@ -232,6 +273,18 @@ WHERE id = $1
 
 func (q *Queries) MarkEventLogProcessed(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, markEventLogProcessed, id)
+	return err
+}
+
+const markEventLogsBatchProcessed = `-- name: MarkEventLogsBatchProcessed :exec
+UPDATE event_logs
+SET processed_at = now()
+WHERE id = ANY($1::bigint[])
+`
+
+// Mark multiple event logs as processed in a single query.
+func (q *Queries) MarkEventLogsBatchProcessed(ctx context.Context, dollar_1 []int64) error {
+	_, err := q.db.Exec(ctx, markEventLogsBatchProcessed, dollar_1)
 	return err
 }
 
