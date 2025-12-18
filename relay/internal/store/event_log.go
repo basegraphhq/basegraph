@@ -88,6 +88,25 @@ func (s *eventLogStore) MarkFailed(ctx context.Context, id int64, errMsg string)
 	})
 }
 
+func (s *eventLogStore) ListUnprocessedByIssue(ctx context.Context, issueID int64) ([]model.EventLog, error) {
+	rows, err := s.queries.ListUnprocessedEventLogsByIssue(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+	result := make([]model.EventLog, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, *toEventLogModel(row))
+	}
+	return result, nil
+}
+
+func (s *eventLogStore) MarkBatchProcessed(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	return s.queries.MarkEventLogsBatchProcessed(ctx, ids)
+}
+
 func toEventLogModel(row sqlc.EventLog) *model.EventLog {
 	var processedAt *time.Time
 	if row.ProcessedAt.Valid {

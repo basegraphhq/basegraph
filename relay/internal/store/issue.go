@@ -79,6 +79,45 @@ func (s *issueStore) GetByIntegrationAndExternalID(ctx context.Context, integrat
 	return toIssueModel(row)
 }
 
+func (s *issueStore) QueueIfIdle(ctx context.Context, issueID int64) (bool, error) {
+	_, err := s.queries.QueueIssueIfIdle(ctx, issueID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Issue was not idle (already queued or processing)
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *issueStore) ClaimQueued(ctx context.Context, issueID int64) (bool, *model.Issue, error) {
+	row, err := s.queries.ClaimQueuedIssue(ctx, issueID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Issue was not queued (already claimed or idle)
+			return false, nil, nil
+		}
+		return false, nil, err
+	}
+	issue, err := toIssueModel(row)
+	if err != nil {
+		return false, nil, err
+	}
+	return true, issue, nil
+}
+
+func (s *issueStore) SetProcessed(ctx context.Context, issueID int64) error {
+	rowsAffected, err := s.queries.SetIssueProcessed(ctx, issueID)
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errors.New("issue was not in processing state")
+	}
+	return nil
+}
+
 func toIssueModel(row sqlc.Issue) (*model.Issue, error) {
 	var codeFindings []model.CodeFinding
 	if len(row.CodeFindings) > 0 {
@@ -101,22 +140,34 @@ func toIssueModel(row sqlc.Issue) (*model.Issue, error) {
 		}
 	}
 
-	return &model.Issue{
-		ID:              row.ID,
-		IntegrationID:   row.IntegrationID,
-		ExternalIssueID: row.ExternalIssueID,
-		Title:           row.Title,
-		Description:     row.Description,
-		Labels:          row.Labels,
-		Members:         row.Members,
-		Assignees:       row.Assignees,
-		Reporter:        row.Reporter,
-		Keywords:        row.Keywords,
-		CodeFindings:    codeFindings,
-		Learnings:       learnings,
-		Discussions:     discussions,
-		Spec:            row.Spec,
-		CreatedAt:       row.CreatedAt.Time,
-		UpdatedAt:       row.UpdatedAt.Time,
-	}, nil
+	issue := &model.Issue{
+		ID:               row.ID,
+		IntegrationID:    row.IntegrationID,
+		ExternalIssueID:  row.ExternalIssueID,
+		Title:            row.Title,
+		Description:      row.Description,
+		Labels:           row.Labels,
+		Members:          row.Members,
+		Assignees:        row.Assignees,
+		Reporter:         row.Reporter,
+		Keywords:         row.Keywords,
+		CodeFindings:     codeFindings,
+		Learnings:        learnings,
+		Discussions:      discussions,
+		Spec:             row.Spec,
+		ProcessingStatus: model.ProcessingStatus(row.ProcessingStatus),
+		CreatedAt:        row.CreatedAt.Time,
+		UpdatedAt:        row.UpdatedAt.Time,
+	}
+
+	if row.ProcessingStartedAt.Valid {
+		t := row.ProcessingStartedAt.Time
+		issue.ProcessingStartedAt = &t
+	}
+	if row.LastProcessedAt.Valid {
+		t := row.LastProcessedAt.Time
+		issue.LastProcessedAt = &t
+	}
+
+	return issue, nil
 }

@@ -103,6 +103,16 @@ type IssueStore interface {
 	Upsert(ctx context.Context, issue *model.Issue) (*model.Issue, error)
 	GetByID(ctx context.Context, id int64) (*model.Issue, error)
 	GetByIntegrationAndExternalID(ctx context.Context, integrationID int64, externalIssueID string) (*model.Issue, error)
+
+	// Issue-centric processing state transitions
+	// QueueIfIdle atomically transitions an issue from 'idle' to 'queued'.
+	// Returns (true, nil) if transition succeeded, (false, nil) if already queued/processing.
+	QueueIfIdle(ctx context.Context, issueID int64) (queued bool, err error)
+	// ClaimQueued atomically transitions an issue from 'queued' to 'processing'.
+	// Returns (true, issue) if claimed, (false, nil) if already claimed by another worker.
+	ClaimQueued(ctx context.Context, issueID int64) (claimed bool, issue *model.Issue, err error)
+	// SetProcessed transitions an issue from 'processing' to 'idle'.
+	SetProcessed(ctx context.Context, issueID int64) error
 }
 
 type EventLogStore interface {
@@ -112,12 +122,12 @@ type EventLogStore interface {
 	ListUnprocessed(ctx context.Context, limit int32) ([]model.EventLog, error)
 	MarkProcessed(ctx context.Context, id int64) error
 	MarkFailed(ctx context.Context, id int64, errMsg string) error
-}
 
-type PipelineRunStore interface {
-	Create(ctx context.Context, run *model.PipelineRun) (*model.PipelineRun, error)
-	Finish(ctx context.Context, id int64, status string, errMsg *string) error
-	ListByEvent(ctx context.Context, eventLogID int64, limit int32) ([]model.PipelineRun, error)
+	// Issue-centric batch operations
+	// ListUnprocessedByIssue returns all unprocessed events for an issue, ordered by created_at.
+	ListUnprocessedByIssue(ctx context.Context, issueID int64) ([]model.EventLog, error)
+	// MarkBatchProcessed marks multiple event logs as processed atomically.
+	MarkBatchProcessed(ctx context.Context, ids []int64) error
 }
 
 type LearningStore interface {
