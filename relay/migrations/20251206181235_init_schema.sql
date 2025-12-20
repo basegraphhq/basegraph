@@ -150,6 +150,7 @@ create table issues (
     id bigint primary key,
     integration_id bigint not null references integrations(id),
     external_issue_id text not null,
+    provider text not null,
 
     title text,
     description text,
@@ -184,10 +185,12 @@ create index idx_issues_integration_id on issues (integration_id);
 create index idx_issues_processing_status on issues (processing_status) where processing_status != 'idle';
 
 
+
 create table event_logs(
     id bigint primary key,
     workspace_id bigint not null references workspaces(id),
     issue_id bigint not null references issues(id),
+    triggered_by_username text not null default "system",
 
     source text not null,
     event_type text not null,

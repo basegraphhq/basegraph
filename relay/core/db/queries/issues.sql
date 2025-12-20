@@ -3,6 +3,7 @@ INSERT INTO issues (
     id,
     integration_id,
     external_issue_id,
+    provider,
     title,
     description,
     labels,
@@ -18,7 +19,7 @@ INSERT INTO issues (
     updated_at
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, now(), now()
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now()
 )
 ON CONFLICT (integration_id, external_issue_id)
 DO UPDATE

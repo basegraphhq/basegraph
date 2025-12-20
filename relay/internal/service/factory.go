@@ -40,7 +40,7 @@ func NewServices(cfg ServicesConfig) *Services {
 		workOSCfg:             cfg.WorkOS,
 		dashboardURL:          cfg.DashboardURL,
 		webhookCfg:            cfg.WebhookCfg,
-		eventIngest:           NewEventIngestService(cfg.Stores, cfg.TxRunner, cfg.EventProducer),
+		eventIngest:           NewEventIngestService(cfg.Stores.Integrations(), cfg.TxRunner, cfg.EventProducer),
 		integrationCredential: NewIntegrationCredentialService(cfg.Stores.IntegrationCredentials()),
 	}
 }

@@ -61,6 +61,7 @@ type Issue struct {
 	ID               int64         `json:"id"`
 	IntegrationID    int64         `json:"integration_id"`
 	ExternalIssueID  string        `json:"external_issue_id"`
+	Provider         Provider      `json:"provider"`
 	Title            *string       `json:"title,omitempty"`
 	Description      *string       `json:"description,omitempty"`
 	Labels           []string      `json:"labels,omitempty"`

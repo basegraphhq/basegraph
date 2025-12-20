@@ -64,6 +64,8 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 		return
 	}
 
+	slog.InfoContext(ctx, "received gitlab webhook", "body", bodyMap)
+
 	var payload gitlabWebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
@@ -137,51 +139,47 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 }
 
 func (h *GitLabWebhookHandler) processGitLabEvent(ctx context.Context, integrationID int64, canonicalEventType mapper.CanonicalEventType, body []byte, payload gitlabWebhookPayload) (*service.EventIngestResult, error) {
-	issueID, title, description := h.extractIssueData(payload, body)
-	if issueID == "" {
-		return nil, fmt.Errorf("no issue ID found in payload")
+	// For issue events, IID is in object_attributes
+	// For note events (comments), IID is in the nested issue object
+	issueIID := payload.ObjectAttributes.IID
+	if issueIID == 0 {
+		issueIID = payload.Issue.IID
+	}
+	if issueIID == 0 { // if still 0, then it's an error
+		return nil, fmt.Errorf("no issue IID found in payload")
 	}
 
 	params := service.EventIngestParams{
-		IntegrationID:   integrationID,
-		ExternalIssueID: issueID,
-		EventType:       string(canonicalEventType),
-		Source:          nil,
-		Payload:         body,
-		Title:           title,
-		Description:     description,
+		IntegrationID:       integrationID,
+		ExternalIssueID:     strconv.FormatInt(issueIID, 10),
+		TriggeredByUsername: payload.User.Username,
+		EventType:           string(canonicalEventType),
+		Payload:             body,
 	}
 
 	return h.eventIngest.Ingest(ctx, params)
 }
 
-func (h *GitLabWebhookHandler) extractIssueData(payload gitlabWebhookPayload, body []byte) (issueID string, title *string, description *string) {
-	if payload.ObjectAttributes.IID > 0 {
-		issueID = strconv.FormatInt(payload.ObjectAttributes.IID, 10)
-		title = &payload.ObjectAttributes.Title
-		return issueID, title, nil
-	}
-
-	var fullPayload map[string]any
-	if err := json.Unmarshal(body, &fullPayload); err == nil {
-		if issue, ok := fullPayload["issue"].(map[string]any); ok {
-			if iid, ok := issue["iid"].(float64); ok {
-				issueID = strconv.FormatInt(int64(iid), 10)
-			}
-		}
-	}
-
-	return issueID, nil, nil
-}
-
 type gitlabWebhookPayload struct {
-	ObjectKind       string `json:"object_kind"`
+	ObjectKind string `json:"object_kind"`
+	User       struct {
+		Id       int    `json:"id"`
+		Username string `json:"username"`
+		Name     string `json:"name"`
+		Email    string `json:"email"`
+	} `json:"user"`
 	EventType        string `json:"event_type"`
 	ObjectAttributes struct {
-		Title  string `json:"title"`
-		Note   string `json:"note"`
-		Action string `json:"action"`
-		ID     int64  `json:"id"`
-		IID    int64  `json:"iid"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		Note        string `json:"note"`
+		Action      string `json:"action"`
+		ID          int64  `json:"id"`
+		IID         int64  `json:"iid"`
 	} `json:"object_attributes"`
+	Issue struct {
+		IID         int64  `json:"iid"`
+		Title       string `json:"title"`
+		Description string `json:"description"`
+	} `json:"issue"`
 }
