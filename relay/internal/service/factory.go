@@ -2,7 +2,6 @@ package service
 
 import (
 	"basegraph.app/relay/core/config"
-	"basegraph.app/relay/internal/llm"
 	"basegraph.app/relay/internal/queue"
 	"basegraph.app/relay/internal/service/integration"
 	"basegraph.app/relay/internal/store"
@@ -15,7 +14,6 @@ type ServicesConfig struct {
 	DashboardURL  string
 	WebhookCfg    config.EventWebhookConfig
 	EventProducer queue.Producer
-	LLMClient     llm.Client
 }
 
 type Services struct {
@@ -25,7 +23,6 @@ type Services struct {
 	dashboardURL          string
 	webhookCfg            config.EventWebhookConfig
 	eventIngest           EventIngestService
-	llmClient             llm.Client
 	integrationCredential IntegrationCredentialService
 }
 
@@ -37,7 +34,6 @@ type Services struct {
 //
 // Tests use individual constructors (e.g., NewUserService) to inject mocks directly.
 func NewServices(cfg ServicesConfig) *Services {
-
 	return &Services{
 		stores:                cfg.Stores,
 		txRunner:              cfg.TxRunner,
@@ -45,7 +41,6 @@ func NewServices(cfg ServicesConfig) *Services {
 		dashboardURL:          cfg.DashboardURL,
 		webhookCfg:            cfg.WebhookCfg,
 		eventIngest:           NewEventIngestService(cfg.Stores, cfg.TxRunner, cfg.EventProducer),
-		llmClient:             cfg.LLMClient,
 		integrationCredential: NewIntegrationCredentialService(cfg.Stores.IntegrationCredentials()),
 	}
 }

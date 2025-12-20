@@ -7,24 +7,24 @@ import (
 	"basegraph.app/relay/internal/model"
 )
 
-// StubProcessor is a no-op processor for testing and initial deployment.
+// MockProcessor is a no-op processor for testing and initial deployment.
 // It logs events but doesn't modify the issue.
-type StubProcessor struct{}
+type MockProcessor struct{}
 
-// NewStubProcessor creates a new stub processor.
-func NewStubProcessor() *StubProcessor {
-	return &StubProcessor{}
+// NewMockProcessor creates a new stub processor.
+func NewMockProcessor() *MockProcessor {
+	return &MockProcessor{}
 }
 
 // Process logs the events and returns the issue unchanged.
-func (p *StubProcessor) Process(ctx context.Context, issue *model.Issue, events []model.EventLog) (*model.Issue, error) {
-	slog.InfoContext(ctx, "stub processor: processing events",
+func (p *MockProcessor) Process(ctx context.Context, issue *model.Issue, events []model.EventLog) (*model.Issue, error) {
+	slog.InfoContext(ctx, "mock processor: processing events",
 		"issue_id", issue.ID,
 		"event_count", len(events),
 		"event_types", eventTypes(events))
 
 	for _, event := range events {
-		slog.DebugContext(ctx, "stub processor: event details",
+		slog.DebugContext(ctx, "mock processor: event details",
 			"event_id", event.ID,
 			"event_type", event.EventType,
 			"source", event.Source,

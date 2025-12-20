@@ -7,7 +7,7 @@ import (
 )
 
 // IssueProcessor defines the interface for processing an issue's events.
-// Implementations can plug in different processing strategies (LLM, rule-based, etc.)
+// Implementations can plug in different processing strategies (rule-based, etc.)
 type IssueProcessor interface {
 	// Process handles all events for an issue in a batch.
 	//
