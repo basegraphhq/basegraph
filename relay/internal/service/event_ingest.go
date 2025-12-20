@@ -16,24 +16,13 @@ import (
 )
 
 type EventIngestParams struct {
-	IntegrationID   int64           `json:"integration_id"`
-	ExternalIssueID string          `json:"external_issue_id"`
-	EventType       string          `json:"event_type"`
-	Source          *string         `json:"source,omitempty"`
-	ExternalEventID *string         `json:"external_event_id,omitempty"`
-	DedupeKey       *string         `json:"dedupe_key,omitempty"`
-	Payload         json.RawMessage `json:"payload"`
-
-	Title            *string  `json:"title,omitempty"`
-	Description      *string  `json:"description,omitempty"`
-	Labels           []string `json:"labels,omitempty"`
-	Members          []string `json:"members,omitempty"`
-	Assignees        []string `json:"assignees,omitempty"`
-	Reporter         *string  `json:"reporter,omitempty"`
-	ExternalIssueURL *string  `json:"external_issue_url,omitempty"`
-	Keywords         []string `json:"keywords,omitempty"`
-
-	TraceID *string `json:"trace_id,omitempty"`
+	IntegrationID       int64           `json:"integration_id"`
+	ExternalIssueID     string          `json:"external_issue_id"`
+	TriggeredByUsername string          `json:"triggered_by_username"`
+	Source              string          `json:"source"`
+	EventType           string          `json:"event_type"`
+	Payload             json.RawMessage `json:"payload"`
+	TraceID             *string         `json:"trace_id,omitempty"`
 }
 
 type EventIngestResult struct {
@@ -52,16 +41,16 @@ type EventIngestService interface {
 var ErrIntegrationNotFound = errors.New("integration not found")
 
 type eventIngestService struct {
-	stores   *store.Stores
-	txRunner TxRunner
-	queue    queue.Producer
+	integrations store.IntegrationStore
+	txRunner     TxRunner
+	queue        queue.Producer
 }
 
-func NewEventIngestService(stores *store.Stores, txRunner TxRunner, queue queue.Producer) EventIngestService {
+func NewEventIngestService(integrations store.IntegrationStore, txRunner TxRunner, queue queue.Producer) EventIngestService {
 	return &eventIngestService{
-		stores:   stores,
-		txRunner: txRunner,
-		queue:    queue,
+		integrations: integrations,
+		txRunner:     txRunner,
+		queue:        queue,
 	}
 }
 
@@ -73,7 +62,7 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		return nil, fmt.Errorf("payload is required")
 	}
 
-	integration, err := s.stores.Integrations().GetByID(ctx, params.IntegrationID)
+	integration, err := s.integrations.GetByID(ctx, params.IntegrationID)
 	if err != nil {
 		if err == store.ErrNotFound {
 			return nil, fmt.Errorf("%w", ErrIntegrationNotFound)
@@ -85,14 +74,7 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 	}
 
 	source := string(integration.Provider)
-	if params.Source != nil && *params.Source != "" {
-		source = *params.Source
-	}
-
-	dedupeKey, err := computeDedupeKey(source, params.EventType, params.ExternalIssueID, params.ExternalEventID, params.Payload, params.DedupeKey)
-	if err != nil {
-		return nil, err
-	}
+	dedupeKey := computeDedupeKey(source, params.EventType, params.ExternalIssueID, params.Payload)
 
 	var (
 		issue        *model.Issue
@@ -103,17 +85,10 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 
 	if err := s.txRunner.WithTx(ctx, func(sp StoreProvider) error {
 		issueModel := &model.Issue{
-			ID:               id.New(),
-			IntegrationID:    params.IntegrationID,
-			ExternalIssueID:  params.ExternalIssueID,
-			Title:            params.Title,
-			Description:      params.Description,
-			Labels:           params.Labels,
-			Members:          params.Members,
-			Assignees:        params.Assignees,
-			Reporter:         params.Reporter,
-			ExternalIssueURL: params.ExternalIssueURL,
-			Keywords:         params.Keywords,
+			ID:              id.New(),
+			IntegrationID:   params.IntegrationID,
+			ExternalIssueID: params.ExternalIssueID,
+			Provider:        integration.Provider,
 		}
 
 		var err error
@@ -123,14 +98,14 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		}
 
 		event := &model.EventLog{
-			ID:          id.New(),
-			WorkspaceID: integration.WorkspaceID,
-			IssueID:     issue.ID,
-			Source:      source,
-			EventType:   params.EventType,
-			Payload:     params.Payload,
-			ExternalID:  params.ExternalEventID,
-			DedupeKey:   dedupeKey,
+			ID:                  id.New(),
+			WorkspaceID:         integration.WorkspaceID,
+			IssueID:             issue.ID,
+			TriggeredByUsername: params.TriggeredByUsername,
+			Source:              source,
+			EventType:           params.EventType,
+			Payload:             params.Payload,
+			DedupeKey:           dedupeKey,
 		}
 
 		eventLog, createdEvent, err = sp.EventLogs().CreateOrGet(ctx, event)
@@ -177,15 +152,7 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 	}, nil
 }
 
-func computeDedupeKey(source, eventType, externalIssueID string, externalEventID *string, payload json.RawMessage, override *string) (string, error) {
-	if override != nil && *override != "" {
-		return *override, nil
-	}
-
-	if externalEventID != nil && *externalEventID != "" {
-		return fmt.Sprintf("%s:%s:%s", source, eventType, *externalEventID), nil
-	}
-
+func computeDedupeKey(source, eventType, externalIssueID string, payload json.RawMessage) string {
 	body := struct {
 		Source          string          `json:"source"`
 		EventType       string          `json:"event_type"`
@@ -198,11 +165,7 @@ func computeDedupeKey(source, eventType, externalIssueID string, externalEventID
 		Payload:         payload,
 	}
 
-	data, err := json.Marshal(body)
-	if err != nil {
-		return "", fmt.Errorf("marshal dedupe payload: %w", err)
-	}
-
+	data, _ := json.Marshal(body)
 	hash := sha256.Sum256(data)
-	return fmt.Sprintf("%s:%s", source, hex.EncodeToString(hash[:])), nil
+	return fmt.Sprintf("%s:%s", source, hex.EncodeToString(hash[:]))
 }

@@ -9,17 +9,18 @@ import (
 )
 
 type EventLog struct {
-	ID              int64              `json:"id"`
-	WorkspaceID     int64              `json:"workspace_id"`
-	IssueID         int64              `json:"issue_id"`
-	Source          string             `json:"source"`
-	EventType       string             `json:"event_type"`
-	Payload         []byte             `json:"payload"`
-	ExternalID      *string            `json:"external_id"`
-	DedupeKey       string             `json:"dedupe_key"`
-	ProcessedAt     pgtype.Timestamptz `json:"processed_at"`
-	ProcessingError *string            `json:"processing_error"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	ID                  int64              `json:"id"`
+	WorkspaceID         int64              `json:"workspace_id"`
+	IssueID             int64              `json:"issue_id"`
+	TriggeredByUsername string             `json:"triggered_by_username"`
+	Source              string             `json:"source"`
+	EventType           string             `json:"event_type"`
+	Payload             []byte             `json:"payload"`
+	ExternalID          *string            `json:"external_id"`
+	DedupeKey           string             `json:"dedupe_key"`
+	ProcessedAt         pgtype.Timestamptz `json:"processed_at"`
+	ProcessingError     *string            `json:"processing_error"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
 type Integration struct {
@@ -66,6 +67,7 @@ type Issue struct {
 	ID               int64    `json:"id"`
 	IntegrationID    int64    `json:"integration_id"`
 	ExternalIssueID  string   `json:"external_issue_id"`
+	Provider         string   `json:"provider"`
 	Title            *string  `json:"title"`
 	Description      *string  `json:"description"`
 	Labels           []string `json:"labels"`

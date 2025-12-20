@@ -41,20 +41,11 @@ func (h *EventIngestHandler) Ingest(c *gin.Context) {
 		}
 	}
 	params := service.EventIngestParams{
-		IntegrationID:   req.IntegrationID,
-		ExternalIssueID: req.ExternalIssueID,
-		EventType:       req.EventType,
-		Source:          req.Source,
-		ExternalEventID: req.ExternalEventID,
-		DedupeKey:       req.DedupeKey,
-		Payload:         req.Payload,
-		Title:           req.Title,
-		Description:     req.Description,
-		Labels:          req.Labels,
-		Members:         req.Members,
-		Assignees:       req.Assignees,
-		Reporter:        req.Reporter,
-		Keywords:        req.Keywords,
+		IntegrationID:       req.IntegrationID,
+		ExternalIssueID:     req.ExternalIssueID,
+		TriggeredByUsername: req.TriggeredByUsername,
+		EventType:           req.EventType,
+		Payload:             req.Payload,
 	}
 	if traceID != "" {
 		params.TraceID = &traceID
