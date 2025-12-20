@@ -124,10 +124,9 @@ Both binaries share configuration but use different subsets:
 - `DATABASE_URL`: PostgreSQL connection
 - `REDIS_*`: Redis connection for event queuing
 
-### Worker Configuration  
+### Worker Configuration
 - `DATABASE_URL`: PostgreSQL connection (shared)
 - `REDIS_*`: Redis connection for event consumption
-- `OPENAI_API_KEY`: LLM processing (optional for now)
 
 ## Development
 
@@ -183,7 +182,6 @@ make test         # Run tests
 **Worker (`cmd/worker`)**:
 - Redis stream consumer
 - Event processing pipeline (currently empty)
-- LLM integration for analysis
 - Integration with issue tracker APIs
 
 **Shared Components**:
