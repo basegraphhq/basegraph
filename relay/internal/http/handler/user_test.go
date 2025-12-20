@@ -49,7 +49,7 @@ var _ = Describe("UserHandler", func() {
 		router.ServeHTTP(w, req)
 
 		Expect(w.Code).To(Equal(http.StatusOK))
-		var resp map[string]interface{}
+		var resp map[string]any
 		Expect(json.Unmarshal(w.Body.Bytes(), &resp)).To(Succeed())
 		Expect(resp["has_organization"]).To(BeTrue())
 	})

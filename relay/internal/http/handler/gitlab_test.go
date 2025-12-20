@@ -85,7 +85,7 @@ var _ = Describe("GitLabHandler", func() {
 		router.ServeHTTP(w, req)
 
 		Expect(w.Code).To(Equal(http.StatusOK))
-		var resp []map[string]interface{}
+		var resp []map[string]any
 		Expect(json.Unmarshal(w.Body.Bytes(), &resp)).To(Succeed())
 		Expect(resp).To(HaveLen(1))
 		Expect(resp[0]["path_with_namespace"]).To(Equal("g/p1"))
@@ -107,7 +107,7 @@ var _ = Describe("GitLabHandler", func() {
 		router.ServeHTTP(w, req)
 
 		Expect(w.Code).To(Equal(http.StatusBadGateway))
-		var resp map[string]interface{}
+		var resp map[string]any
 		Expect(json.Unmarshal(w.Body.Bytes(), &resp)).To(Succeed())
 		Expect(resp["error"]).To(Equal("boom"))
 	})
@@ -128,7 +128,7 @@ var _ = Describe("GitLabHandler", func() {
 		router.ServeHTTP(w, req)
 
 		Expect(w.Code).To(Equal(http.StatusBadRequest))
-		var resp map[string]interface{}
+		var resp map[string]any
 		Expect(json.Unmarshal(w.Body.Bytes(), &resp)).To(Succeed())
 		Expect(resp["error"]).To(ContainSubstring("no projects found with maintainer access"))
 	})
@@ -143,7 +143,7 @@ var _ = Describe("GitLabHandler", func() {
 			}, nil
 		}
 
-		body, _ := json.Marshal(map[string]interface{}{
+		body, _ := json.Marshal(map[string]any{
 			"instance_url":     "http://git",
 			"token":            "pat-long-enough",
 			"workspace_id":     "1",
@@ -157,7 +157,7 @@ var _ = Describe("GitLabHandler", func() {
 		router.ServeHTTP(w, req)
 
 		Expect(w.Code).To(Equal(http.StatusOK))
-		var resp map[string]interface{}
+		var resp map[string]any
 		Expect(json.Unmarshal(w.Body.Bytes(), &resp)).To(Succeed())
 		Expect(resp["integration_id"]).To(Equal("42"))
 		Expect(resp["webhooks_created"]).To(Equal(float64(1)))
@@ -168,7 +168,7 @@ var _ = Describe("GitLabHandler", func() {
 			return nil, errors.New("fail")
 		}
 
-		body, _ := json.Marshal(map[string]interface{}{
+		body, _ := json.Marshal(map[string]any{
 			"instance_url":     "http://git",
 			"token":            "pat-long-enough",
 			"workspace_id":     "1",
@@ -182,7 +182,7 @@ var _ = Describe("GitLabHandler", func() {
 		router.ServeHTTP(w, req)
 
 		Expect(w.Code).To(Equal(http.StatusBadGateway))
-		var resp map[string]interface{}
+		var resp map[string]any
 		Expect(json.Unmarshal(w.Body.Bytes(), &resp)).To(Succeed())
 		Expect(resp["error"]).To(Equal("fail"))
 	})
@@ -192,7 +192,7 @@ var _ = Describe("GitLabHandler", func() {
 			return nil, errors.New("no projects found with maintainer access - ensure the token belongs to a user with Maintainer role on at least one project")
 		}
 
-		body, _ := json.Marshal(map[string]interface{}{
+		body, _ := json.Marshal(map[string]any{
 			"instance_url":     "http://git",
 			"token":            "pat-long-enough",
 			"workspace_id":     "1",
@@ -206,7 +206,7 @@ var _ = Describe("GitLabHandler", func() {
 		router.ServeHTTP(w, req)
 
 		Expect(w.Code).To(Equal(http.StatusBadRequest))
-		var resp map[string]interface{}
+		var resp map[string]any
 		Expect(json.Unmarshal(w.Body.Bytes(), &resp)).To(Succeed())
 		Expect(resp["error"]).To(ContainSubstring("no projects found with maintainer access"))
 	})

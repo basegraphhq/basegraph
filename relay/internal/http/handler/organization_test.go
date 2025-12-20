@@ -35,7 +35,7 @@ var _ = Describe("OrganizationHandler", func() {
 			return &model.Organization{ID: 1, Name: "Acme", Slug: "acme", AdminUserID: admin}, nil
 		}
 
-		body, _ := json.Marshal(map[string]interface{}{
+		body, _ := json.Marshal(map[string]any{
 			"name":          "Acme",
 			"admin_user_id": "10",
 		})
@@ -47,7 +47,7 @@ var _ = Describe("OrganizationHandler", func() {
 		router.ServeHTTP(w, req)
 
 		Expect(w.Code).To(Equal(http.StatusCreated))
-		var resp map[string]interface{}
+		var resp map[string]any
 		Expect(json.Unmarshal(w.Body.Bytes(), &resp)).To(Succeed())
 		Expect(resp["slug"]).To(Equal("acme"))
 	})
@@ -67,7 +67,7 @@ var _ = Describe("OrganizationHandler", func() {
 			return nil, errors.New("fail")
 		}
 
-		body, _ := json.Marshal(map[string]interface{}{
+		body, _ := json.Marshal(map[string]any{
 			"name":          "Acme",
 			"admin_user_id": "10",
 		})
