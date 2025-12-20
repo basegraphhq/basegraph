@@ -1,84 +1,62 @@
-import { NextResponse } from 'next/server'
-import { cookies } from 'next/headers'
-import { RELAY_API_URL } from '@/lib/config'
-
-const SESSION_COOKIE = 'relay_session'
+import { headers } from "next/headers";
+import { NextResponse } from "next/server";
+import { getUserFromHeaders } from "@/lib/auth";
+import { RELAY_API_URL } from "@/lib/config";
 
 export async function POST(req: Request) {
-  try {
-    const cookieStore = await cookies()
-    const sessionId = cookieStore.get(SESSION_COOKIE)?.value
+	try {
+		const headersList = await headers();
+		const user = getUserFromHeaders(headersList);
+		const { name, slug } = await req.json();
 
-    if (!sessionId) {
-      return NextResponse.json(
-        { error: 'Not authenticated' },
-        { status: 401 }
-      )
-    }
+		if (!name) {
+			return NextResponse.json(
+				{ error: "Organization name is required" },
+				{ status: 400 },
+			);
+		}
 
-    const validateResponse = await fetch(`${RELAY_API_URL}/auth/validate`, {
-      headers: {
-        'X-Session-ID': sessionId,
-      },
-    })
+		const createOrgResponse = await fetch(
+			`${RELAY_API_URL}/api/v1/organizations`,
+			{
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"X-Session-ID": user.sessionId,
+				},
+				body: JSON.stringify({
+					name,
+					slug,
+					admin_user_id: user.userId,
+				}),
+			},
+		);
 
-    if (!validateResponse.ok) {
-      return NextResponse.json(
-        { error: 'Session invalid' },
-        { status: 401 }
-      )
-    }
+		if (!createOrgResponse.ok) {
+			const errorText = await createOrgResponse.text();
+			return NextResponse.json(
+				{ error: "Failed to create organization", details: errorText },
+				{ status: createOrgResponse.status },
+			);
+		}
 
-    const validateData = await validateResponse.json()
-    const user = validateData.user
+		const orgData = await createOrgResponse.json();
 
-    const { name, slug } = await req.json()
+		const res = NextResponse.json(orgData);
+		res.cookies.set("relay_onboarding_complete", "true", {
+			httpOnly: true,
+			secure: process.env.NODE_ENV === "production",
+			sameSite: "lax",
+			maxAge: 60 * 60 * 24 * 365,
+			path: "/",
+		});
 
-    if (!name) {
-      return NextResponse.json(
-        { error: 'Organization name is required' },
-        { status: 400 }
-      )
-    }
-
-    const createOrgResponse = await fetch(`${RELAY_API_URL}/api/v1/organizations`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-Session-ID': sessionId,
-      },
-      body: JSON.stringify({
-        name,
-        slug,
-        admin_user_id: user.id,
-      }),
-    })
-
-    if (!createOrgResponse.ok) {
-      const errorText = await createOrgResponse.text()
-      return NextResponse.json(
-        { error: 'Failed to create organization', details: errorText },
-        { status: createOrgResponse.status }
-      )
-    }
-
-    const orgData = await createOrgResponse.json()
-
-    const res = NextResponse.json(orgData)
-    res.cookies.set('relay_onboarding_complete', 'true', {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'lax',
-      maxAge: 60 * 60 * 24 * 365,
-      path: '/',
-    })
-
-    return res
-  } catch (error) {
-    console.error('Error creating organization:', error)
-    return NextResponse.json(
-      { error: 'Internal server error' },
-      { status: 500 }
-    )
-  }
+		return res;
+	} catch (error) {
+		console.error("Error creating organization:", error);
+		return NextResponse.json(
+			{ error: "Internal server error" },
+			{ status: 500 },
+		);
+	}
 }
