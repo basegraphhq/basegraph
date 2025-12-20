@@ -5,9 +5,9 @@ import { SESSION_COOKIE, validateSession } from "@/lib/auth";
 const ONBOARDING_COOKIE = "relay_onboarding_complete";
 
 /**
- * Unified middleware/proxy - Handles both page routing and API auth
+ * Unified proxy - Handles both page routing and API auth
  */
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
 	const { pathname } = request.nextUrl;
 
 	// Route to appropriate handler
