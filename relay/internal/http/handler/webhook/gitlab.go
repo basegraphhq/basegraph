@@ -12,18 +12,21 @@ import (
 	"github.com/gin-gonic/gin"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 
+	"basegraph.app/relay/internal/mapper"
 	"basegraph.app/relay/internal/service"
 )
 
 type GitLabWebhookHandler struct {
 	credentialService service.IntegrationCredentialService
 	eventIngest       service.EventIngestService
+	mapper            mapper.EventMapper
 }
 
-func NewGitLabWebhookHandler(credentialService service.IntegrationCredentialService, eventIngest service.EventIngestService) *GitLabWebhookHandler {
+func NewGitLabWebhookHandler(credentialService service.IntegrationCredentialService, eventIngest service.EventIngestService, mapper mapper.EventMapper) *GitLabWebhookHandler {
 	return &GitLabWebhookHandler{
 		credentialService: credentialService,
 		eventIngest:       eventIngest,
+		mapper:            mapper,
 	}
 }
 
@@ -54,27 +57,27 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 		return
 	}
 
+	// Parse body as map for mapper and as struct for logging/extraction
+	var bodyMap map[string]any
+	if err := json.Unmarshal(body, &bodyMap); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+
 	var payload gitlabWebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
 		return
 	}
 
-	eventType := c.GetHeader("X-Gitlab-Event")
-	if eventType == "" {
-		eventType = payload.EventType
-	}
-	if eventType == "" {
-		eventType = payload.ObjectKind
-	}
-
 	// Wiki events don't require processing as they don't represent issues or discussions
-	if eventType == string(gitlab.EventTypeWikiPage) || payload.ObjectKind == "wiki_page" {
+	// TODO: @nithinsj: Process wiki events
+	if payload.ObjectKind == "wiki_page" {
 		var wikiEvent gitlab.WikiPageEvent
 		if err := json.Unmarshal(body, &wikiEvent); err == nil {
 			slog.InfoContext(ctx, "gitlab wiki webhook received",
 				"integration_id", integrationID,
-				"event_type", eventType,
+				"object_kind", payload.ObjectKind,
 				"action", wikiEvent.ObjectAttributes.Action,
 				"title", wikiEvent.ObjectAttributes.Title,
 				"slug", wikiEvent.ObjectAttributes.Slug,
@@ -86,16 +89,40 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 		}
 	}
 
-	result, err := h.processGitLabEvent(ctx, integrationID, eventType, body, payload)
+	// Build headers map for mapper
+	headers := make(map[string]string)
+	for key, values := range c.Request.Header {
+		if len(values) > 0 {
+			headers[key] = values[0]
+		}
+	}
+
+	// Map to canonical event type
+	canonicalEventType, err := h.mapper.Map(ctx, bodyMap, headers)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to process gitlab event", "error", err, "integration_id", integrationID, "event_type", eventType)
+		slog.WarnContext(ctx, "unknown gitlab event type, ignoring",
+			"error", err,
+			"integration_id", integrationID,
+			"object_kind", payload.ObjectKind,
+		)
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "event type not supported"})
+		return
+	}
+
+	result, err := h.processGitLabEvent(ctx, integrationID, canonicalEventType, body, payload)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to process gitlab event",
+			"error", err,
+			"integration_id", integrationID,
+			"canonical_event_type", canonicalEventType,
+		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process event"})
 		return
 	}
 
 	slog.InfoContext(ctx, "gitlab webhook processed",
 		"integration_id", integrationID,
-		"event_type", eventType,
+		"canonical_event_type", canonicalEventType,
 		"object_kind", payload.ObjectKind,
 		"object_id", payload.ObjectAttributes.ID,
 		"object_iid", payload.ObjectAttributes.IID,
@@ -109,13 +136,7 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func (h *GitLabWebhookHandler) processGitLabEvent(ctx context.Context, integrationID int64, eventType string, body []byte, payload gitlabWebhookPayload) (*service.EventIngestResult, error) {
-	canonicalEventType := h.mapGitLabEventType(eventType, payload.ObjectKind)
-	if canonicalEventType == "" {
-		slog.DebugContext(ctx, "ignoring unknown gitlab event type", "event_type", eventType, "object_kind", payload.ObjectKind)
-		return &service.EventIngestResult{Enqueued: false}, nil
-	}
-
+func (h *GitLabWebhookHandler) processGitLabEvent(ctx context.Context, integrationID int64, canonicalEventType mapper.CanonicalEventType, body []byte, payload gitlabWebhookPayload) (*service.EventIngestResult, error) {
 	issueID, title, description := h.extractIssueData(payload, body)
 	if issueID == "" {
 		return nil, fmt.Errorf("no issue ID found in payload")
@@ -124,7 +145,7 @@ func (h *GitLabWebhookHandler) processGitLabEvent(ctx context.Context, integrati
 	params := service.EventIngestParams{
 		IntegrationID:   integrationID,
 		ExternalIssueID: issueID,
-		EventType:       canonicalEventType,
+		EventType:       string(canonicalEventType),
 		Source:          nil,
 		Payload:         body,
 		Title:           title,
@@ -134,28 +155,6 @@ func (h *GitLabWebhookHandler) processGitLabEvent(ctx context.Context, integrati
 	return h.eventIngest.Ingest(ctx, params)
 }
 
-func (h *GitLabWebhookHandler) mapGitLabEventType(headerEventType, objectKind string) string {
-	switch headerEventType {
-	case "Issue Hook":
-		return "issue_created"
-	case "Note Hook":
-		return "reply"
-	case "Merge Request Hook":
-		return "merge_request_created"
-	default:
-		switch objectKind {
-		case "issue":
-			return "issue_created"
-		case "note":
-			return "reply"
-		case "merge_request":
-			return "merge_request_created"
-		default:
-			return ""
-		}
-	}
-}
-
 func (h *GitLabWebhookHandler) extractIssueData(payload gitlabWebhookPayload, body []byte) (issueID string, title *string, description *string) {
 	if payload.ObjectAttributes.IID > 0 {
 		issueID = strconv.FormatInt(payload.ObjectAttributes.IID, 10)
@@ -163,9 +162,9 @@ func (h *GitLabWebhookHandler) extractIssueData(payload gitlabWebhookPayload, bo
 		return issueID, title, nil
 	}
 
-	var fullPayload map[string]interface{}
+	var fullPayload map[string]any
 	if err := json.Unmarshal(body, &fullPayload); err == nil {
-		if issue, ok := fullPayload["issue"].(map[string]interface{}); ok {
+		if issue, ok := fullPayload["issue"].(map[string]any); ok {
 			if iid, ok := issue["iid"].(float64); ok {
 				issueID = strconv.FormatInt(int64(iid), 10)
 			}

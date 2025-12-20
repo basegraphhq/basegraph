@@ -15,6 +15,7 @@ import (
 	. "github.com/onsi/gomega"
 
 	"basegraph.app/relay/internal/http/handler/webhook"
+	"basegraph.app/relay/internal/mapper"
 	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/service"
 	"basegraph.app/relay/internal/store"
@@ -127,14 +128,15 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		}
 
 		eventIngest := &fakeEventIngestService{}
-		h := webhook.NewGitLabWebhookHandler(store, eventIngest)
+		mapper := mapper.NewGitLabEventMapper()
+		h := webhook.NewGitLabWebhookHandler(store, eventIngest, mapper)
 		router.POST("/webhooks/gitlab/:integration_id", h.HandleEvent)
 	})
 
 	It("accepts valid token and processes issue payload", func() {
-		body := map[string]interface{}{
+		body := map[string]any{
 			"object_kind": "issue",
-			"object_attributes": map[string]interface{}{
+			"object_attributes": map[string]any{
 				"id":     10,
 				"iid":    5,
 				"title":  "Bug",
@@ -154,7 +156,7 @@ var _ = Describe("GitLabWebhookHandler", func() {
 
 		Expect(w.Code).To(Equal(http.StatusOK))
 		logStr := buf.String()
-		Expect(logStr).To(ContainSubstring("Issue Hook"))
+		Expect(logStr).To(ContainSubstring("issue_created"))
 		Expect(logStr).To(ContainSubstring(`"object_kind":"issue"`))
 		Expect(logStr).To(ContainSubstring(`"object_id":10`))
 		Expect(logStr).To(ContainSubstring(`"object_iid":5`))
@@ -176,9 +178,9 @@ var _ = Describe("GitLabWebhookHandler", func() {
 	})
 
 	It("handles wiki events without processing", func() {
-		body := map[string]interface{}{
+		body := map[string]any{
 			"object_kind": "wiki_page",
-			"object_attributes": map[string]interface{}{
+			"object_attributes": map[string]any{
 				"title":  "Test Page",
 				"slug":   "test-page",
 				"action": "create",
