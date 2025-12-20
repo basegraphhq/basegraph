@@ -16,7 +16,6 @@ type Config struct {
 	WorkOS       WorkOSConfig
 	EventWebhook EventWebhookConfig
 	Pipeline     PipelineConfig
-	OpenAI       OpenAIConfig
 	Env          string
 	Port         string
 	DashboardURL string
@@ -47,19 +46,9 @@ type PipelineConfig struct {
 	RedisDLQStream  string
 	RedisConsumer   string
 	TraceHeaderName string
-	LLMEnabled      bool
 }
 
 type Features struct{}
-
-type OpenAIConfig struct {
-	APIKey       string
-	Model        string
-	MaxTokens    int32
-	Temperature  float32
-	BaseURL      string
-	Organization string
-}
 
 func Load() (Config, error) {
 	if getEnv("RELAY_ENV", "development") == "development" {
@@ -96,15 +85,6 @@ func Load() (Config, error) {
 			RedisDLQStream:  getEnv("REDIS_DLQ_STREAM", "relay_events_dlq"),
 			RedisConsumer:   getEnv("REDIS_CONSUMER_NAME", "api-server"),
 			TraceHeaderName: getEnv("TRACE_HEADER_NAME", "X-Trace-Id"),
-			LLMEnabled:      getEnvBool("LLM_ENABLED", true),
-		},
-		OpenAI: OpenAIConfig{
-			APIKey:       getEnv("OPENAI_API_KEY", ""),
-			Model:        getEnv("OPENAI_MODEL", "gpt-4"),
-			MaxTokens:    getEnvInt32("OPENAI_MAX_TOKENS", 2000),
-			Temperature:  getEnvFloat32("OPENAI_TEMPERATURE", 0.7),
-			BaseURL:      getEnv("OPENAI_BASE_URL", ""),
-			Organization: getEnv("OPENAI_ORGANIZATION", ""),
 		},
 		Features: Features{},
 	}
@@ -147,30 +127,6 @@ func getEnvInt32(key string, fallback int32) int32 {
 	if value, ok := os.LookupEnv(key); ok {
 		if i, err := strconv.ParseInt(value, 10, 32); err == nil {
 			return int32(i)
-		}
-	}
-	return fallback
-}
-
-func getEnvBool(key string, fallback bool) bool {
-	if value, ok := os.LookupEnv(key); ok {
-		if value == "" {
-			return fallback
-		}
-		switch value {
-		case "1", "true", "TRUE", "True", "yes", "YES", "on", "ON":
-			return true
-		case "0", "false", "FALSE", "False", "no", "NO", "off", "OFF":
-			return false
-		}
-	}
-	return fallback
-}
-
-func getEnvFloat32(key string, fallback float32) float32 {
-	if value, ok := os.LookupEnv(key); ok {
-		if f, err := strconv.ParseFloat(value, 32); err == nil {
-			return float32(f)
 		}
 	}
 	return fallback

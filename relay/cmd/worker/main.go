@@ -87,7 +87,7 @@ func main() {
 	txRunner := &workerTxRunnerAdapter{db: database}
 
 	// Create processor (stub for now)
-	processor := worker.NewStubProcessor()
+	processor := worker.NewMockProcessor()
 
 	// Create worker
 	w := worker.New(consumer, txRunner, processor, worker.Config{

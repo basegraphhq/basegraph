@@ -17,7 +17,6 @@ import (
 	"basegraph.app/relay/core/db"
 	"basegraph.app/relay/internal/http/middleware"
 	httprouter "basegraph.app/relay/internal/http/router"
-	"basegraph.app/relay/internal/llm"
 	"basegraph.app/relay/internal/queue"
 	"basegraph.app/relay/internal/service"
 	"basegraph.app/relay/internal/store"
@@ -84,17 +83,6 @@ func main() {
 
 	stores := store.NewStores(database.Queries())
 
-	// Initialize LLM client if enabled
-	var llmClient llm.Client
-	if cfg.Pipeline.LLMEnabled {
-		client, err := llm.NewClient(cfg.OpenAI.APIKey)
-		if err != nil {
-			slog.WarnContext(ctx, "LLM client initialization failed, continuing without LLM features", "error", err)
-		} else {
-			llmClient = client
-		}
-	}
-
 	services := service.NewServices(service.ServicesConfig{
 		Stores:        stores,
 		TxRunner:      service.NewTxRunner(database),
@@ -102,7 +90,6 @@ func main() {
 		DashboardURL:  cfg.DashboardURL,
 		WebhookCfg:    cfg.EventWebhook,
 		EventProducer: eventProducer,
-		LLMClient:     llmClient,
 	})
 
 	if cfg.IsProduction() {
