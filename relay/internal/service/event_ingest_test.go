@@ -11,6 +11,7 @@ import (
 	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/queue"
 	"basegraph.app/relay/internal/service"
+	"basegraph.app/relay/internal/service/issue_tracker"
 	"basegraph.app/relay/internal/store"
 )
 
@@ -60,8 +61,9 @@ func (m *mockIntegrationStore) ListByCapability(ctx context.Context, workspaceID
 
 // Mock IssueStore
 type mockIssueStore struct {
-	upsertFn      func(ctx context.Context, issue *model.Issue) (*model.Issue, error)
-	capturedIssue *model.Issue
+	upsertFn                        func(ctx context.Context, issue *model.Issue) (*model.Issue, error)
+	getByIntegrationAndExternalIDFn func(ctx context.Context, integrationID int64, externalID string) (*model.Issue, error)
+	capturedIssue                   *model.Issue
 }
 
 func (m *mockIssueStore) Upsert(ctx context.Context, issue *model.Issue) (*model.Issue, error) {
@@ -77,6 +79,9 @@ func (m *mockIssueStore) GetByID(ctx context.Context, id int64) (*model.Issue, e
 }
 
 func (m *mockIssueStore) GetByIntegrationAndExternalID(ctx context.Context, integrationID int64, externalID string) (*model.Issue, error) {
+	if m.getByIntegrationAndExternalIDFn != nil {
+		return m.getByIntegrationAndExternalIDFn(ctx, integrationID, externalID)
+	}
 	return nil, store.ErrNotFound
 }
 
@@ -90,6 +95,34 @@ func (m *mockIssueStore) ClaimQueued(ctx context.Context, issueID int64) (bool, 
 
 func (m *mockIssueStore) SetProcessed(ctx context.Context, issueID int64) error {
 	return nil
+}
+
+type mockIssueTrackerService struct {
+	fetchFn func(ctx context.Context, params issue_tracker.FetchIssueParams) (*model.Issue, error)
+}
+
+func (m *mockIssueTrackerService) FetchIssue(ctx context.Context, params issue_tracker.FetchIssueParams) (*model.Issue, error) {
+	if m.fetchFn != nil {
+		return m.fetchFn(ctx, params)
+	}
+	var (
+		title    = "Test issue"
+		desc     = "Test description"
+		reporter = "nithin"
+		url      = "https://gitlab.com/test/project/-/issues/1"
+	)
+	return &model.Issue{
+		Title:            &title,
+		Description:      &desc,
+		Labels:           []string{"bug"},
+		Assignees:        []string{"alice"},
+		Reporter:         &reporter,
+		ExternalIssueURL: &url,
+	}, nil
+}
+
+func (m *mockIssueTrackerService) FetchDiscussions(ctx context.Context, params issue_tracker.FetchDiscussionsParams) ([]issue_tracker.Discussion, error) {
+	return nil, nil
 }
 
 // Mock EventLogStore
@@ -148,22 +181,40 @@ func (m *mockQueueProducer) Close() error {
 	return nil
 }
 
+// Mock EngagementDetector
+type mockEngagementDetector struct {
+	shouldEngageFn func(ctx context.Context, integrationID int64, req service.EngagementRequest) (bool, error)
+}
+
+func (m *mockEngagementDetector) ShouldEngage(ctx context.Context, integrationID int64, req service.EngagementRequest) (bool, error) {
+	if m.shouldEngageFn != nil {
+		return m.shouldEngageFn(ctx, integrationID, req)
+	}
+	return false, nil
+}
+
 var _ = Describe("EventIngestService", func() {
 	var (
-		svc              service.EventIngestService
-		mockIntegrations *mockIntegrationStore
-		mockIssues       *mockIssueStore
-		mockEventLogs    *mockEventLogStore
-		mockQueue        *mockQueueProducer
-		ctx              context.Context
+		svc               service.EventIngestService
+		mockIntegrations  *mockIntegrationStore
+		mockIssuesStore   *mockIssueStore
+		mockIssues        *mockIssueStore
+		mockEventLogs     *mockEventLogStore
+		mockQueue         *mockQueueProducer
+		mockProvider      *mockIssueTrackerService
+		mockEngagementDet *mockEngagementDetector
+		ctx               context.Context
 	)
 
 	BeforeEach(func() {
 		ctx = context.Background()
 		mockIntegrations = &mockIntegrationStore{}
+		mockIssuesStore = &mockIssueStore{}
 		mockIssues = &mockIssueStore{}
 		mockEventLogs = &mockEventLogStore{}
 		mockQueue = &mockQueueProducer{}
+		mockProvider = &mockIssueTrackerService{}
+		mockEngagementDet = &mockEngagementDetector{}
 
 		err := id.Init(1)
 		Expect(err).NotTo(HaveOccurred())
@@ -178,11 +229,18 @@ var _ = Describe("EventIngestService", func() {
 			},
 		}
 
-		svc = service.NewEventIngestService(mockIntegrations, txRunner, mockQueue)
+		svc = service.NewEventIngestService(
+			mockIntegrations,
+			mockIssuesStore,
+			txRunner,
+			mockQueue,
+			mockProvider,
+			mockEngagementDet,
+		)
 	})
 
 	Describe("Ingest", func() {
-		Context("with valid GitLab integration", func() {
+		Context("with subscribed issue (already exists)", func() {
 			BeforeEach(func() {
 				mockIntegrations.getByIDFn = func(ctx context.Context, id int64) (*model.Integration, error) {
 					return &model.Integration{
@@ -194,9 +252,18 @@ var _ = Describe("EventIngestService", func() {
 						SetupByUserID:  1,
 					}, nil
 				}
+				// Issue already exists (subscribed) - skip trigger detection
+				mockIssuesStore.getByIntegrationAndExternalIDFn = func(ctx context.Context, integrationID int64, externalID string) (*model.Issue, error) {
+					return &model.Issue{
+						ID:              12345,
+						IntegrationID:   integrationID,
+						ExternalIssueID: externalID,
+						Provider:        model.ProviderGitLab,
+					}, nil
+				}
 			})
 
-			It("creates issue with provider=gitlab", func() {
+			It("processes event without trigger detection", func() {
 				payload := json.RawMessage(`{"action":"open"}`)
 				params := service.EventIngestParams{
 					IntegrationID:       123,
@@ -220,7 +287,7 @@ var _ = Describe("EventIngestService", func() {
 			})
 		})
 
-		Context("with valid GitHub integration", func() {
+		Context("with new issue and @mention trigger", func() {
 			BeforeEach(func() {
 				mockIntegrations.getByIDFn = func(ctx context.Context, id int64) (*model.Integration, error) {
 					return &model.Integration{
@@ -232,22 +299,73 @@ var _ = Describe("EventIngestService", func() {
 						SetupByUserID:  1,
 					}, nil
 				}
+				// Issue doesn't exist
+				mockIssuesStore.getByIntegrationAndExternalIDFn = func(ctx context.Context, integrationID int64, externalID string) (*model.Issue, error) {
+					return nil, store.ErrNotFound
+				}
+				// Configure engagement detector to return true when @mentioned
+				mockEngagementDet.shouldEngageFn = func(ctx context.Context, integrationID int64, req service.EngagementRequest) (bool, error) {
+					return req.IssueBody == "Hey @relaybot please help" || req.CommentBody == "cc @relaybot", nil
+				}
 			})
 
-			It("creates issue with provider=github", func() {
+			It("creates issue when triggered by @mention in issue body", func() {
 				payload := json.RawMessage(`{"action":"opened"}`)
 				params := service.EventIngestParams{
 					IntegrationID:       456,
 					ExternalIssueID:     "99",
+					ExternalProjectID:   789,
+					IssueBody:           "Hey @relaybot please help",
 					TriggeredByUsername: "bob",
 					EventType:           "issue_created",
 					Payload:             payload,
 				}
 
-				_, err := svc.Ingest(ctx, params)
+				result, err := svc.Ingest(ctx, params)
 
 				Expect(err).NotTo(HaveOccurred())
+				Expect(result).NotTo(BeNil())
 				Expect(mockIssues.capturedIssue.Provider).To(Equal(model.ProviderGitHub))
+			})
+
+			It("creates issue when triggered by @mention in comment", func() {
+				payload := json.RawMessage(`{"action":"created"}`)
+				params := service.EventIngestParams{
+					IntegrationID:       456,
+					ExternalIssueID:     "99",
+					ExternalProjectID:   789,
+					IssueBody:           "Some issue without mention",
+					CommentBody:         "cc @relaybot",
+					TriggeredByUsername: "bob",
+					EventType:           "comment_created",
+					Payload:             payload,
+				}
+
+				result, err := svc.Ingest(ctx, params)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).NotTo(BeNil())
+				Expect(mockIssues.capturedIssue.Provider).To(Equal(model.ProviderGitHub))
+			})
+
+			It("ignores event when no @mention", func() {
+				payload := json.RawMessage(`{"action":"opened"}`)
+				params := service.EventIngestParams{
+					IntegrationID:       456,
+					ExternalIssueID:     "99",
+					ExternalProjectID:   789,
+					IssueBody:           "Some issue without any mention",
+					TriggeredByUsername: "bob",
+					EventType:           "issue_created",
+					Payload:             payload,
+				}
+
+				result, err := svc.Ingest(ctx, params)
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).NotTo(BeNil())
+				Expect(result.EventPublished).To(BeFalse())
+				Expect(result.IssuePickedUp).To(BeFalse())
 			})
 		})
 
@@ -261,7 +379,7 @@ var _ = Describe("EventIngestService", func() {
 			It("returns ErrIntegrationNotFound", func() {
 				payload := json.RawMessage(`{"action":"open"}`)
 				params := service.EventIngestParams{
-					IntegrationID:       999,
+					IntegrationID:       999, // does not exists, 456 exists
 					ExternalIssueID:     "42",
 					TriggeredByUsername: "alice",
 					EventType:           "issue_created",
@@ -341,7 +459,7 @@ var _ = Describe("EventIngestService", func() {
 			})
 		})
 
-		Context("provider values", func() {
+		Context("provider values with subscribed issues", func() {
 			DescribeTable("creates issue with correct provider",
 				func(provider model.Provider) {
 					mockIntegrations.getByIDFn = func(ctx context.Context, id int64) (*model.Integration, error) {
@@ -352,6 +470,15 @@ var _ = Describe("EventIngestService", func() {
 							IsEnabled:      true,
 							OrganizationID: 1,
 							SetupByUserID:  1,
+						}, nil
+					}
+					// Issue already subscribed
+					mockIssuesStore.getByIntegrationAndExternalIDFn = func(ctx context.Context, integrationID int64, externalID string) (*model.Issue, error) {
+						return &model.Issue{
+							ID:              12345,
+							IntegrationID:   integrationID,
+							ExternalIssueID: externalID,
+							Provider:        provider,
 						}, nil
 					}
 

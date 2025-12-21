@@ -1,0 +1,148 @@
+package issue_tracker
+
+import (
+	"context"
+	"fmt"
+	"strings"
+
+	"basegraph.app/relay/internal/model"
+	"basegraph.app/relay/internal/store"
+	gitlab "gitlab.com/gitlab-org/api/client-go"
+)
+
+type gitLabIssueTrackerService struct {
+	integrations store.IntegrationStore
+	credentials  store.IntegrationCredentialStore
+}
+
+func NewGitLabIssueTrackerService(
+	integrations store.IntegrationStore,
+	credentials store.IntegrationCredentialStore,
+) IssueTrackerService {
+	return &gitLabIssueTrackerService{
+		integrations: integrations,
+		credentials:  credentials,
+	}
+}
+
+func (s *gitLabIssueTrackerService) FetchIssue(ctx context.Context, params FetchIssueParams) (*model.Issue, error) {
+	client, err := s.getClient(ctx, params.IntegrationID)
+	if err != nil {
+		return nil, err
+	}
+
+	gitlabIssue, _, err := client.Issues.GetIssue(
+		params.ProjectID,
+		params.IssueIID,
+		nil,
+		gitlab.WithContext(ctx),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("fetching issue from gitlab: %w", err)
+	}
+
+	return s.mapToIssue(gitlabIssue), nil
+}
+
+func (s *gitLabIssueTrackerService) FetchDiscussions(ctx context.Context, params FetchDiscussionsParams) ([]Discussion, error) {
+	client, err := s.getClient(ctx, params.IntegrationID)
+	if err != nil {
+		return nil, err
+	}
+
+	gitlabDiscussions, _, err := client.Discussions.ListIssueDiscussions(
+		params.ProjectID,
+		params.IssueIID,
+		nil,
+		gitlab.WithContext(ctx),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("fetching discussions from gitlab: %w", err)
+	}
+
+	return s.mapDiscussions(gitlabDiscussions), nil
+}
+
+func (s *gitLabIssueTrackerService) getClient(ctx context.Context, integrationID int64) (*gitlab.Client, error) {
+	integration, err := s.integrations.GetByID(ctx, integrationID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching integration: %w", err)
+	}
+
+	cred, err := s.credentials.GetPrimaryByIntegration(ctx, integrationID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching credential: %w", err)
+	}
+
+	client, err := s.newClient(integration.ProviderBaseURL, cred.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("creating gitlab client: %w", err)
+	}
+
+	return client, nil
+}
+
+func (s *gitLabIssueTrackerService) newClient(baseURL *string, token string) (*gitlab.Client, error) {
+	if baseURL == nil || *baseURL == "" {
+		return gitlab.NewClient(token)
+	}
+	apiURL := strings.TrimSuffix(*baseURL, "/") + "/api/v4"
+	return gitlab.NewClient(token, gitlab.WithBaseURL(apiURL))
+}
+
+func (s *gitLabIssueTrackerService) mapDiscussions(gitlabDiscussions []*gitlab.Discussion) []Discussion {
+	discussions := make([]Discussion, 0, len(gitlabDiscussions))
+	for _, d := range gitlabDiscussions {
+		if d == nil {
+			continue
+		}
+		discussion := Discussion{
+			ID:    d.ID,
+			Notes: make([]Note, 0, len(d.Notes)),
+		}
+		for _, n := range d.Notes {
+			if n == nil {
+				continue
+			}
+			var authorID int64
+			if n.Author.ID != 0 {
+				authorID = int64(n.Author.ID)
+			}
+			discussion.Notes = append(discussion.Notes, Note{
+				ID:       int64(n.ID),
+				AuthorID: authorID,
+				Body:     n.Body,
+			})
+		}
+		discussions = append(discussions, discussion)
+	}
+	return discussions
+}
+
+func (s *gitLabIssueTrackerService) mapToIssue(gitlabIssue *gitlab.Issue) *model.Issue {
+	var labels []string
+	for _, l := range gitlabIssue.Labels {
+		labels = append(labels, l)
+	}
+
+	var assignees []string
+	for _, a := range gitlabIssue.Assignees {
+		if a != nil {
+			assignees = append(assignees, a.Username)
+		}
+	}
+
+	var reporter *string
+	if gitlabIssue.Author != nil {
+		reporter = &gitlabIssue.Author.Username
+	}
+
+	return &model.Issue{
+		Title:            &gitlabIssue.Title,
+		Description:      &gitlabIssue.Description,
+		Labels:           labels,
+		Assignees:        assignees,
+		Reporter:         reporter,
+		ExternalIssueURL: &gitlabIssue.WebURL,
+	}
+}
