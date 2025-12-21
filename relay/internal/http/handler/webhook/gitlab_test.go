@@ -106,9 +106,9 @@ type fakeEventIngestService struct {
 func (f *fakeEventIngestService) Ingest(ctx context.Context, params service.EventIngestParams) (*service.EventIngestResult, error) {
 	f.capturedParams = &params
 	return &service.EventIngestResult{
-		EventLog: &model.EventLog{ID: 12345},
-		Issue:    &model.Issue{ID: 67890, Provider: model.ProviderGitLab},
-		Enqueued: true,
+		EventLog:       &model.EventLog{ID: 12345},
+		Issue:          &model.Issue{ID: 67890, Provider: model.ProviderGitLab},
+		EventPublished: true,
 	}, nil
 }
 
@@ -169,7 +169,7 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		Expect(logStr).To(ContainSubstring(`"description":"Test Description"`))
 		Expect(logStr).To(ContainSubstring(`"event_log_id":12345`))
 		Expect(logStr).To(ContainSubstring(`"issue_id":67890`))
-		Expect(logStr).To(ContainSubstring(`"enqueued":true`))
+		Expect(logStr).To(ContainSubstring(`"event_published":true`))
 	})
 
 	It("rejects invalid token", func() {

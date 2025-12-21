@@ -111,7 +111,7 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 		return
 	}
 
-	result, err := h.processGitLabEvent(ctx, integrationID, canonicalEventType, body, payload)
+	result, err := h.processEvent(ctx, integrationID, canonicalEventType, body, payload)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to process gitlab event",
 			"error", err,
@@ -132,26 +132,36 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 		"note", payload.ObjectAttributes.Note,
 		"event_log_id", result.EventLog.ID,
 		"issue_id", result.Issue.ID,
-		"enqueued", result.Enqueued,
+		"event_published", result.EventPublished,
 	)
 
 	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }
 
-func (h *GitLabWebhookHandler) processGitLabEvent(ctx context.Context, integrationID int64, canonicalEventType mapper.CanonicalEventType, body []byte, payload gitlabWebhookPayload) (*service.EventIngestResult, error) {
+func (h *GitLabWebhookHandler) processEvent(ctx context.Context, integrationID int64, canonicalEventType mapper.CanonicalEventType, body []byte, payload gitlabWebhookPayload) (*service.EventIngestResult, error) {
 	// For issue events, IID is in object_attributes
-	// For note events (comments), IID is in the nested issue object
-	issueIID := payload.ObjectAttributes.IID
-	if issueIID == 0 {
-		issueIID = payload.Issue.IID
+	// For note events (comments), IID is in the nested issue object. IID -> External Issue Id
+	externalIssueID := payload.ObjectAttributes.IID
+	if externalIssueID == 0 {
+		externalIssueID = payload.Issue.IID
 	}
-	if issueIID == 0 { // if still 0, then it's an error
-		return nil, fmt.Errorf("no issue IID found in payload")
+	if externalIssueID == 0 {
+		return nil, fmt.Errorf("no external issue id found in payload")
+	}
+
+	// For issue events, body is in ObjectAttributes.Description
+	// For note events on issues, body is in Issue.Description
+	issueBody := payload.ObjectAttributes.Description
+	if issueBody == "" {
+		issueBody = payload.Issue.Description
 	}
 
 	params := service.EventIngestParams{
 		IntegrationID:       integrationID,
-		ExternalIssueID:     strconv.FormatInt(issueIID, 10),
+		ExternalIssueID:     strconv.FormatInt(externalIssueID, 10),
+		ExternalProjectID:   payload.Project.ID,
+		IssueBody:           issueBody,
+		CommentBody:         payload.ObjectAttributes.Note,
 		TriggeredByUsername: payload.User.Username,
 		EventType:           string(canonicalEventType),
 		Payload:             body,
@@ -162,7 +172,11 @@ func (h *GitLabWebhookHandler) processGitLabEvent(ctx context.Context, integrati
 
 type gitlabWebhookPayload struct {
 	ObjectKind string `json:"object_kind"`
-	User       struct {
+	Project    struct {
+		ID     int64  `json:"id"`
+		WebURL string `json:"web_url"`
+	} `json:"project"`
+	User struct {
 		Id       int    `json:"id"`
 		Username string `json:"username"`
 		Name     string `json:"name"`
