@@ -284,6 +284,53 @@ func (s *gitLabService) SetupIntegration(ctx context.Context, params SetupIntegr
 		return nil, err
 	}
 
+	// Fetch the service account (bot) identity for @mention detection
+	user, _, err := client.Users.CurrentUser(gitlab.WithContext(ctx))
+	if err != nil {
+		return nil, fmt.Errorf("fetching service account user: %w", err)
+	}
+
+	serviceAccountValue, err := json.Marshal(struct {
+		Username string `json:"username"`
+		UserID   int64  `json:"user_id"`
+	}{
+		Username: user.Username,
+		UserID:   int64(user.ID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("serializing service account config: %w", err)
+	}
+
+	if err := s.txRunner.WithTx(ctx, func(stores StoreProvider) error {
+		cfgStore := stores.IntegrationConfigs()
+		existing, err := cfgStore.GetByIntegrationAndKey(ctx, integration.ID, "service_account")
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("fetching service account config: %w", err)
+		}
+
+		if err == nil {
+			existing.Value = serviceAccountValue
+			return cfgStore.Update(ctx, existing)
+		}
+
+		config := &model.IntegrationConfig{
+			ID:            id.New(),
+			IntegrationID: integration.ID,
+			Key:           "service_account",
+			Value:         serviceAccountValue,
+			ConfigType:    "identity",
+		}
+		return cfgStore.Create(ctx, config)
+	}); err != nil {
+		return nil, fmt.Errorf("storing service account config: %w", err)
+	}
+
+	slog.InfoContext(ctx, "stored service account identity",
+		"integration_id", integration.ID,
+		"username", user.Username,
+		"user_id", user.ID,
+	)
+
 	webhookURL := strings.TrimSuffix(params.WebhookBaseURL, "/") + fmt.Sprintf("/webhooks/gitlab/%d", integration.ID)
 
 	existingRepos, err := s.repoStore.ListByIntegration(ctx, integration.ID)

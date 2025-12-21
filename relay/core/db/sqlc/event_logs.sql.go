@@ -11,22 +11,23 @@ import (
 
 const createEventLog = `-- name: CreateEventLog :one
 INSERT INTO event_logs (
-    id, workspace_id, issue_id, source, event_type,
+    id, workspace_id, issue_id, triggered_by_username, source, event_type,
     payload, external_id, dedupe_key, created_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
-RETURNING id, workspace_id, issue_id, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,now())
+RETURNING id, workspace_id, issue_id, triggered_by_username, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at
 `
 
 type CreateEventLogParams struct {
-	ID          int64   `json:"id"`
-	WorkspaceID int64   `json:"workspace_id"`
-	IssueID     int64   `json:"issue_id"`
-	Source      string  `json:"source"`
-	EventType   string  `json:"event_type"`
-	Payload     []byte  `json:"payload"`
-	ExternalID  *string `json:"external_id"`
-	DedupeKey   string  `json:"dedupe_key"`
+	ID                  int64   `json:"id"`
+	WorkspaceID         int64   `json:"workspace_id"`
+	IssueID             int64   `json:"issue_id"`
+	TriggeredByUsername string  `json:"triggered_by_username"`
+	Source              string  `json:"source"`
+	EventType           string  `json:"event_type"`
+	Payload             []byte  `json:"payload"`
+	ExternalID          *string `json:"external_id"`
+	DedupeKey           string  `json:"dedupe_key"`
 }
 
 func (q *Queries) CreateEventLog(ctx context.Context, arg CreateEventLogParams) (EventLog, error) {
@@ -34,6 +35,7 @@ func (q *Queries) CreateEventLog(ctx context.Context, arg CreateEventLogParams) 
 		arg.ID,
 		arg.WorkspaceID,
 		arg.IssueID,
+		arg.TriggeredByUsername,
 		arg.Source,
 		arg.EventType,
 		arg.Payload,
@@ -45,6 +47,7 @@ func (q *Queries) CreateEventLog(ctx context.Context, arg CreateEventLogParams) 
 		&i.ID,
 		&i.WorkspaceID,
 		&i.IssueID,
+		&i.TriggeredByUsername,
 		&i.Source,
 		&i.EventType,
 		&i.Payload,
@@ -58,7 +61,7 @@ func (q *Queries) CreateEventLog(ctx context.Context, arg CreateEventLogParams) 
 }
 
 const getEventLog = `-- name: GetEventLog :one
-SELECT id, workspace_id, issue_id, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at FROM event_logs WHERE id = $1
+SELECT id, workspace_id, issue_id, triggered_by_username, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at FROM event_logs WHERE id = $1
 `
 
 func (q *Queries) GetEventLog(ctx context.Context, id int64) (EventLog, error) {
@@ -68,6 +71,7 @@ func (q *Queries) GetEventLog(ctx context.Context, id int64) (EventLog, error) {
 		&i.ID,
 		&i.WorkspaceID,
 		&i.IssueID,
+		&i.TriggeredByUsername,
 		&i.Source,
 		&i.EventType,
 		&i.Payload,
@@ -81,7 +85,7 @@ func (q *Queries) GetEventLog(ctx context.Context, id int64) (EventLog, error) {
 }
 
 const listEventLogsByWorkspace = `-- name: ListEventLogsByWorkspace :many
-SELECT id, workspace_id, issue_id, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at FROM event_logs
+SELECT id, workspace_id, issue_id, triggered_by_username, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at FROM event_logs
 WHERE workspace_id = $1
 ORDER BY created_at DESC
 LIMIT $2
@@ -105,6 +109,7 @@ func (q *Queries) ListEventLogsByWorkspace(ctx context.Context, arg ListEventLog
 			&i.ID,
 			&i.WorkspaceID,
 			&i.IssueID,
+			&i.TriggeredByUsername,
 			&i.Source,
 			&i.EventType,
 			&i.Payload,
@@ -125,7 +130,7 @@ func (q *Queries) ListEventLogsByWorkspace(ctx context.Context, arg ListEventLog
 }
 
 const listEventLogsByWorkspaceAndSource = `-- name: ListEventLogsByWorkspaceAndSource :many
-SELECT id, workspace_id, issue_id, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at FROM event_logs
+SELECT id, workspace_id, issue_id, triggered_by_username, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at FROM event_logs
 WHERE workspace_id = $1 AND source = $2
 ORDER BY created_at DESC
 LIMIT $3
@@ -150,6 +155,7 @@ func (q *Queries) ListEventLogsByWorkspaceAndSource(ctx context.Context, arg Lis
 			&i.ID,
 			&i.WorkspaceID,
 			&i.IssueID,
+			&i.TriggeredByUsername,
 			&i.Source,
 			&i.EventType,
 			&i.Payload,
@@ -170,7 +176,7 @@ func (q *Queries) ListEventLogsByWorkspaceAndSource(ctx context.Context, arg Lis
 }
 
 const listUnprocessedEventLogs = `-- name: ListUnprocessedEventLogs :many
-SELECT id, workspace_id, issue_id, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at FROM event_logs
+SELECT id, workspace_id, issue_id, triggered_by_username, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at FROM event_logs
 WHERE processed_at IS NULL
 ORDER BY created_at ASC
 LIMIT $1
@@ -189,6 +195,7 @@ func (q *Queries) ListUnprocessedEventLogs(ctx context.Context, limit int32) ([]
 			&i.ID,
 			&i.WorkspaceID,
 			&i.IssueID,
+			&i.TriggeredByUsername,
 			&i.Source,
 			&i.EventType,
 			&i.Payload,
@@ -209,7 +216,7 @@ func (q *Queries) ListUnprocessedEventLogs(ctx context.Context, limit int32) ([]
 }
 
 const listUnprocessedEventLogsByIssue = `-- name: ListUnprocessedEventLogsByIssue :many
-SELECT id, workspace_id, issue_id, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at FROM event_logs
+SELECT id, workspace_id, issue_id, triggered_by_username, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at FROM event_logs
 WHERE issue_id = $1
   AND processed_at IS NULL
 ORDER BY created_at ASC
@@ -230,6 +237,7 @@ func (q *Queries) ListUnprocessedEventLogsByIssue(ctx context.Context, issueID i
 			&i.ID,
 			&i.WorkspaceID,
 			&i.IssueID,
+			&i.TriggeredByUsername,
 			&i.Source,
 			&i.EventType,
 			&i.Payload,
@@ -290,26 +298,27 @@ func (q *Queries) MarkEventLogsBatchProcessed(ctx context.Context, dollar_1 []in
 
 const upsertEventLog = `-- name: UpsertEventLog :one
 INSERT INTO event_logs (
-    id, workspace_id, issue_id, source, event_type,
+    id, workspace_id, issue_id, triggered_by_username, source, event_type,
     payload, external_id, dedupe_key, created_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,now())
 ON CONFLICT (workspace_id, dedupe_key)
 DO UPDATE
 SET
     dedupe_key = event_logs.dedupe_key
-RETURNING id, workspace_id, issue_id, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at
+RETURNING id, workspace_id, issue_id, triggered_by_username, source, event_type, payload, external_id, dedupe_key, processed_at, processing_error, created_at
 `
 
 type UpsertEventLogParams struct {
-	ID          int64   `json:"id"`
-	WorkspaceID int64   `json:"workspace_id"`
-	IssueID     int64   `json:"issue_id"`
-	Source      string  `json:"source"`
-	EventType   string  `json:"event_type"`
-	Payload     []byte  `json:"payload"`
-	ExternalID  *string `json:"external_id"`
-	DedupeKey   string  `json:"dedupe_key"`
+	ID                  int64   `json:"id"`
+	WorkspaceID         int64   `json:"workspace_id"`
+	IssueID             int64   `json:"issue_id"`
+	TriggeredByUsername string  `json:"triggered_by_username"`
+	Source              string  `json:"source"`
+	EventType           string  `json:"event_type"`
+	Payload             []byte  `json:"payload"`
+	ExternalID          *string `json:"external_id"`
+	DedupeKey           string  `json:"dedupe_key"`
 }
 
 func (q *Queries) UpsertEventLog(ctx context.Context, arg UpsertEventLogParams) (EventLog, error) {
@@ -317,6 +326,7 @@ func (q *Queries) UpsertEventLog(ctx context.Context, arg UpsertEventLogParams) 
 		arg.ID,
 		arg.WorkspaceID,
 		arg.IssueID,
+		arg.TriggeredByUsername,
 		arg.Source,
 		arg.EventType,
 		arg.Payload,
@@ -328,6 +338,7 @@ func (q *Queries) UpsertEventLog(ctx context.Context, arg UpsertEventLogParams) 
 		&i.ID,
 		&i.WorkspaceID,
 		&i.IssueID,
+		&i.TriggeredByUsername,
 		&i.Source,
 		&i.EventType,
 		&i.Payload,

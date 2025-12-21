@@ -4,6 +4,7 @@ import (
 	"basegraph.app/relay/core/config"
 	"basegraph.app/relay/internal/queue"
 	"basegraph.app/relay/internal/service/integration"
+	tracker "basegraph.app/relay/internal/service/issue_tracker"
 	"basegraph.app/relay/internal/store"
 )
 
@@ -17,13 +18,12 @@ type ServicesConfig struct {
 }
 
 type Services struct {
-	stores                *store.Stores
-	txRunner              TxRunner
-	workOSCfg             config.WorkOSConfig
-	dashboardURL          string
-	webhookCfg            config.EventWebhookConfig
-	eventIngest           EventIngestService
-	integrationCredential IntegrationCredentialService
+	stores       *store.Stores
+	txRunner     TxRunner
+	workOSCfg    config.WorkOSConfig
+	dashboardURL string
+	webhookCfg   config.EventWebhookConfig
+	producer     queue.Producer
 }
 
 // Services is a factory that initializes all services with their dependencies.
@@ -35,13 +35,12 @@ type Services struct {
 // Tests use individual constructors (e.g., NewUserService) to inject mocks directly.
 func NewServices(cfg ServicesConfig) *Services {
 	return &Services{
-		stores:                cfg.Stores,
-		txRunner:              cfg.TxRunner,
-		workOSCfg:             cfg.WorkOS,
-		dashboardURL:          cfg.DashboardURL,
-		webhookCfg:            cfg.WebhookCfg,
-		eventIngest:           NewEventIngestService(cfg.Stores, cfg.TxRunner, cfg.EventProducer),
-		integrationCredential: NewIntegrationCredentialService(cfg.Stores.IntegrationCredentials()),
+		stores:       cfg.Stores,
+		txRunner:     cfg.TxRunner,
+		producer:     cfg.EventProducer,
+		workOSCfg:    cfg.WorkOS,
+		dashboardURL: cfg.DashboardURL,
+		webhookCfg:   cfg.WebhookCfg,
 	}
 }
 
@@ -72,7 +71,7 @@ func (s *Services) GitLab() integration.GitLabService {
 }
 
 func (s *Services) IntegrationCredentials() IntegrationCredentialService {
-	return s.integrationCredential
+	return NewIntegrationCredentialService(s.stores.IntegrationCredentials())
 }
 
 func (s *Services) WebhookBaseURL() string {
@@ -80,5 +79,15 @@ func (s *Services) WebhookBaseURL() string {
 }
 
 func (s *Services) Events() EventIngestService {
-	return s.eventIngest
+	return NewEventIngestService(
+		s.stores.Integrations(),
+		s.stores.Issues(),
+		s.txRunner,
+		s.producer,
+		tracker.NewGitLabIssueTrackerService(
+			s.stores.Integrations(),
+			s.stores.IntegrationCredentials(),
+		),
+		NewEngagementDetector(s.stores.IntegrationConfigs()),
+	)
 }

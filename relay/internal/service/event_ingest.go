@@ -8,41 +8,35 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 
 	"basegraph.app/relay/common/id"
 	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/queue"
+	tracker "basegraph.app/relay/internal/service/issue_tracker"
 	"basegraph.app/relay/internal/store"
 )
 
 type EventIngestParams struct {
-	IntegrationID   int64           `json:"integration_id"`
-	ExternalIssueID string          `json:"external_issue_id"`
-	EventType       string          `json:"event_type"`
-	Source          *string         `json:"source,omitempty"`
-	ExternalEventID *string         `json:"external_event_id,omitempty"`
-	DedupeKey       *string         `json:"dedupe_key,omitempty"`
-	Payload         json.RawMessage `json:"payload"`
-
-	Title            *string  `json:"title,omitempty"`
-	Description      *string  `json:"description,omitempty"`
-	Labels           []string `json:"labels,omitempty"`
-	Members          []string `json:"members,omitempty"`
-	Assignees        []string `json:"assignees,omitempty"`
-	Reporter         *string  `json:"reporter,omitempty"`
-	ExternalIssueURL *string  `json:"external_issue_url,omitempty"`
-	Keywords         []string `json:"keywords,omitempty"`
-
-	TraceID *string `json:"trace_id,omitempty"`
+	IntegrationID       int64           `json:"integration_id"`
+	ExternalIssueID     string          `json:"external_issue_id"`
+	ExternalProjectID   int64           `json:"external_project_id"`
+	IssueBody           string          `json:"issue_body"`
+	CommentBody         string          `json:"comment_body"`
+	TriggeredByUsername string          `json:"triggered_by_username"`
+	Source              string          `json:"source"`
+	EventType           string          `json:"event_type"`
+	Payload             json.RawMessage `json:"payload"`
+	TraceID             *string         `json:"trace_id,omitempty"`
 }
 
 type EventIngestResult struct {
-	EventLog   *model.EventLog
-	Issue      *model.Issue
-	DedupeKey  string
-	Enqueued   bool
-	Duplicated bool
-	Queued     bool // true if issue was transitioned from 'idle' to 'queued'
+	EventLog       *model.EventLog
+	Issue          *model.Issue
+	DedupeKey      string
+	EventPublished bool // true if event was sent to worker queue
+	EventDuplicate bool // true if we received duplicate webhook from issue tracker
+	IssuePickedUp  bool // true if Relay picked up this issue (was idle, now queued)
 }
 
 type EventIngestService interface {
@@ -52,16 +46,29 @@ type EventIngestService interface {
 var ErrIntegrationNotFound = errors.New("integration not found")
 
 type eventIngestService struct {
-	stores   *store.Stores
-	txRunner TxRunner
-	queue    queue.Producer
+	integrations        store.IntegrationStore
+	issues              store.IssueStore
+	txRunner            TxRunner
+	producer            queue.Producer
+	issueTracker        tracker.IssueTrackerService
+	engagementDetector  EngagementDetector
 }
 
-func NewEventIngestService(stores *store.Stores, txRunner TxRunner, queue queue.Producer) EventIngestService {
+func NewEventIngestService(
+	integrations store.IntegrationStore,
+	issues store.IssueStore,
+	txRunner TxRunner,
+	producer queue.Producer,
+	issueTracker tracker.IssueTrackerService,
+	engagementDetector EngagementDetector,
+) EventIngestService {
 	return &eventIngestService{
-		stores:   stores,
-		txRunner: txRunner,
-		queue:    queue,
+		integrations:       integrations,
+		issues:             issues,
+		txRunner:           txRunner,
+		producer:           producer,
+		issueTracker:       issueTracker,
+		engagementDetector: engagementDetector,
 	}
 }
 
@@ -73,64 +80,104 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		return nil, fmt.Errorf("payload is required")
 	}
 
-	integration, err := s.stores.Integrations().GetByID(ctx, params.IntegrationID)
+	integration, err := s.integrations.GetByID(ctx, params.IntegrationID)
 	if err != nil {
-		if err == store.ErrNotFound {
+		if errors.Is(err, store.ErrNotFound) {
 			return nil, fmt.Errorf("%w", ErrIntegrationNotFound)
 		}
 		return nil, fmt.Errorf("fetching integration: %w", err)
 	}
+
 	if !integration.IsEnabled {
 		return nil, fmt.Errorf("integration is disabled")
 	}
 
-	source := string(integration.Provider)
-	if params.Source != nil && *params.Source != "" {
-		source = *params.Source
+	existingIssue, err := s.issues.GetByIntegrationAndExternalID(ctx, params.IntegrationID, params.ExternalIssueID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, fmt.Errorf("checking issue existence: %w", err)
 	}
 
-	dedupeKey, err := computeDedupeKey(source, params.EventType, params.ExternalIssueID, params.ExternalEventID, params.Payload, params.DedupeKey)
-	if err != nil {
-		return nil, err
+	isSubscribed := existingIssue != nil
+
+	var issueToUpsert *model.Issue
+
+	if isSubscribed {
+		slog.InfoContext(ctx, "already engaged with issue, skipping engagement detection",
+			"integration_id", params.IntegrationID,
+			"external_issue_id", params.ExternalIssueID,
+		)
+		issueToUpsert = existingIssue
+	} else {
+		shouldEngage, err := s.engagementDetector.ShouldEngage(ctx, integration.ID, EngagementRequest{
+			IssueBody:   params.IssueBody,
+			CommentBody: params.CommentBody,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("checking engagement: %w", err)
+		}
+
+		if !shouldEngage {
+			return &EventIngestResult{
+				IssuePickedUp:  false,
+				EventPublished: false,
+			}, nil
+		}
+
+		issueIID, err := strconv.ParseInt(params.ExternalIssueID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parsing external issue id: %w", err)
+		}
+
+		issue, err := s.issueTracker.FetchIssue(ctx, tracker.FetchIssueParams{
+			IntegrationID: params.IntegrationID,
+			ProjectID:     params.ExternalProjectID,
+			IssueIID:      issueIID,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("fetching issue from provider: %w", err)
+		}
+
+		slog.InfoContext(ctx, "engagement detected, fetched issue from provider",
+			"integration_id", params.IntegrationID,
+			"external_issue_id", params.ExternalIssueID,
+			"title", issue.Title,
+		)
+
+		// issue contains fetched information only. we should enrich the issue model with our data.
+		issue.ID = id.New()
+		issue.IntegrationID = params.IntegrationID
+		issue.ExternalIssueID = params.ExternalIssueID
+		issue.Provider = integration.Provider
+
+		issueToUpsert = issue
 	}
+
+	source := string(integration.Provider)
+	dedupeKey := computeDedupeKey(source, params.EventType, params.ExternalIssueID, params.Payload)
 
 	var (
-		issue        *model.Issue
+		resultIssue  *model.Issue
 		eventLog     *model.EventLog
 		createdEvent bool
 		queued       bool
 	)
 
 	if err := s.txRunner.WithTx(ctx, func(sp StoreProvider) error {
-		issueModel := &model.Issue{
-			ID:               id.New(),
-			IntegrationID:    params.IntegrationID,
-			ExternalIssueID:  params.ExternalIssueID,
-			Title:            params.Title,
-			Description:      params.Description,
-			Labels:           params.Labels,
-			Members:          params.Members,
-			Assignees:        params.Assignees,
-			Reporter:         params.Reporter,
-			ExternalIssueURL: params.ExternalIssueURL,
-			Keywords:         params.Keywords,
-		}
-
 		var err error
-		issue, err = sp.Issues().Upsert(ctx, issueModel)
+		resultIssue, err = sp.Issues().Upsert(ctx, issueToUpsert)
 		if err != nil {
 			return fmt.Errorf("upserting issue: %w", err)
 		}
 
 		event := &model.EventLog{
-			ID:          id.New(),
-			WorkspaceID: integration.WorkspaceID,
-			IssueID:     issue.ID,
-			Source:      source,
-			EventType:   params.EventType,
-			Payload:     params.Payload,
-			ExternalID:  params.ExternalEventID,
-			DedupeKey:   dedupeKey,
+			ID:                  id.New(),
+			WorkspaceID:         integration.WorkspaceID,
+			IssueID:             resultIssue.ID,
+			TriggeredByUsername: params.TriggeredByUsername,
+			Source:              source,
+			EventType:           params.EventType,
+			Payload:             params.Payload,
+			DedupeKey:           dedupeKey,
 		}
 
 		eventLog, createdEvent, err = sp.EventLogs().CreateOrGet(ctx, event)
@@ -138,9 +185,8 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 			return fmt.Errorf("creating event log: %w", err)
 		}
 
-		// Queue issue if idle (atomic transition inside transaction)
 		if createdEvent {
-			queued, err = sp.Issues().QueueIfIdle(ctx, issue.ID)
+			queued, err = sp.Issues().QueueIfIdle(ctx, resultIssue.ID)
 			if err != nil {
 				return fmt.Errorf("queueing issue: %w", err)
 			}
@@ -153,9 +199,9 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 
 	enqueued := false
 	if createdEvent {
-		if err := s.queue.Enqueue(ctx, queue.EventMessage{
+		if err := s.producer.Enqueue(ctx, queue.EventMessage{
 			EventLogID: eventLog.ID,
-			IssueID:    issue.ID,
+			IssueID:    resultIssue.ID,
 			EventType:  params.EventType,
 			TraceID:    params.TraceID,
 			Attempt:    1,
@@ -164,28 +210,24 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		}
 		enqueued = true
 	} else {
-		slog.InfoContext(ctx, "duplicate event deduped", "event_log_id", eventLog.ID, "issue_id", issue.ID, "dedupe_key", dedupeKey)
+		slog.InfoContext(ctx, "duplicate event deduped",
+			"event_log_id", eventLog.ID,
+			"issue_id", resultIssue.ID,
+			"dedupe_key", dedupeKey,
+		)
 	}
 
 	return &EventIngestResult{
-		EventLog:   eventLog,
-		Issue:      issue,
-		DedupeKey:  dedupeKey,
-		Enqueued:   enqueued,
-		Duplicated: !createdEvent,
-		Queued:     queued,
+		EventLog:       eventLog,
+		Issue:          resultIssue,
+		DedupeKey:      dedupeKey,
+		EventPublished: enqueued,
+		EventDuplicate: !createdEvent,
+		IssuePickedUp:  queued,
 	}, nil
 }
 
-func computeDedupeKey(source, eventType, externalIssueID string, externalEventID *string, payload json.RawMessage, override *string) (string, error) {
-	if override != nil && *override != "" {
-		return *override, nil
-	}
-
-	if externalEventID != nil && *externalEventID != "" {
-		return fmt.Sprintf("%s:%s:%s", source, eventType, *externalEventID), nil
-	}
-
+func computeDedupeKey(source, eventType, externalIssueID string, payload json.RawMessage) string {
 	body := struct {
 		Source          string          `json:"source"`
 		EventType       string          `json:"event_type"`
@@ -198,11 +240,7 @@ func computeDedupeKey(source, eventType, externalIssueID string, externalEventID
 		Payload:         payload,
 	}
 
-	data, err := json.Marshal(body)
-	if err != nil {
-		return "", fmt.Errorf("marshal dedupe payload: %w", err)
-	}
-
+	data, _ := json.Marshal(body)
 	hash := sha256.Sum256(data)
-	return fmt.Sprintf("%s:%s", source, hex.EncodeToString(hash[:])), nil
+	return fmt.Sprintf("%s:%s", source, hex.EncodeToString(hash[:]))
 }

@@ -21,18 +21,18 @@ LIMIT $1;
 
 -- name: CreateEventLog :one
 INSERT INTO event_logs (
-    id, workspace_id, issue_id, source, event_type,
+    id, workspace_id, issue_id, triggered_by_username, source, event_type,
     payload, external_id, dedupe_key, created_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,now())
 RETURNING *;
 
 -- name: UpsertEventLog :one
 INSERT INTO event_logs (
-    id, workspace_id, issue_id, source, event_type,
+    id, workspace_id, issue_id, triggered_by_username, source, event_type,
     payload, external_id, dedupe_key, created_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,now())
 ON CONFLICT (workspace_id, dedupe_key)
 DO UPDATE
 SET

@@ -99,20 +99,24 @@ func (f *fakeCredStore) ValidateWebhookToken(ctx context.Context, integrationID 
 	return nil
 }
 
-type fakeEventIngestService struct{}
+type fakeEventIngestService struct {
+	capturedParams *service.EventIngestParams
+}
 
 func (f *fakeEventIngestService) Ingest(ctx context.Context, params service.EventIngestParams) (*service.EventIngestResult, error) {
+	f.capturedParams = &params
 	return &service.EventIngestResult{
-		EventLog: &model.EventLog{ID: 12345},
-		Issue:    &model.Issue{ID: 67890},
-		Enqueued: true,
+		EventLog:       &model.EventLog{ID: 12345},
+		Issue:          &model.Issue{ID: 67890, Provider: model.ProviderGitLab},
+		EventPublished: true,
 	}, nil
 }
 
 var _ = Describe("GitLabWebhookHandler", func() {
 	var (
-		router *gin.Engine
-		buf    *bytes.Buffer
+		router      *gin.Engine
+		buf         *bytes.Buffer
+		eventIngest *fakeEventIngestService
 	)
 
 	BeforeEach(func() {
@@ -127,7 +131,7 @@ var _ = Describe("GitLabWebhookHandler", func() {
 			},
 		}
 
-		eventIngest := &fakeEventIngestService{}
+		eventIngest = &fakeEventIngestService{}
 		mapper := mapper.NewGitLabEventMapper()
 		h := webhook.NewGitLabWebhookHandler(store, eventIngest, mapper)
 		router.POST("/webhooks/gitlab/:integration_id", h.HandleEvent)
@@ -137,11 +141,12 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		body := map[string]any{
 			"object_kind": "issue",
 			"object_attributes": map[string]any{
-				"id":     10,
-				"iid":    5,
-				"title":  "Bug",
-				"note":   "",
-				"action": "open",
+				"id":          10,
+				"iid":         5,
+				"title":       "Bug",
+				"description": "Test Description",
+				"note":        "",
+				"action":      "open",
 			},
 		}
 		payload, _ := json.Marshal(body)
@@ -161,9 +166,10 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		Expect(logStr).To(ContainSubstring(`"object_id":10`))
 		Expect(logStr).To(ContainSubstring(`"object_iid":5`))
 		Expect(logStr).To(ContainSubstring(`"title":"Bug"`))
+		Expect(logStr).To(ContainSubstring(`"description":"Test Description"`))
 		Expect(logStr).To(ContainSubstring(`"event_log_id":12345`))
 		Expect(logStr).To(ContainSubstring(`"issue_id":67890`))
-		Expect(logStr).To(ContainSubstring(`"enqueued":true`))
+		Expect(logStr).To(ContainSubstring(`"event_published":true`))
 	})
 
 	It("rejects invalid token", func() {
@@ -198,5 +204,73 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		Expect(w.Code).To(Equal(http.StatusOK))
 		logStr := buf.String()
 		Expect(logStr).To(ContainSubstring("gitlab wiki webhook received"))
+	})
+
+	Context("Provider handling", func() {
+		It("does not pass provider in params (fetched from integration)", func() {
+			body := map[string]any{
+				"object_kind": "issue",
+				"object_attributes": map[string]any{
+					"id":     10,
+					"iid":    5,
+					"title":  "Bug",
+					"action": "open",
+				},
+				"user": map[string]any{
+					"id":       42,
+					"username": "alice",
+					"name":     "Alice Smith",
+				},
+			}
+			payload, _ := json.Marshal(body)
+
+			req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBuffer(payload))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Gitlab-Token", "secret")
+			req.Header.Set("X-Gitlab-Event", "Issue Hook")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			Expect(w.Code).To(Equal(http.StatusOK))
+			Expect(eventIngest.capturedParams).NotTo(BeNil())
+			Expect(eventIngest.capturedParams.IntegrationID).To(Equal(int64(123)))
+			Expect(eventIngest.capturedParams.ExternalIssueID).To(Equal("5"))
+			Expect(eventIngest.capturedParams.TriggeredByUsername).To(Equal("alice"))
+			Expect(eventIngest.capturedParams.EventType).To(Equal("issue_created"))
+			// Verify Source is NOT in params - it's computed by service from integration
+		})
+
+		It("returns issue with provider field", func() {
+			body := map[string]any{
+				"object_kind": "note",
+				"object_attributes": map[string]any{
+					"id":   20,
+					"note": "Comment text",
+				},
+				"issue": map[string]any{
+					"iid": 7,
+				},
+				"user": map[string]any{
+					"id":       42,
+					"username": "bob",
+					"name":     "Bob Jones",
+				},
+			}
+			payload, _ := json.Marshal(body)
+
+			req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBuffer(payload))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("X-Gitlab-Token", "secret")
+			req.Header.Set("X-Gitlab-Event", "Note Hook")
+			w := httptest.NewRecorder()
+
+			router.ServeHTTP(w, req)
+
+			Expect(w.Code).To(Equal(http.StatusOK))
+			// The service returns issue with provider set
+			logStr := buf.String()
+			Expect(logStr).To(ContainSubstring(`"issue_id":67890`))
+		})
 	})
 })
