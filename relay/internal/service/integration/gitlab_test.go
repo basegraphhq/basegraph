@@ -294,6 +294,8 @@ func (m *gitlabAPIMock) baseURL() string {
 func (m *gitlabAPIMock) start() {
 	m.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.URL.Path == "/api/v4/user" && r.Method == http.MethodGet:
+			m.handleCurrentUser(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/v4/projects") && r.Method == http.MethodGet:
 			m.handleListProjects(w, r)
 		case strings.HasPrefix(r.URL.Path, "/api/v4/projects/") && strings.HasSuffix(r.URL.Path, "/hooks") && r.Method == http.MethodPost:
@@ -304,6 +306,11 @@ func (m *gitlabAPIMock) start() {
 			http.NotFound(w, r)
 		}
 	}))
+}
+
+func (m *gitlabAPIMock) handleCurrentUser(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"id":12345,"username":"relaybot","name":"Relay Bot"}`))
 }
 
 func (m *gitlabAPIMock) close() {
