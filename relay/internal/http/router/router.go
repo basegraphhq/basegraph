@@ -36,6 +36,6 @@ func SetupRoutes(router *gin.Engine, services *service.Services, cfg RouterConfi
 
 	mapperRegistry := mapper.NewMapperRegistry()
 	gitlabMapper := mapperRegistry.MustGet("gitlab")
-	webhookHandler := webhook.NewGitLabWebhookHandler(services.IntegrationCredentials(), services.Events(), gitlabMapper)
+	webhookHandler := webhook.NewGitLabWebhookHandler(services.IntegrationCredentials(), services.EventIngest(), gitlabMapper)
 	GitLabWebhookRouter(router.Group("/webhooks/gitlab"), webhookHandler)
 }

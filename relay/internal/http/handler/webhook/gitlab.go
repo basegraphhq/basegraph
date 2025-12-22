@@ -13,6 +13,7 @@ import (
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 
 	"basegraph.app/relay/internal/mapper"
+	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/service"
 )
 
@@ -122,6 +123,16 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 		return
 	}
 
+	if !result.Engaged {
+		slog.InfoContext(ctx, "gitlab webhook received but not engaged",
+			"integration_id", integrationID,
+			"canonical_event_type", canonicalEventType,
+			"object_kind", payload.ObjectKind,
+		)
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "event not engaged"})
+		return
+	}
+
 	slog.InfoContext(ctx, "gitlab webhook processed",
 		"integration_id", integrationID,
 		"canonical_event_type", canonicalEventType,
@@ -160,8 +171,11 @@ func (h *GitLabWebhookHandler) processEvent(ctx context.Context, integrationID i
 		IntegrationID:       integrationID,
 		ExternalIssueID:     strconv.FormatInt(externalIssueID, 10),
 		ExternalProjectID:   payload.Project.ID,
+		Provider:            model.ProviderGitLab,
 		IssueBody:           issueBody,
 		CommentBody:         payload.ObjectAttributes.Note,
+		DiscussionID:        payload.ObjectAttributes.DiscussionID,
+		CommentID:           strconv.FormatInt(payload.ObjectAttributes.ID, 10),
 		TriggeredByUsername: payload.User.Username,
 		EventType:           string(canonicalEventType),
 		Payload:             body,
@@ -184,12 +198,13 @@ type gitlabWebhookPayload struct {
 	} `json:"user"`
 	EventType        string `json:"event_type"`
 	ObjectAttributes struct {
-		Title       string `json:"title"`
-		Description string `json:"description"`
-		Note        string `json:"note"`
-		Action      string `json:"action"`
-		ID          int64  `json:"id"`
-		IID         int64  `json:"iid"`
+		Title        string `json:"title"`
+		Description  string `json:"description"`
+		Note         string `json:"note"`
+		Action       string `json:"action"`
+		ID           int64  `json:"id"`
+		IID          int64  `json:"iid"`
+		DiscussionID string `json:"discussion_id"`
 	} `json:"object_attributes"`
 	Issue struct {
 		IID         int64  `json:"iid"`

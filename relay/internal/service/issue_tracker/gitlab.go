@@ -63,6 +63,35 @@ func (s *gitLabIssueTrackerService) FetchDiscussions(ctx context.Context, params
 	return s.mapDiscussions(gitlabDiscussions), nil
 }
 
+func (s *gitLabIssueTrackerService) IsReplyToUser(ctx context.Context, params IsReplyParams) (bool, error) {
+	if params.DiscussionID == "" {
+		return false, nil
+	}
+
+	discussions, err := s.FetchDiscussions(ctx, FetchDiscussionsParams{
+		IntegrationID: params.IntegrationID,
+		ProjectID:     params.ProjectID,
+		IssueIID:      params.IssueIID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("fetching discussions: %w", err)
+	}
+
+	for _, discussion := range discussions {
+		if discussion.ID != params.DiscussionID {
+			continue
+		}
+		for _, note := range discussion.Notes {
+			if note.AuthorID == params.UserID {
+				return true, nil
+			}
+		}
+		break
+	}
+
+	return false, nil
+}
+
 func (s *gitLabIssueTrackerService) getClient(ctx context.Context, integrationID int64) (*gitlab.Client, error) {
 	integration, err := s.integrations.GetByID(ctx, integrationID)
 	if err != nil {

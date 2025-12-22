@@ -98,7 +98,8 @@ func (m *mockIssueStore) SetProcessed(ctx context.Context, issueID int64) error 
 }
 
 type mockIssueTrackerService struct {
-	fetchFn func(ctx context.Context, params issue_tracker.FetchIssueParams) (*model.Issue, error)
+	fetchFn         func(ctx context.Context, params issue_tracker.FetchIssueParams) (*model.Issue, error)
+	isReplyToUserFn func(ctx context.Context, params issue_tracker.IsReplyParams) (bool, error)
 }
 
 func (m *mockIssueTrackerService) FetchIssue(ctx context.Context, params issue_tracker.FetchIssueParams) (*model.Issue, error) {
@@ -123,6 +124,13 @@ func (m *mockIssueTrackerService) FetchIssue(ctx context.Context, params issue_t
 
 func (m *mockIssueTrackerService) FetchDiscussions(ctx context.Context, params issue_tracker.FetchDiscussionsParams) ([]issue_tracker.Discussion, error) {
 	return nil, nil
+}
+
+func (m *mockIssueTrackerService) IsReplyToUser(ctx context.Context, params issue_tracker.IsReplyParams) (bool, error) {
+	if m.isReplyToUserFn != nil {
+		return m.isReplyToUserFn(ctx, params)
+	}
+	return false, nil
 }
 
 // Mock EventLogStore
@@ -229,12 +237,17 @@ var _ = Describe("EventIngestService", func() {
 			},
 		}
 
+		issueTrackers := map[model.Provider]issue_tracker.IssueTrackerService{
+			model.ProviderGitLab: mockProvider,
+			model.ProviderGitHub: mockProvider,
+		}
+
 		svc = service.NewEventIngestService(
 			mockIntegrations,
 			mockIssuesStore,
 			txRunner,
 			mockQueue,
-			mockProvider,
+			issueTrackers,
 			mockEngagementDet,
 		)
 	})
@@ -315,6 +328,7 @@ var _ = Describe("EventIngestService", func() {
 					IntegrationID:       456,
 					ExternalIssueID:     "99",
 					ExternalProjectID:   789,
+					Provider:            model.ProviderGitHub,
 					IssueBody:           "Hey @relaybot please help",
 					TriggeredByUsername: "bob",
 					EventType:           "issue_created",
@@ -334,6 +348,7 @@ var _ = Describe("EventIngestService", func() {
 					IntegrationID:       456,
 					ExternalIssueID:     "99",
 					ExternalProjectID:   789,
+					Provider:            model.ProviderGitHub,
 					IssueBody:           "Some issue without mention",
 					CommentBody:         "cc @relaybot",
 					TriggeredByUsername: "bob",
@@ -354,6 +369,7 @@ var _ = Describe("EventIngestService", func() {
 					IntegrationID:       456,
 					ExternalIssueID:     "99",
 					ExternalProjectID:   789,
+					Provider:            model.ProviderGitHub,
 					IssueBody:           "Some issue without any mention",
 					TriggeredByUsername: "bob",
 					EventType:           "issue_created",

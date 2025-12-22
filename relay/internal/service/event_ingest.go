@@ -21,8 +21,11 @@ type EventIngestParams struct {
 	IntegrationID       int64           `json:"integration_id"`
 	ExternalIssueID     string          `json:"external_issue_id"`
 	ExternalProjectID   int64           `json:"external_project_id"`
+	Provider            model.Provider  `json:"provider"`
 	IssueBody           string          `json:"issue_body"`
 	CommentBody         string          `json:"comment_body"`
+	DiscussionID        string          `json:"discussion_id,omitempty"`
+	CommentID           string          `json:"comment_id,omitempty"`
 	TriggeredByUsername string          `json:"triggered_by_username"`
 	Source              string          `json:"source"`
 	EventType           string          `json:"event_type"`
@@ -31,6 +34,7 @@ type EventIngestParams struct {
 }
 
 type EventIngestResult struct {
+	Engaged        bool
 	EventLog       *model.EventLog
 	Issue          *model.Issue
 	DedupeKey      string
@@ -46,12 +50,12 @@ type EventIngestService interface {
 var ErrIntegrationNotFound = errors.New("integration not found")
 
 type eventIngestService struct {
-	integrations        store.IntegrationStore
-	issues              store.IssueStore
-	txRunner            TxRunner
-	producer            queue.Producer
-	issueTracker        tracker.IssueTrackerService
-	engagementDetector  EngagementDetector
+	integrations       store.IntegrationStore
+	issues             store.IssueStore
+	txRunner           TxRunner
+	producer           queue.Producer
+	issueTrackers      map[model.Provider]tracker.IssueTrackerService
+	engagementDetector EngagementDetector
 }
 
 func NewEventIngestService(
@@ -59,7 +63,7 @@ func NewEventIngestService(
 	issues store.IssueStore,
 	txRunner TxRunner,
 	producer queue.Producer,
-	issueTracker tracker.IssueTrackerService,
+	issueTrackers map[model.Provider]tracker.IssueTrackerService,
 	engagementDetector EngagementDetector,
 ) EventIngestService {
 	return &eventIngestService{
@@ -67,7 +71,7 @@ func NewEventIngestService(
 		issues:             issues,
 		txRunner:           txRunner,
 		producer:           producer,
-		issueTracker:       issueTracker,
+		issueTrackers:      issueTrackers,
 		engagementDetector: engagementDetector,
 	}
 }
@@ -108,9 +112,19 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		)
 		issueToUpsert = existingIssue
 	} else {
+		issueIID, err := strconv.ParseInt(params.ExternalIssueID, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("parsing external issue id: %w", err)
+		}
+
 		shouldEngage, err := s.engagementDetector.ShouldEngage(ctx, integration.ID, EngagementRequest{
-			IssueBody:   params.IssueBody,
-			CommentBody: params.CommentBody,
+			Provider:          params.Provider,
+			IssueBody:         params.IssueBody,
+			CommentBody:       params.CommentBody,
+			DiscussionID:      params.DiscussionID,
+			CommentID:         params.CommentID,
+			ExternalProjectID: params.ExternalProjectID,
+			ExternalIssueIID:  issueIID,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("checking engagement: %w", err)
@@ -118,17 +132,16 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 
 		if !shouldEngage {
 			return &EventIngestResult{
-				IssuePickedUp:  false,
-				EventPublished: false,
+				Engaged: false,
 			}, nil
 		}
 
-		issueIID, err := strconv.ParseInt(params.ExternalIssueID, 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("parsing external issue id: %w", err)
+		issueTracker := s.issueTrackers[params.Provider]
+		if issueTracker == nil {
+			return nil, fmt.Errorf("unsupported provider: %s", params.Provider)
 		}
 
-		issue, err := s.issueTracker.FetchIssue(ctx, tracker.FetchIssueParams{
+		issue, err := issueTracker.FetchIssue(ctx, tracker.FetchIssueParams{
 			IntegrationID: params.IntegrationID,
 			ProjectID:     params.ExternalProjectID,
 			IssueIID:      issueIID,
@@ -218,6 +231,7 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 	}
 
 	return &EventIngestResult{
+		Engaged:        true,
 		EventLog:       eventLog,
 		Issue:          resultIssue,
 		DedupeKey:      dedupeKey,

@@ -2,6 +2,7 @@ package service
 
 import (
 	"basegraph.app/relay/core/config"
+	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/queue"
 	"basegraph.app/relay/internal/service/integration"
 	tracker "basegraph.app/relay/internal/service/issue_tracker"
@@ -78,16 +79,33 @@ func (s *Services) WebhookBaseURL() string {
 	return s.webhookCfg.BaseURL
 }
 
-func (s *Services) Events() EventIngestService {
+func (s *Services) GitlabIssueTracker() tracker.IssueTrackerService {
+	return tracker.NewGitLabIssueTrackerService(s.stores.Integrations(), s.stores.IntegrationCredentials())
+}
+
+func (s *Services) EngagementDetector() EngagementDetector {
+	return NewEngagementDetector(
+		s.stores.IntegrationConfigs(),
+		s.IssueTrackers(),
+	)
+}
+
+func (s *Services) IssueTrackers() map[model.Provider]tracker.IssueTrackerService {
+	return map[model.Provider]tracker.IssueTrackerService{
+		model.ProviderGitLab: s.GitlabIssueTracker(),
+		// model.ProviderGitHub: s.GithubIssueTracker(),
+		// model.ProviderLinear: s.LinearIssueTracker(),
+		// model.ProviderJira:   s.JiraIssueTracker(),
+	}
+}
+
+func (s *Services) EventIngest() EventIngestService {
 	return NewEventIngestService(
 		s.stores.Integrations(),
 		s.stores.Issues(),
 		s.txRunner,
 		s.producer,
-		tracker.NewGitLabIssueTrackerService(
-			s.stores.Integrations(),
-			s.stores.IntegrationCredentials(),
-		),
-		NewEngagementDetector(s.stores.IntegrationConfigs()),
+		s.IssueTrackers(),
+		s.EngagementDetector(),
 	)
 }

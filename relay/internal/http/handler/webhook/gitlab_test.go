@@ -106,6 +106,7 @@ type fakeEventIngestService struct {
 func (f *fakeEventIngestService) Ingest(ctx context.Context, params service.EventIngestParams) (*service.EventIngestResult, error) {
 	f.capturedParams = &params
 	return &service.EventIngestResult{
+		Engaged:        true,
 		EventLog:       &model.EventLog{ID: 12345},
 		Issue:          &model.Issue{ID: 67890, Provider: model.ProviderGitLab},
 		EventPublished: true,
