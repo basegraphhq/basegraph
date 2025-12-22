@@ -190,7 +190,7 @@ create table event_logs(
     id bigint primary key,
     workspace_id bigint not null references workspaces(id),
     issue_id bigint not null references issues(id),
-    triggered_by_username text not null default "system",
+    triggered_by_username text not null default 'system',
 
     source text not null,
     event_type text not null,
