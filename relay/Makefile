@@ -65,10 +65,10 @@ clean:
 
 # Development helpers
 dev-db:
-	docker compose -f dev/compose.yml up -d
+	docker compose -f dev/docker-compose.yaml up -d
 
 dev-down:
-	docker compose -f dev/compose.yml down
+	docker compose -f dev/docker-compose.yaml down
 
 # Environment setup
 .env:
