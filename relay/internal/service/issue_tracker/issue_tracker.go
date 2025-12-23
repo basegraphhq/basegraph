@@ -27,19 +27,8 @@ type IsReplyParams struct {
 	UserID        int64  // Check if replying to this user. Mostly, we'll use this for relay
 }
 
-type Discussion struct {
-	ID    string
-	Notes []Note
-}
-
-type Note struct {
-	ID       int64
-	AuthorID int64
-	Body     string
-}
-
 type IssueTrackerService interface {
 	FetchIssue(ctx context.Context, params FetchIssueParams) (*model.Issue, error)
-	FetchDiscussions(ctx context.Context, params FetchDiscussionsParams) ([]Discussion, error)
+	FetchDiscussions(ctx context.Context, params FetchDiscussionsParams) ([]model.Discussion, error)
 	IsReplyToUser(ctx context.Context, params IsReplyParams) (bool, error)
 }

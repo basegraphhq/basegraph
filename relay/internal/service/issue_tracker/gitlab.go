@@ -44,7 +44,7 @@ func (s *gitLabIssueTrackerService) FetchIssue(ctx context.Context, params Fetch
 	return s.mapToIssue(gitlabIssue), nil
 }
 
-func (s *gitLabIssueTrackerService) FetchDiscussions(ctx context.Context, params FetchDiscussionsParams) ([]Discussion, error) {
+func (s *gitLabIssueTrackerService) FetchDiscussions(ctx context.Context, params FetchDiscussionsParams) ([]model.Discussion, error) {
 	client, err := s.getClient(ctx, params.IntegrationID)
 	if err != nil {
 		return nil, err
@@ -77,16 +77,15 @@ func (s *gitLabIssueTrackerService) IsReplyToUser(ctx context.Context, params Is
 		return false, fmt.Errorf("fetching discussions: %w", err)
 	}
 
-	for _, discussion := range discussions {
-		if discussion.ID != params.DiscussionID {
+	// Check if any comment in the target thread was authored by the user
+	expectedAuthor := fmt.Sprintf("id:%d", params.UserID)
+	for _, d := range discussions {
+		if d.ThreadID == nil || *d.ThreadID != params.DiscussionID {
 			continue
 		}
-		for _, note := range discussion.Notes {
-			if note.AuthorID == params.UserID {
-				return true, nil
-			}
+		if d.Author == expectedAuthor {
+			return true, nil
 		}
-		break
 	}
 
 	return false, nil
@@ -119,32 +118,46 @@ func (s *gitLabIssueTrackerService) newClient(baseURL *string, token string) (*g
 	return gitlab.NewClient(token, gitlab.WithBaseURL(apiURL))
 }
 
-func (s *gitLabIssueTrackerService) mapDiscussions(gitlabDiscussions []*gitlab.Discussion) []Discussion {
-	discussions := make([]Discussion, 0, len(gitlabDiscussions))
+func (s *gitLabIssueTrackerService) mapDiscussions(gitlabDiscussions []*gitlab.Discussion) []model.Discussion {
+	var discussions []model.Discussion
+
 	for _, d := range gitlabDiscussions {
 		if d == nil {
 			continue
 		}
-		discussion := Discussion{
-			ID:    d.ID,
-			Notes: make([]Note, 0, len(d.Notes)),
-		}
+
+		threadID := d.ID
+
 		for _, n := range d.Notes {
 			if n == nil {
 				continue
 			}
-			var authorID int64
-			if n.Author.ID != 0 {
-				authorID = int64(n.Author.ID)
+
+			author := fmt.Sprintf("id:%d", n.Author.ID)
+			if n.Author.Username != "" {
+				author = n.Author.Username
 			}
-			discussion.Notes = append(discussion.Notes, Note{
-				ID:       int64(n.ID),
-				AuthorID: authorID,
-				Body:     n.Body,
-			})
+
+			createdAt := n.CreatedAt
+			if createdAt == nil {
+				createdAt = n.UpdatedAt
+			}
+
+			discussion := model.Discussion{
+				ExternalID: fmt.Sprintf("%d", n.ID),
+				ThreadID:   &threadID,
+				Author:     author,
+				Body:       n.Body,
+			}
+
+			if createdAt != nil {
+				discussion.CreatedAt = *createdAt
+			}
+
+			discussions = append(discussions, discussion)
 		}
-		discussions = append(discussions, discussion)
 	}
+
 	return discussions
 }
 

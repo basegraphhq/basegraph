@@ -13,8 +13,13 @@ import (
 	"basegraph.app/relay/internal/store"
 )
 
+type EngagementResult struct {
+	ShouldEngage bool
+	Discussions  []model.Discussion // Populated when we engage (nil if not engaged)
+}
+
 type EngagementDetector interface {
-	ShouldEngage(ctx context.Context, integrationID int64, req EngagementRequest) (bool, error)
+	ShouldEngage(ctx context.Context, integrationID int64, req EngagementRequest) (EngagementResult, error)
 }
 
 type EngagementRequest struct {
@@ -47,68 +52,102 @@ func NewEngagementDetector(
 	}
 }
 
-func (d *engagementDetector) ShouldEngage(ctx context.Context, integrationID int64, req EngagementRequest) (bool, error) {
+func (d *engagementDetector) ShouldEngage(ctx context.Context, integrationID int64, req EngagementRequest) (EngagementResult, error) {
+	notEngaged := EngagementResult{ShouldEngage: false}
+
 	config, err := d.configStore.GetByIntegrationAndKey(ctx, integrationID, "service_account")
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return false, nil
+			return notEngaged, nil
 		}
-		return false, fmt.Errorf("fetching service account config: %w", err)
+		return notEngaged, fmt.Errorf("fetching service account config: %w", err)
 	}
 
 	var sa ServiceAccountConfig
 	if err := json.Unmarshal(config.Value, &sa); err != nil {
-		return false, fmt.Errorf("parsing service account config: %w", err)
+		return notEngaged, fmt.Errorf("parsing service account config: %w", err)
 	}
 
 	mention := strings.ToLower(fmt.Sprintf("@%s", sa.Username))
+	engagedViaMention := strings.Contains(strings.ToLower(req.IssueBody), mention) ||
+		strings.Contains(strings.ToLower(req.CommentBody), mention)
 
-	if strings.Contains(strings.ToLower(req.IssueBody), mention) {
-		return true, nil
-	}
-
-	if strings.Contains(strings.ToLower(req.CommentBody), mention) {
-		return true, nil
-	}
-
-	// Check 3: Reply to relay's comment in a threaded discussion
+	// For reply detection, we need to fetch discussions
+	var discussions []model.Discussion
 	if req.DiscussionID != "" {
-		isReply, err := d.isReplyToRelayComment(ctx, integrationID, sa.UserID, req)
+		isReply, fetchedDiscussions, err := d.checkReplyWithDiscussions(ctx, integrationID, sa.UserID, req)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to check reply detection, falling back to @mention only",
 				"error", err,
 				"integration_id", integrationID,
 				"discussion_id", req.DiscussionID,
 			)
-			return false, nil
-		}
-		if isReply {
-			return true, nil
+		} else {
+			discussions = fetchedDiscussions
+			if isReply {
+				return EngagementResult{ShouldEngage: true, Discussions: discussions}, nil
+			}
 		}
 	}
 
-	return false, nil
+	if engagedViaMention {
+		// Engaged via @mention - fetch discussions if not already fetched
+		if discussions == nil {
+			discussions, err = d.fetchDiscussions(ctx, integrationID, req)
+			if err != nil {
+				slog.WarnContext(ctx, "failed to fetch discussions for engaged issue",
+					"error", err,
+					"integration_id", integrationID,
+				)
+				// Continue without discussions - we're still engaged
+			}
+		}
+		return EngagementResult{ShouldEngage: true, Discussions: discussions}, nil
+	}
+
+	return notEngaged, nil
 }
 
-// isReplyToRelayComment checks if the incoming comment is part of a discussion
-// where relay has previously participated. Delegates to provider-specific implementation.
-func (d *engagementDetector) isReplyToRelayComment(
+// checkReplyWithDiscussions fetches discussions and checks if the incoming comment
+// is part of a thread where relay has previously participated.
+func (d *engagementDetector) checkReplyWithDiscussions(
 	ctx context.Context,
 	integrationID int64,
 	serviceAccountUserID int64,
 	req EngagementRequest,
-) (bool, error) {
-	issueTracker := d.issueTrackers[req.Provider]
-	if issueTracker == nil {
-		return false, fmt.Errorf("unsupported provider: %s", req.Provider)
+) (bool, []model.Discussion, error) {
+	discussions, err := d.fetchDiscussions(ctx, integrationID, req)
+	if err != nil {
+		return false, nil, err
 	}
 
-	return issueTracker.IsReplyToUser(ctx, tracker.IsReplyParams{
+	// Check if relay user has commented in the target thread
+	expectedAuthor := fmt.Sprintf("id:%d", serviceAccountUserID)
+	for _, disc := range discussions {
+		if disc.ThreadID == nil || *disc.ThreadID != req.DiscussionID {
+			continue
+		}
+		if disc.Author == expectedAuthor {
+			return true, discussions, nil
+		}
+	}
+
+	return false, discussions, nil
+}
+
+func (d *engagementDetector) fetchDiscussions(
+	ctx context.Context,
+	integrationID int64,
+	req EngagementRequest,
+) ([]model.Discussion, error) {
+	issueTracker := d.issueTrackers[req.Provider]
+	if issueTracker == nil {
+		return nil, fmt.Errorf("unsupported provider: %s", req.Provider)
+	}
+
+	return issueTracker.FetchDiscussions(ctx, tracker.FetchDiscussionsParams{
 		IntegrationID: integrationID,
 		ProjectID:     req.ExternalProjectID,
 		IssueIID:      req.ExternalIssueIID,
-		DiscussionID:  req.DiscussionID,
-		CommentID:     req.CommentID,
-		UserID:        serviceAccountUserID,
 	})
 }
