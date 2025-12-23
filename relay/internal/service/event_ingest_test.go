@@ -122,7 +122,7 @@ func (m *mockIssueTrackerService) FetchIssue(ctx context.Context, params issue_t
 	}, nil
 }
 
-func (m *mockIssueTrackerService) FetchDiscussions(ctx context.Context, params issue_tracker.FetchDiscussionsParams) ([]issue_tracker.Discussion, error) {
+func (m *mockIssueTrackerService) FetchDiscussions(ctx context.Context, params issue_tracker.FetchDiscussionsParams) ([]model.Discussion, error) {
 	return nil, nil
 }
 
@@ -191,14 +191,14 @@ func (m *mockQueueProducer) Close() error {
 
 // Mock EngagementDetector
 type mockEngagementDetector struct {
-	shouldEngageFn func(ctx context.Context, integrationID int64, req service.EngagementRequest) (bool, error)
+	shouldEngageFn func(ctx context.Context, integrationID int64, req service.EngagementRequest) (service.EngagementResult, error)
 }
 
-func (m *mockEngagementDetector) ShouldEngage(ctx context.Context, integrationID int64, req service.EngagementRequest) (bool, error) {
+func (m *mockEngagementDetector) ShouldEngage(ctx context.Context, integrationID int64, req service.EngagementRequest) (service.EngagementResult, error) {
 	if m.shouldEngageFn != nil {
 		return m.shouldEngageFn(ctx, integrationID, req)
 	}
-	return false, nil
+	return service.EngagementResult{ShouldEngage: false}, nil
 }
 
 var _ = Describe("EventIngestService", func() {
@@ -240,6 +240,8 @@ var _ = Describe("EventIngestService", func() {
 		issueTrackers := map[model.Provider]issue_tracker.IssueTrackerService{
 			model.ProviderGitLab: mockProvider,
 			model.ProviderGitHub: mockProvider,
+			model.ProviderLinear: mockProvider,
+			model.ProviderJira:   mockProvider,
 		}
 
 		svc = service.NewEventIngestService(
@@ -281,6 +283,8 @@ var _ = Describe("EventIngestService", func() {
 				params := service.EventIngestParams{
 					IntegrationID:       123,
 					ExternalIssueID:     "42",
+					ExternalProjectID:   1,
+					Provider:            model.ProviderGitLab,
 					TriggeredByUsername: "alice",
 					EventType:           "issue_created",
 					Payload:             payload,
@@ -317,8 +321,9 @@ var _ = Describe("EventIngestService", func() {
 					return nil, store.ErrNotFound
 				}
 				// Configure engagement detector to return true when @mentioned
-				mockEngagementDet.shouldEngageFn = func(ctx context.Context, integrationID int64, req service.EngagementRequest) (bool, error) {
-					return req.IssueBody == "Hey @relaybot please help" || req.CommentBody == "cc @relaybot", nil
+				mockEngagementDet.shouldEngageFn = func(ctx context.Context, integrationID int64, req service.EngagementRequest) (service.EngagementResult, error) {
+					engaged := req.IssueBody == "Hey @relaybot please help" || req.CommentBody == "cc @relaybot"
+					return service.EngagementResult{ShouldEngage: engaged}, nil
 				}
 			})
 
@@ -502,6 +507,8 @@ var _ = Describe("EventIngestService", func() {
 					params := service.EventIngestParams{
 						IntegrationID:       100,
 						ExternalIssueID:     "1",
+						ExternalProjectID:   1,
+						Provider:            provider,
 						TriggeredByUsername: "user",
 						EventType:           "issue_created",
 						Payload:             payload,

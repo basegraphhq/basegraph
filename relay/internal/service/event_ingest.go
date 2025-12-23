@@ -105,19 +105,38 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 
 	var issueToUpsert *model.Issue
 
+	issueIID, err := strconv.ParseInt(params.ExternalIssueID, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parsing external issue id: %w", err)
+	}
+
+	issueTracker := s.issueTrackers[params.Provider]
+	if issueTracker == nil {
+		return nil, fmt.Errorf("unsupported provider: %s", params.Provider)
+	}
+
 	if isSubscribed {
-		slog.InfoContext(ctx, "already engaged with issue, skipping engagement detection",
+		slog.InfoContext(ctx, "refreshing discussions for tracked issue",
 			"integration_id", params.IntegrationID,
 			"external_issue_id", params.ExternalIssueID,
 		)
-		issueToUpsert = existingIssue
-	} else {
-		issueIID, err := strconv.ParseInt(params.ExternalIssueID, 10, 64)
+
+		discussions, err := issueTracker.FetchDiscussions(ctx, tracker.FetchDiscussionsParams{
+			IntegrationID: params.IntegrationID,
+			ProjectID:     params.ExternalProjectID,
+			IssueIID:      issueIID,
+		})
 		if err != nil {
-			return nil, fmt.Errorf("parsing external issue id: %w", err)
+			slog.WarnContext(ctx, "failed to fetch discussions for existing issue",
+				"error", err,
+				"integration_id", params.IntegrationID,
+			)
 		}
 
-		shouldEngage, err := s.engagementDetector.ShouldEngage(ctx, integration.ID, EngagementRequest{
+		existingIssue.Discussions = discussions
+		issueToUpsert = existingIssue
+	} else {
+		engagement, err := s.engagementDetector.ShouldEngage(ctx, integration.ID, EngagementRequest{
 			Provider:          params.Provider,
 			IssueBody:         params.IssueBody,
 			CommentBody:       params.CommentBody,
@@ -130,15 +149,10 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 			return nil, fmt.Errorf("checking engagement: %w", err)
 		}
 
-		if !shouldEngage {
+		if !engagement.ShouldEngage {
 			return &EventIngestResult{
 				Engaged: false,
 			}, nil
-		}
-
-		issueTracker := s.issueTrackers[params.Provider]
-		if issueTracker == nil {
-			return nil, fmt.Errorf("unsupported provider: %s", params.Provider)
 		}
 
 		issue, err := issueTracker.FetchIssue(ctx, tracker.FetchIssueParams{
@@ -154,13 +168,15 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 			"integration_id", params.IntegrationID,
 			"external_issue_id", params.ExternalIssueID,
 			"title", issue.Title,
+			"discussions_count", len(engagement.Discussions),
 		)
 
-		// issue contains fetched information only. we should enrich the issue model with our data.
+		// Enrich issue with our data and discussions from engagement check
 		issue.ID = id.New()
 		issue.IntegrationID = params.IntegrationID
 		issue.ExternalIssueID = params.ExternalIssueID
 		issue.Provider = integration.Provider
+		issue.Discussions = engagement.Discussions
 
 		issueToUpsert = issue
 	}
