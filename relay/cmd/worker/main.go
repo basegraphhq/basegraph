@@ -10,9 +10,11 @@ import (
 	"time"
 
 	"basegraph.app/relay/common/id"
+	"basegraph.app/relay/common/llm"
 	"basegraph.app/relay/common/logger"
 	"basegraph.app/relay/core/config"
 	"basegraph.app/relay/core/db"
+	"basegraph.app/relay/internal/pipeline"
 	"basegraph.app/relay/internal/queue"
 	"basegraph.app/relay/internal/service"
 	"basegraph.app/relay/internal/store"
@@ -86,8 +88,26 @@ func main() {
 	// Create transaction runner adapter for worker
 	txRunner := &workerTxRunnerAdapter{tx: service.NewTxRunner(database)}
 
-	// Create processor (stub for now)
-	processor := worker.NewMockProcessor()
+	// Initialize LLM client
+	if !cfg.OpenAI.Enabled() {
+		slog.ErrorContext(ctx, "OPENAI_API_KEY is required for pipeline processing")
+		os.Exit(1)
+	}
+
+	llmClient, err := llm.New(llm.Config{
+		APIKey:  cfg.OpenAI.APIKey,
+		BaseURL: cfg.OpenAI.BaseURL,
+		Model:   cfg.OpenAI.Model,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to create LLM client", "error", err)
+		os.Exit(1)
+	}
+	slog.InfoContext(ctx, "llm client initialized", "model", cfg.OpenAI.Model)
+
+	// Create pipeline and processor
+	p := pipeline.New(llmClient)
+	processor := worker.NewPipelineProcessor(p)
 
 	// Create worker
 	w := worker.New(consumer, txRunner, processor, worker.Config{
