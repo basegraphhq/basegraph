@@ -13,8 +13,8 @@ import (
 	"basegraph.app/relay/common/logger"
 	"basegraph.app/relay/core/config"
 	"basegraph.app/relay/core/db"
-	"basegraph.app/relay/core/db/sqlc"
 	"basegraph.app/relay/internal/queue"
+	"basegraph.app/relay/internal/service"
 	"basegraph.app/relay/internal/store"
 	"basegraph.app/relay/internal/worker"
 	"github.com/redis/go-redis/v9"
@@ -84,7 +84,7 @@ func main() {
 	}
 
 	// Create transaction runner adapter for worker
-	txRunner := &workerTxRunnerAdapter{db: database}
+	txRunner := &workerTxRunnerAdapter{tx: service.NewTxRunner(database)}
 
 	// Create processor (stub for now)
 	processor := worker.NewMockProcessor()
@@ -146,15 +146,18 @@ func main() {
 	slog.InfoContext(ctx, "worker shutdown complete")
 }
 
-// workerTxRunnerAdapter bridges db.DB to worker.TxRunner.
+// workerTxRunnerAdapter bridges service.TxRunner to worker.TxRunner.
 type workerTxRunnerAdapter struct {
-	db *db.DB
+	tx service.TxRunner
 }
 
 func (a *workerTxRunnerAdapter) WithTx(ctx context.Context, fn func(stores worker.StoreProvider) error) error {
-	return a.db.WithTx(ctx, func(q *sqlc.Queries) error {
-		stores := store.NewStores(q)
-		return fn(stores)
+	return a.tx.WithTx(ctx, func(sp service.StoreProvider) error {
+		s, ok := sp.(*store.Stores)
+		if !ok {
+			return fmt.Errorf("unexpected store provider type %T", sp)
+		}
+		return fn(s)
 	})
 }
 
