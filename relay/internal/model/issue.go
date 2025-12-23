@@ -44,7 +44,6 @@ type CodeFinding struct {
 type Discussion struct {
 	ExternalID string    `json:"external_id"`
 	ThreadID   *string   `json:"thread_id,omitempty"`
-	ParentID   *string   `json:"parent_id,omitempty"`
 	Author     string    `json:"author"`
 	Body       string    `json:"body"`
 	CreatedAt  time.Time `json:"created_at"`

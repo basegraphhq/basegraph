@@ -127,9 +127,8 @@ func (s *gitLabIssueTrackerService) mapDiscussions(gitlabDiscussions []*gitlab.D
 		}
 
 		threadID := d.ID
-		var firstNoteID *string
 
-		for i, n := range d.Notes {
+		for _, n := range d.Notes {
 			if n == nil {
 				continue
 			}
@@ -137,14 +136,6 @@ func (s *gitLabIssueTrackerService) mapDiscussions(gitlabDiscussions []*gitlab.D
 			author := fmt.Sprintf("id:%d", n.Author.ID)
 			if n.Author.Username != "" {
 				author = n.Author.Username
-			}
-
-			var parentID *string
-			if i == 0 {
-				noteID := fmt.Sprintf("%d", n.ID)
-				firstNoteID = &noteID
-			} else if firstNoteID != nil {
-				parentID = firstNoteID
 			}
 
 			createdAt := n.CreatedAt
@@ -155,7 +146,6 @@ func (s *gitLabIssueTrackerService) mapDiscussions(gitlabDiscussions []*gitlab.D
 			discussion := model.Discussion{
 				ExternalID: fmt.Sprintf("%d", n.ID),
 				ThreadID:   &threadID,
-				ParentID:   parentID,
 				Author:     author,
 				Body:       n.Body,
 			}
