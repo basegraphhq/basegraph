@@ -11,25 +11,22 @@ import (
 	"basegraph.app/relay/internal/store"
 )
 
-// StoreProvider provides access to stores within a transaction.
-// Mirrors service.StoreProvider but defined here to avoid import cycles.
+// Mirrors service.StoreProvider - defined here to avoid import cycles.
 type StoreProvider interface {
 	Issues() store.IssueStore
 	EventLogs() store.EventLogStore
+	LLMEvals() store.LLMEvalStore
 }
 
-// TxRunner runs functions within a transaction.
-// Mirrors service.TxRunner but defined here to avoid import cycles.
+// Mirrors service.TxRunner - defined here to avoid import cycles.
 type TxRunner interface {
 	WithTx(ctx context.Context, fn func(stores StoreProvider) error) error
 }
 
-// Config holds worker configuration.
 type Config struct {
 	MaxAttempts int
 }
 
-// Worker processes issues from the Redis stream.
 type Worker struct {
 	consumer  *queue.RedisConsumer
 	txRunner  TxRunner
@@ -40,7 +37,6 @@ type Worker struct {
 	stoppedCh chan struct{}
 }
 
-// New creates a new Worker instance.
 func New(consumer *queue.RedisConsumer, txRunner TxRunner, processor IssueProcessor, cfg Config) *Worker {
 	return &Worker{
 		consumer:  consumer,
@@ -52,7 +48,6 @@ func New(consumer *queue.RedisConsumer, txRunner TxRunner, processor IssueProces
 	}
 }
 
-// Run starts the worker loop. Blocks until Stop() is called or context is cancelled.
 func (w *Worker) Run(ctx context.Context) error {
 	defer close(w.stoppedCh)
 
@@ -75,13 +70,11 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
-// Stop signals the worker to stop gracefully.
 func (w *Worker) Stop() {
 	close(w.stopCh)
 	<-w.stoppedCh
 }
 
-// processOneBatch reads and processes one batch of messages.
 func (w *Worker) processOneBatch(ctx context.Context) error {
 	messages, err := w.consumer.Read(ctx)
 	if err != nil {
@@ -89,12 +82,11 @@ func (w *Worker) processOneBatch(ctx context.Context) error {
 	}
 
 	for _, msg := range messages {
-		if err := w.ProcessMessage(ctx, msg); err != nil {
+		if err := w.processMessageSafe(ctx, msg); err != nil {
 			slog.ErrorContext(ctx, "message processing failed",
 				"error", err,
 				"message_id", msg.ID,
 				"issue_id", msg.IssueID)
-			// Handle retry/DLQ based on attempt count
 			w.handleFailedMessage(ctx, msg, err)
 		}
 	}
@@ -102,7 +94,19 @@ func (w *Worker) processOneBatch(ctx context.Context) error {
 	return nil
 }
 
-// ProcessMessage handles a single message from the stream.
+func (w *Worker) processMessageSafe(ctx context.Context, msg queue.Message) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			slog.ErrorContext(ctx, "panic recovered in message processing",
+				"panic", r,
+				"message_id", msg.ID,
+				"issue_id", msg.IssueID)
+			err = fmt.Errorf("panic: %v", r)
+		}
+	}()
+	return w.ProcessMessage(ctx, msg)
+}
+
 // Exported so it can be reused by the reclaimer.
 func (w *Worker) ProcessMessage(ctx context.Context, msg queue.Message) error {
 	slog.InfoContext(ctx, "processing message",
@@ -149,7 +153,7 @@ func (w *Worker) ProcessMessage(ctx context.Context, msg queue.Message) error {
 			"event_count", len(events))
 
 		// Step 3: Process all events
-		updatedIssue, err := w.processor.Process(ctx, issue, events)
+		updatedIssue, err := w.processor.Process(ctx, issue, events, sp)
 		if err != nil {
 			processingErr = err
 			// Mark events as failed but still complete the issue
@@ -211,7 +215,6 @@ func (w *Worker) ProcessMessage(ctx context.Context, msg queue.Message) error {
 	return nil
 }
 
-// handleFailedMessage decides whether to requeue or send to DLQ.
 func (w *Worker) handleFailedMessage(ctx context.Context, msg queue.Message, err error) {
 	if msg.Attempt >= w.cfg.MaxAttempts {
 		slog.ErrorContext(ctx, "max attempts reached, sending to DLQ",

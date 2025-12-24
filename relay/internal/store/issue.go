@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"basegraph.app/relay/core/db/sqlc"
 	"basegraph.app/relay/internal/model"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type issueStore struct {
@@ -19,6 +21,10 @@ func newIssueStore(queries *sqlc.Queries) IssueStore {
 }
 
 func (s *issueStore) Upsert(ctx context.Context, issue *model.Issue) (*model.Issue, error) {
+	keywordsJSON, err := json.Marshal(issue.Keywords)
+	if err != nil {
+		return nil, err
+	}
 	codeFindingsJSON, err := json.Marshal(issue.CodeFindings)
 	if err != nil {
 		return nil, err
@@ -43,7 +49,7 @@ func (s *issueStore) Upsert(ctx context.Context, issue *model.Issue) (*model.Iss
 		Members:         issue.Members,
 		Assignees:       issue.Assignees,
 		Reporter:        issue.Reporter,
-		Keywords:        issue.Keywords,
+		Keywords:        keywordsJSON,
 		CodeFindings:    codeFindingsJSON,
 		Learnings:       learningsJSON,
 		Discussions:     discussionsJSON,
@@ -119,7 +125,64 @@ func (s *issueStore) SetProcessed(ctx context.Context, issueID int64) error {
 	return nil
 }
 
+func (s *issueStore) ReclaimStuckIssues(ctx context.Context, stuckDuration time.Duration, limit int) ([]int64, error) {
+	cutoff := time.Now().Add(-stuckDuration)
+
+	stuckIDs, err := s.queries.FindStuckIssues(ctx, sqlc.FindStuckIssuesParams{
+		ProcessingStartedAt: pgtype.Timestamptz{Time: cutoff, Valid: true},
+		Limit:               int32(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(stuckIDs) == 0 {
+		return nil, nil
+	}
+
+	var reclaimedIDs []int64
+	for _, id := range stuckIDs {
+		_, err := s.queries.ReclaimStuckIssue(ctx, id)
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			return reclaimedIDs, err
+		}
+		reclaimedIDs = append(reclaimedIDs, id)
+	}
+
+	return reclaimedIDs, nil
+}
+
+func (s *issueStore) FindStuckQueuedIssues(ctx context.Context, stuckDuration time.Duration, limit int) ([]int64, error) {
+	cutoff := time.Now().Add(-stuckDuration)
+
+	return s.queries.FindStuckQueuedIssues(ctx, sqlc.FindStuckQueuedIssuesParams{
+		UpdatedAt: pgtype.Timestamptz{Time: cutoff, Valid: true},
+		Limit:     int32(limit),
+	})
+}
+
+func (s *issueStore) ResetQueuedToIdle(ctx context.Context, issueID int64) error {
+	rowsAffected, err := s.queries.ResetQueuedToIdle(ctx, issueID)
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errors.New("issue was not in queued state")
+	}
+	return nil
+}
+
 func toIssueModel(row sqlc.Issue) (*model.Issue, error) {
+	var keywords []model.Keyword
+	if len(row.Keywords) > 0 {
+		if err := json.Unmarshal(row.Keywords, &keywords); err != nil {
+			return nil, err
+		}
+	}
+
 	var codeFindings []model.CodeFinding
 	if len(row.CodeFindings) > 0 {
 		if err := json.Unmarshal(row.CodeFindings, &codeFindings); err != nil {
@@ -152,7 +215,7 @@ func toIssueModel(row sqlc.Issue) (*model.Issue, error) {
 		Members:          row.Members,
 		Assignees:        row.Assignees,
 		Reporter:         row.Reporter,
-		Keywords:         row.Keywords,
+		Keywords:         keywords,
 		CodeFindings:     codeFindings,
 		Learnings:        learnings,
 		Discussions:      discussions,
