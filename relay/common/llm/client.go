@@ -14,7 +14,8 @@ import (
 )
 
 type Client interface {
-	Chat(ctx context.Context, req Request, result any) error
+	Chat(ctx context.Context, req Request, result any) (*Response, error)
+	Model() string
 }
 
 type Request struct {
@@ -24,6 +25,11 @@ type Request struct {
 	Schema       any
 	MaxTokens    int
 	Temperature  *float64 // nil = model default, explicit 0 = deterministic
+}
+
+type Response struct {
+	PromptTokens     int
+	CompletionTokens int
 }
 
 type Config struct {
@@ -60,7 +66,7 @@ func New(cfg Config) (Client, error) {
 	}, nil
 }
 
-func (c *client) Chat(ctx context.Context, req Request, result any) error {
+func (c *client) Chat(ctx context.Context, req Request, result any) (*Response, error) {
 	maxTokens := req.MaxTokens
 	if maxTokens == 0 {
 		maxTokens = 1000
@@ -79,9 +85,9 @@ func (c *client) Chat(ctx context.Context, req Request, result any) error {
 	}
 
 	params := openai.ChatCompletionNewParams{
-		Model:      c.model,
-		Messages:   messages,
-		MaxTokens:  openai.Int(int64(maxTokens)),
+		Model:     c.model,
+		Messages:  messages,
+		MaxTokens: openai.Int(int64(maxTokens)),
 		ResponseFormat: openai.ChatCompletionNewParamsResponseFormatUnion{
 			OfJSONSchema: &openai.ResponseFormatJSONSchemaParam{
 				JSONSchema: schemaParam,
@@ -95,7 +101,7 @@ func (c *client) Chat(ctx context.Context, req Request, result any) error {
 	start := time.Now()
 	resp, err := c.openai.Chat.Completions.New(ctx, params)
 	if err != nil {
-		return fmt.Errorf("openai chat: %w", err)
+		return nil, fmt.Errorf("openai chat: %w", err)
 	}
 
 	slog.DebugContext(ctx, "llm chat completed",
@@ -105,15 +111,22 @@ func (c *client) Chat(ctx context.Context, req Request, result any) error {
 		"completion_tokens", resp.Usage.CompletionTokens)
 
 	if len(resp.Choices) == 0 {
-		return fmt.Errorf("no choices in response")
+		return nil, fmt.Errorf("no choices in response")
 	}
 
 	content := resp.Choices[0].Message.Content
 	if err := json.Unmarshal([]byte(content), result); err != nil {
-		return fmt.Errorf("unmarshal response: %w", err)
+		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
-	return nil
+	return &Response{
+		PromptTokens:     int(resp.Usage.PromptTokens),
+		CompletionTokens: int(resp.Usage.CompletionTokens),
+	}, nil
+}
+
+func (c *client) Model() string {
+	return c.model
 }
 
 func GenerateSchema[T any]() any {
