@@ -55,3 +55,7 @@ func (s *Stores) EventLogs() EventLogStore {
 func (s *Stores) Learnings() LearningStore {
 	return newLearningStore(s.queries)
 }
+
+func (s *Stores) LLMEvals() LLMEvalStore {
+	return newLLMEvalStore(s.queries)
+}
