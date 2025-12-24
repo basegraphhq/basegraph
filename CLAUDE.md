@@ -87,3 +87,4 @@ Logging and observability are core to this project.
 4. **Think about edge cases** - Highlight business and code edge cases early
 5. **Trace the data flow** - Understand the "why" before proposing the "what"
 6. **Errors and UX** - When handling errors and concurrency, think from UX perspective. Relay is built to behave like a human teammate.
+7. **Complexity and UX** - UX matters over anything. Simplicity is king. We should only introduce complexity if the UX demands it. Ask questions to developer about intended UX when errors may happen, or something breaks. 
