@@ -4,12 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"time"
 
 	"basegraph.app/relay/core/db/sqlc"
 	"basegraph.app/relay/internal/model"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type issueStore struct {
@@ -114,63 +112,13 @@ func (s *issueStore) ClaimQueued(ctx context.Context, issueID int64) (bool, *mod
 	return true, issue, nil
 }
 
-func (s *issueStore) SetProcessed(ctx context.Context, issueID int64) error {
-	rowsAffected, err := s.queries.SetIssueProcessed(ctx, issueID)
+func (s *issueStore) SetIdle(ctx context.Context, issueID int64) error {
+	rowsAffected, err := s.queries.SetIssueIdle(ctx, issueID)
 	if err != nil {
 		return err
 	}
 	if rowsAffected == 0 {
 		return errors.New("issue was not in processing state")
-	}
-	return nil
-}
-
-func (s *issueStore) ReclaimStuckIssues(ctx context.Context, stuckDuration time.Duration, limit int) ([]int64, error) {
-	cutoff := time.Now().Add(-stuckDuration)
-
-	stuckIDs, err := s.queries.FindStuckIssues(ctx, sqlc.FindStuckIssuesParams{
-		ProcessingStartedAt: pgtype.Timestamptz{Time: cutoff, Valid: true},
-		Limit:               int32(limit),
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	if len(stuckIDs) == 0 {
-		return nil, nil
-	}
-
-	var reclaimedIDs []int64
-	for _, id := range stuckIDs {
-		_, err := s.queries.ReclaimStuckIssue(ctx, id)
-		if err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				continue
-			}
-			return reclaimedIDs, err
-		}
-		reclaimedIDs = append(reclaimedIDs, id)
-	}
-
-	return reclaimedIDs, nil
-}
-
-func (s *issueStore) FindStuckQueuedIssues(ctx context.Context, stuckDuration time.Duration, limit int) ([]int64, error) {
-	cutoff := time.Now().Add(-stuckDuration)
-
-	return s.queries.FindStuckQueuedIssues(ctx, sqlc.FindStuckQueuedIssuesParams{
-		UpdatedAt: pgtype.Timestamptz{Time: cutoff, Valid: true},
-		Limit:     int32(limit),
-	})
-}
-
-func (s *issueStore) ResetQueuedToIdle(ctx context.Context, issueID int64) error {
-	rowsAffected, err := s.queries.ResetQueuedToIdle(ctx, issueID)
-	if err != nil {
-		return err
-	}
-	if rowsAffected == 0 {
-		return errors.New("issue was not in queued state")
 	}
 	return nil
 }

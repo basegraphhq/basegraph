@@ -96,8 +96,8 @@ WHERE id = $1
   AND processing_status = 'queued'
 RETURNING *;
 
--- name: SetIssueProcessed :execrows
--- Mark issue processing complete. Transition from 'processing' to 'idle'.
+-- name: SetIssueIdle :execrows
+-- Transition issue from 'processing' to 'idle'.
 UPDATE issues
 SET processing_status = 'idle',
     last_processed_at = now(),

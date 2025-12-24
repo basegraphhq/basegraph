@@ -190,7 +190,7 @@ func (q *Queries) QueueIssueIfIdle(ctx context.Context, id int64) (Issue, error)
 	return i, err
 }
 
-const setIssueProcessed = `-- name: SetIssueProcessed :execrows
+const setIssueIdle = `-- name: SetIssueIdle :execrows
 UPDATE issues
 SET processing_status = 'idle',
     last_processed_at = now(),
@@ -200,9 +200,9 @@ WHERE id = $1
   AND processing_status = 'processing'
 `
 
-// Mark issue processing complete. Transition from 'processing' to 'idle'.
-func (q *Queries) SetIssueProcessed(ctx context.Context, id int64) (int64, error) {
-	result, err := q.db.Exec(ctx, setIssueProcessed, id)
+// Transition issue from 'processing' to 'idle'.
+func (q *Queries) SetIssueIdle(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, setIssueIdle, id)
 	if err != nil {
 		return 0, err
 	}

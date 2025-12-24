@@ -51,6 +51,9 @@ func NewRedisConsumer(client *redis.Client, cfg ConsumerConfig) (*RedisConsumer,
 }
 
 func (c *RedisConsumer) ensureGroup(ctx context.Context) error {
+	// Consumer groups are just readers, messages live in the stream itself.
+	// If we recreate the group, we want to see everything that's already there.
+	// Starting from "0" instead of "$" means we don't lose messages during restarts.
 	if err := c.client.XGroupCreateMkStream(ctx, c.cfg.Stream, c.cfg.Group, "0").Err(); err != nil && err.Error() != "BUSYGROUP Consumer Group name already exists" {
 		return fmt.Errorf("creating consumer group: %w", err)
 	}
@@ -62,7 +65,8 @@ func (c *RedisConsumer) Read(ctx context.Context) ([]Message, error) {
 		Group:    c.cfg.Group,
 		Consumer: c.cfg.Consumer,
 		// > = New messages not yet delivered to anyone. 0 = this consumer's pending message
-		Streams: []string{c.cfg.Stream, ">"},
+		// Unacked messages will be handled by reclaimer which runs on a different goroutine
+		Streams: []string{c.cfg.Stream, ">"}, // we'll be reading newer message only from the configured stream 'relay_events'
 		Count:   c.cfg.BatchSize,
 		Block:   c.cfg.Block,
 	}).Result()
@@ -74,9 +78,10 @@ func (c *RedisConsumer) Read(ctx context.Context) ([]Message, error) {
 	}
 
 	var messages []Message
+	// XReadGroup supports multiple streams, but we only read one so this outer loop only runs once.
 	for _, stream := range streams {
 		for _, msg := range stream.Messages {
-			parsed, parseErr := parseMessage(msg)
+			parsed, parseErr := ParseMessage(msg)
 			if parseErr != nil {
 				slog.ErrorContext(ctx, "failed to parse message", "error", parseErr, "message_id", msg.ID)
 				_ = c.Ack(ctx, Message{ID: msg.ID, Raw: msg})
@@ -143,7 +148,7 @@ func (c *RedisConsumer) SendDLQ(ctx context.Context, msg Message, errMsg string)
 	}).Err()
 }
 
-func parseMessage(msg redis.XMessage) (Message, error) {
+func ParseMessage(msg redis.XMessage) (Message, error) {
 	eventLogID, err := parseInt64(msg.Values, "event_log_id")
 	if err != nil {
 		return Message{}, err

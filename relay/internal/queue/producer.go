@@ -50,6 +50,8 @@ func (p *redisProducer) Enqueue(ctx context.Context, msg EventMessage) error {
 		fields["trace_id"] = *msg.TraceID
 	}
 
+	// TODO - @nithinsj - Add MAXLEN to prevent stream growing unbounded. Redis streams grow until out of memory.
+	// Consider XTRIM periodically or MAXLEN ~ with XAdd to cap at ~1M entries.
 	if err := p.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: p.stream,
 		Values: fields,

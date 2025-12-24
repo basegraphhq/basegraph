@@ -1,4 +1,4 @@
-package pipeline
+package brain
 
 type Retriever struct{}
 

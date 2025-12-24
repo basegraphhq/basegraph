@@ -14,7 +14,6 @@ import (
 	"basegraph.app/relay/common/logger"
 	"basegraph.app/relay/core/config"
 	"basegraph.app/relay/core/db"
-	"basegraph.app/relay/internal/pipeline"
 	"basegraph.app/relay/internal/queue"
 	"basegraph.app/relay/internal/service"
 	"basegraph.app/relay/internal/store"
@@ -45,7 +44,6 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Initialize database
 	database, err := db.New(ctx, cfg.DB)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to connect to database", "error", err)
@@ -54,7 +52,6 @@ func main() {
 	defer database.Close()
 	slog.InfoContext(ctx, "database connected")
 
-	// Initialize Redis
 	redisOpts, err := redis.ParseURL(cfg.Pipeline.RedisURL)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to parse redis url", "error", err)
@@ -69,7 +66,6 @@ func main() {
 	defer redisClient.Close()
 	slog.InfoContext(ctx, "redis connected", "stream", cfg.Pipeline.RedisStream)
 
-	// Create consumer
 	consumer, err := queue.NewRedisConsumer(redisClient, queue.ConsumerConfig{
 		Stream:       cfg.Pipeline.RedisStream,
 		Group:        cfg.Pipeline.RedisGroup,
@@ -85,10 +81,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Create transaction runner adapter for worker
 	txRunner := &workerTxRunnerAdapter{tx: service.NewTxRunner(database)}
 
-	// Initialize LLM client
 	if !cfg.OpenAI.Enabled() {
 		slog.ErrorContext(ctx, "OPENAI_API_KEY is required for pipeline processing")
 		os.Exit(1)
@@ -103,18 +97,13 @@ func main() {
 		slog.ErrorContext(ctx, "failed to create LLM client", "error", err)
 		os.Exit(1)
 	}
+
 	slog.InfoContext(ctx, "llm client initialized", "model", cfg.OpenAI.Model)
 
-	// Create stores for non-transactional operations (e.g., LLM evals)
 	stores := store.NewStores(database.Queries())
+	processor := worker.NewProcessor(llmClient, stores.LLMEvals())
 
-	// Create pipeline and processor
-	p := pipeline.New(llmClient, stores.LLMEvals())
-	processor := worker.NewPipelineProcessor(p)
-
-	// Create worker
-	// MaxAttempts=1: Infrastructure errors rarely self-heal. DLQ is a safety valve,
-	// not a retry mechanism. Poison messages go to DLQ immediately.
+	// MaxAttempts=1: DLQ is a safety valve, not a retry mechanism. Poison messages go to DLQ immediately.
 	w := worker.New(consumer, txRunner, stores.Issues(), processor, worker.Config{
 		MaxAttempts: 1,
 	})
@@ -141,14 +130,12 @@ func main() {
 
 	slog.InfoContext(ctx, "worker initialized and running")
 
-	// Graceful shutdown
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
 	slog.InfoContext(ctx, "shutting down worker...")
 
-	// Create shutdown context with timeout
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
