@@ -45,13 +45,44 @@ SELECT * FROM issues WHERE id = $1;
 SELECT * FROM issues WHERE integration_id = $1 AND external_issue_id = $2;
 
 -- name: QueueIssueIfIdle :one
--- Atomically transition issue from 'idle' to 'queued'.
--- Returns the issue if transition happened, no rows if already queued/processing.
+--
+-- Queue an issue for processing, with automatic recovery of stuck issues.
+--
+-- This query handles three scenarios:
+--
+-- 1. NORMAL PATH (idle → queued)
+--    Issue is idle and ready to be processed. This is the happy path.
+--
+-- 2. STUCK IN 'processing' (processing → queued after 15 min)
+--    Worker crashed after claiming the issue (TX1) but before completing (TX2).
+--    The issue is stuck in 'processing' forever. When user pings again after
+--    15 minutes, we reset it to 'queued' so it can be reprocessed.
+--
+-- 3. STUCK IN 'queued' (remains queued, but gets re-queued after 15 min)
+--    Server crashed after QueueIfIdle but before publishing to Redis.
+--    The issue is stuck in 'queued' with no Redis message. When user pings
+--    again after 15 minutes, we update it (triggering a new Redis publish).
+--
+-- Why 15 minutes?
+--    - LLM calls typically take 5-60 seconds, never 15 minutes
+--    - Gives legitimate processing plenty of time to complete
+--    - Short enough that users don't wait too long before "ping again" works
+--
+-- Why this approach instead of a background reclaimer?
+--    - Simpler: one SQL query vs. separate goroutine with timers
+--    - User-triggered: recovery happens when user cares enough to ping again
+--    - Matches UX: "ping again if no response" - just like a human teammate
+--
 UPDATE issues
 SET processing_status = 'queued',
+    processing_started_at = NULL,
     updated_at = now()
 WHERE id = $1
-  AND processing_status = 'idle'
+  AND (
+    processing_status = 'idle'
+    OR (processing_status = 'processing' AND processing_started_at < NOW() - INTERVAL '15 minutes')
+    OR (processing_status = 'queued' AND updated_at < NOW() - INTERVAL '15 minutes')
+  )
 RETURNING *;
 
 -- name: ClaimQueuedIssue :one
@@ -74,42 +105,3 @@ SET processing_status = 'idle',
     updated_at = now()
 WHERE id = $1
   AND processing_status = 'processing';
-
--- name: FindStuckIssues :many
--- Find issues stuck in 'processing' state longer than the specified duration.
--- Used by the PostgreSQL reclaimer to identify issues where the worker crashed.
-SELECT id FROM issues
-WHERE processing_status = 'processing'
-  AND processing_started_at IS NOT NULL
-  AND processing_started_at < $1
-ORDER BY processing_started_at ASC
-LIMIT $2;
-
--- name: ReclaimStuckIssue :one
--- Reset a stuck issue from 'processing' back to 'queued'.
--- Returns the issue ID if reset succeeded, no rows if already reclaimed.
-UPDATE issues
-SET processing_status = 'queued',
-    processing_started_at = NULL,
-    updated_at = now()
-WHERE id = $1
-  AND processing_status = 'processing'
-RETURNING id;
-
--- name: FindStuckQueuedIssues :many
--- Find issues stuck in 'queued' state longer than the specified duration.
--- This handles server crash after QueueIfIdle but before Redis XADD.
-SELECT id FROM issues
-WHERE processing_status = 'queued'
-  AND updated_at < $1
-ORDER BY updated_at ASC
-LIMIT $2;
-
--- name: ResetQueuedToIdle :execrows
--- Reset a 'queued' issue back to 'idle' when there are no events to process.
--- Used by PG reclaimer for stuck 'queued' issues that have no pending events.
-UPDATE issues
-SET processing_status = 'idle',
-    updated_at = now()
-WHERE id = $1
-  AND processing_status = 'queued';

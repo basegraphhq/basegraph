@@ -119,6 +119,7 @@ func main() {
 		MaxAttempts: 1,
 	})
 
+	// Redis reclaimer handles unACK'd messages from crashed workers.
 	reclaimer := worker.NewRedisReclaimer(redisClient, worker.RedisReclaimerConfig{
 		Stream:    cfg.Pipeline.RedisStream,
 		Group:     cfg.Pipeline.RedisGroup,
@@ -128,32 +129,13 @@ func main() {
 		BatchSize: 10,
 	}, w.ProcessMessage)
 
-	// Create producer for PG reclaimer (to send Redis messages for stuck 'queued' issues)
-	pgReclaimerProducer := queue.NewRedisProducer(redisClient, cfg.Pipeline.RedisStream)
-
-	// Create PostgreSQL reclaimer (for issues stuck in 'processing' or 'queued' state)
-	pgReclaimer := worker.NewPGReclaimer(
-		stores.Issues(),
-		stores.EventLogs(),
-		pgReclaimerProducer,
-		worker.PGReclaimerConfig{
-			StuckDuration: 15 * time.Minute,
-			Interval:      2 * time.Minute,
-			BatchSize:     100,
-		},
-	)
-
-	// Start worker and reclaimers
-	errCh := make(chan error, 3)
+	// Start worker and reclaimer
+	errCh := make(chan error, 2)
 	go func() {
 		errCh <- w.Run(ctx)
 	}()
 	go func() {
 		reclaimer.Run(ctx)
-		errCh <- nil
-	}()
-	go func() {
-		pgReclaimer.Run(ctx)
 		errCh <- nil
 	}()
 
@@ -170,9 +152,8 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	// Stop reclaimers first (quick)
+	// Stop reclaimer first (quick)
 	reclaimer.Stop()
-	pgReclaimer.Stop()
 
 	// Stop worker (may be processing)
 	w.Stop()

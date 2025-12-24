@@ -7,8 +7,6 @@ package sqlc
 
 import (
 	"context"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const claimQueuedIssue = `-- name: ClaimQueuedIssue :one
@@ -50,77 +48,6 @@ func (q *Queries) ClaimQueuedIssue(ctx context.Context, id int64) (Issue, error)
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const findStuckIssues = `-- name: FindStuckIssues :many
-SELECT id FROM issues
-WHERE processing_status = 'processing'
-  AND processing_started_at IS NOT NULL
-  AND processing_started_at < $1
-ORDER BY processing_started_at ASC
-LIMIT $2
-`
-
-type FindStuckIssuesParams struct {
-	ProcessingStartedAt pgtype.Timestamptz `json:"processing_started_at"`
-	Limit               int32              `json:"limit"`
-}
-
-// Find issues stuck in 'processing' state longer than the specified duration.
-// Used by the PostgreSQL reclaimer to identify issues where the worker crashed.
-func (q *Queries) FindStuckIssues(ctx context.Context, arg FindStuckIssuesParams) ([]int64, error) {
-	rows, err := q.db.Query(ctx, findStuckIssues, arg.ProcessingStartedAt, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const findStuckQueuedIssues = `-- name: FindStuckQueuedIssues :many
-SELECT id FROM issues
-WHERE processing_status = 'queued'
-  AND updated_at < $1
-ORDER BY updated_at ASC
-LIMIT $2
-`
-
-type FindStuckQueuedIssuesParams struct {
-	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
-	Limit     int32              `json:"limit"`
-}
-
-// Find issues stuck in 'queued' state longer than the specified duration.
-// This handles server crash after QueueIfIdle but before Redis XADD.
-func (q *Queries) FindStuckQueuedIssues(ctx context.Context, arg FindStuckQueuedIssuesParams) ([]int64, error) {
-	rows, err := q.db.Query(ctx, findStuckQueuedIssues, arg.UpdatedAt, arg.Limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		items = append(items, id)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
 }
 
 const getIssue = `-- name: GetIssue :one
@@ -197,14 +124,43 @@ func (q *Queries) GetIssueByIntegrationAndExternalID(ctx context.Context, arg Ge
 const queueIssueIfIdle = `-- name: QueueIssueIfIdle :one
 UPDATE issues
 SET processing_status = 'queued',
+    processing_started_at = NULL,
     updated_at = now()
 WHERE id = $1
-  AND processing_status = 'idle'
+  AND (
+    processing_status = 'idle'
+    OR (processing_status = 'processing' AND processing_started_at < NOW() - INTERVAL '15 minutes')
+    OR (processing_status = 'queued' AND updated_at < NOW() - INTERVAL '15 minutes')
+  )
 RETURNING id, integration_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
 `
 
-// Atomically transition issue from 'idle' to 'queued'.
-// Returns the issue if transition happened, no rows if already queued/processing.
+// Queue an issue for processing, with automatic recovery of stuck issues.
+//
+// This query handles three scenarios:
+//
+//  1. NORMAL PATH (idle → queued)
+//     Issue is idle and ready to be processed. This is the happy path.
+//
+//  2. STUCK IN 'processing' (processing → queued after 15 min)
+//     Worker crashed after claiming the issue (TX1) but before completing (TX2).
+//     The issue is stuck in 'processing' forever. When user pings again after
+//     15 minutes, we reset it to 'queued' so it can be reprocessed.
+//
+//  3. STUCK IN 'queued' (remains queued, but gets re-queued after 15 min)
+//     Server crashed after QueueIfIdle but before publishing to Redis.
+//     The issue is stuck in 'queued' with no Redis message. When user pings
+//     again after 15 minutes, we update it (triggering a new Redis publish).
+//
+// Why 15 minutes?
+//   - LLM calls typically take 5-60 seconds, never 15 minutes
+//   - Gives legitimate processing plenty of time to complete
+//   - Short enough that users don't wait too long before "ping again" works
+//
+// Why this approach instead of a background reclaimer?
+//   - Simpler: one SQL query vs. separate goroutine with timers
+//   - User-triggered: recovery happens when user cares enough to ping again
+//   - Matches UX: "ping again if no response" - just like a human teammate
 func (q *Queries) QueueIssueIfIdle(ctx context.Context, id int64) (Issue, error) {
 	row := q.db.QueryRow(ctx, queueIssueIfIdle, id)
 	var i Issue
@@ -232,42 +188,6 @@ func (q *Queries) QueueIssueIfIdle(ctx context.Context, id int64) (Issue, error)
 		&i.UpdatedAt,
 	)
 	return i, err
-}
-
-const reclaimStuckIssue = `-- name: ReclaimStuckIssue :one
-UPDATE issues
-SET processing_status = 'queued',
-    processing_started_at = NULL,
-    updated_at = now()
-WHERE id = $1
-  AND processing_status = 'processing'
-RETURNING id
-`
-
-// Reset a stuck issue from 'processing' back to 'queued'.
-// Returns the issue ID if reset succeeded, no rows if already reclaimed.
-func (q *Queries) ReclaimStuckIssue(ctx context.Context, id int64) (int64, error) {
-	row := q.db.QueryRow(ctx, reclaimStuckIssue, id)
-	err := row.Scan(&id)
-	return id, err
-}
-
-const resetQueuedToIdle = `-- name: ResetQueuedToIdle :execrows
-UPDATE issues
-SET processing_status = 'idle',
-    updated_at = now()
-WHERE id = $1
-  AND processing_status = 'queued'
-`
-
-// Reset a 'queued' issue back to 'idle' when there are no events to process.
-// Used by PG reclaimer for stuck 'queued' issues that have no pending events.
-func (q *Queries) ResetQueuedToIdle(ctx context.Context, id int64) (int64, error) {
-	result, err := q.db.Exec(ctx, resetQueuedToIdle, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
 }
 
 const setIssueProcessed = `-- name: SetIssueProcessed :execrows
