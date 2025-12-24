@@ -113,6 +113,18 @@ type IssueStore interface {
 	ClaimQueued(ctx context.Context, issueID int64) (claimed bool, issue *model.Issue, err error)
 	// SetProcessed transitions an issue from 'processing' to 'idle'.
 	SetProcessed(ctx context.Context, issueID int64) error
+
+	// ReclaimStuckIssues finds issues stuck in 'processing' longer than stuckDuration
+	// and resets them to 'queued'. Returns IDs of reclaimed issues.
+	ReclaimStuckIssues(ctx context.Context, stuckDuration time.Duration, limit int) ([]int64, error)
+
+	// FindStuckQueuedIssues finds issues stuck in 'queued' longer than stuckDuration.
+	// This handles server crash after QueueIfIdle but before Redis XADD.
+	FindStuckQueuedIssues(ctx context.Context, stuckDuration time.Duration, limit int) ([]int64, error)
+
+	// ResetQueuedToIdle resets a 'queued' issue back to 'idle'.
+	// Used by PG reclaimer for stuck 'queued' issues that have no pending events.
+	ResetQueuedToIdle(ctx context.Context, issueID int64) error
 }
 
 type EventLogStore interface {
@@ -138,4 +150,15 @@ type LearningStore interface {
 	Delete(ctx context.Context, id int64) error
 	ListByWorkspace(ctx context.Context, workspaceID int64) ([]model.Learning, error)
 	ListByWorkspaceAndType(ctx context.Context, workspaceID int64, learningType string) ([]model.Learning, error)
+}
+
+type LLMEvalStore interface {
+	Create(ctx context.Context, eval *model.LLMEval) (*model.LLMEval, error)
+	GetByID(ctx context.Context, id int64) (*model.LLMEval, error)
+	ListByIssue(ctx context.Context, issueID int64) ([]model.LLMEval, error)
+	ListByStage(ctx context.Context, stage string, limit int32) ([]model.LLMEval, error)
+	ListUnrated(ctx context.Context, stage string, limit int32) ([]model.LLMEval, error)
+	Rate(ctx context.Context, id int64, rating int, notes string, ratedByUserID int64) error
+	SetExpected(ctx context.Context, id int64, expectedJSON []byte, evalScore float64) error
+	GetStats(ctx context.Context, stage string, since time.Time) (*model.LLMEvalStats, error)
 }

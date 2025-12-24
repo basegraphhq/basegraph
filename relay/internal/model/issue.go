@@ -41,6 +41,14 @@ type CodeFinding struct {
 	SuggestedActions []string `json:"suggested_actions"`
 }
 
+type Keyword struct {
+	Value       string    `json:"value"`
+	Weight      float64   `json:"weight"`
+	Category    string    `json:"category"` // entity, concept, library
+	Source      string    `json:"source"`
+	ExtractedAt time.Time `json:"extracted_at"`
+}
+
 type Discussion struct {
 	ExternalID string    `json:"external_id"`
 	ThreadID   *string   `json:"thread_id,omitempty"`
@@ -66,7 +74,7 @@ type Issue struct {
 	Assignees        []string      `json:"assignees,omitempty"`
 	Reporter         *string       `json:"reporter,omitempty"`
 	ExternalIssueURL *string       `json:"external_issue_url,omitempty"`
-	Keywords         []string      `json:"keywords,omitempty"`
+	Keywords         []Keyword     `json:"keywords,omitempty"`
 	CodeFindings     []CodeFinding `json:"code_findings,omitempty"`
 	Learnings        []Learning    `json:"learnings,omitempty"`
 	Discussions      []Discussion  `json:"discussions,omitempty"`

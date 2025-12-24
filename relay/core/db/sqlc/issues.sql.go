@@ -7,6 +7,8 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const claimQueuedIssue = `-- name: ClaimQueuedIssue :one
@@ -48,6 +50,77 @@ func (q *Queries) ClaimQueuedIssue(ctx context.Context, id int64) (Issue, error)
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const findStuckIssues = `-- name: FindStuckIssues :many
+SELECT id FROM issues
+WHERE processing_status = 'processing'
+  AND processing_started_at IS NOT NULL
+  AND processing_started_at < $1
+ORDER BY processing_started_at ASC
+LIMIT $2
+`
+
+type FindStuckIssuesParams struct {
+	ProcessingStartedAt pgtype.Timestamptz `json:"processing_started_at"`
+	Limit               int32              `json:"limit"`
+}
+
+// Find issues stuck in 'processing' state longer than the specified duration.
+// Used by the PostgreSQL reclaimer to identify issues where the worker crashed.
+func (q *Queries) FindStuckIssues(ctx context.Context, arg FindStuckIssuesParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, findStuckIssues, arg.ProcessingStartedAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const findStuckQueuedIssues = `-- name: FindStuckQueuedIssues :many
+SELECT id FROM issues
+WHERE processing_status = 'queued'
+  AND updated_at < $1
+ORDER BY updated_at ASC
+LIMIT $2
+`
+
+type FindStuckQueuedIssuesParams struct {
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
+	Limit     int32              `json:"limit"`
+}
+
+// Find issues stuck in 'queued' state longer than the specified duration.
+// This handles server crash after QueueIfIdle but before Redis XADD.
+func (q *Queries) FindStuckQueuedIssues(ctx context.Context, arg FindStuckQueuedIssuesParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, findStuckQueuedIssues, arg.UpdatedAt, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const getIssue = `-- name: GetIssue :one
@@ -161,6 +234,42 @@ func (q *Queries) QueueIssueIfIdle(ctx context.Context, id int64) (Issue, error)
 	return i, err
 }
 
+const reclaimStuckIssue = `-- name: ReclaimStuckIssue :one
+UPDATE issues
+SET processing_status = 'queued',
+    processing_started_at = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND processing_status = 'processing'
+RETURNING id
+`
+
+// Reset a stuck issue from 'processing' back to 'queued'.
+// Returns the issue ID if reset succeeded, no rows if already reclaimed.
+func (q *Queries) ReclaimStuckIssue(ctx context.Context, id int64) (int64, error) {
+	row := q.db.QueryRow(ctx, reclaimStuckIssue, id)
+	err := row.Scan(&id)
+	return id, err
+}
+
+const resetQueuedToIdle = `-- name: ResetQueuedToIdle :execrows
+UPDATE issues
+SET processing_status = 'idle',
+    updated_at = now()
+WHERE id = $1
+  AND processing_status = 'queued'
+`
+
+// Reset a 'queued' issue back to 'idle' when there are no events to process.
+// Used by PG reclaimer for stuck 'queued' issues that have no pending events.
+func (q *Queries) ResetQueuedToIdle(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, resetQueuedToIdle, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setIssueProcessed = `-- name: SetIssueProcessed :execrows
 UPDATE issues
 SET processing_status = 'idle',
@@ -232,7 +341,7 @@ type UpsertIssueParams struct {
 	Members         []string `json:"members"`
 	Assignees       []string `json:"assignees"`
 	Reporter        *string  `json:"reporter"`
-	Keywords        []string `json:"keywords"`
+	Keywords        []byte   `json:"keywords"`
 	CodeFindings    []byte   `json:"code_findings"`
 	Learnings       []byte   `json:"learnings"`
 	Discussions     []byte   `json:"discussions"`

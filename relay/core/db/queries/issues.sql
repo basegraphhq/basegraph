@@ -74,3 +74,42 @@ SET processing_status = 'idle',
     updated_at = now()
 WHERE id = $1
   AND processing_status = 'processing';
+
+-- name: FindStuckIssues :many
+-- Find issues stuck in 'processing' state longer than the specified duration.
+-- Used by the PostgreSQL reclaimer to identify issues where the worker crashed.
+SELECT id FROM issues
+WHERE processing_status = 'processing'
+  AND processing_started_at IS NOT NULL
+  AND processing_started_at < $1
+ORDER BY processing_started_at ASC
+LIMIT $2;
+
+-- name: ReclaimStuckIssue :one
+-- Reset a stuck issue from 'processing' back to 'queued'.
+-- Returns the issue ID if reset succeeded, no rows if already reclaimed.
+UPDATE issues
+SET processing_status = 'queued',
+    processing_started_at = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND processing_status = 'processing'
+RETURNING id;
+
+-- name: FindStuckQueuedIssues :many
+-- Find issues stuck in 'queued' state longer than the specified duration.
+-- This handles server crash after QueueIfIdle but before Redis XADD.
+SELECT id FROM issues
+WHERE processing_status = 'queued'
+  AND updated_at < $1
+ORDER BY updated_at ASC
+LIMIT $2;
+
+-- name: ResetQueuedToIdle :execrows
+-- Reset a 'queued' issue back to 'idle' when there are no events to process.
+-- Used by PG reclaimer for stuck 'queued' issues that have no pending events.
+UPDATE issues
+SET processing_status = 'idle',
+    updated_at = now()
+WHERE id = $1
+  AND processing_status = 'queued';
