@@ -105,17 +105,21 @@ func main() {
 	}
 	slog.InfoContext(ctx, "llm client initialized", "model", cfg.OpenAI.Model)
 
+	// Create stores for non-transactional operations (e.g., LLM evals)
+	stores := store.NewStores(database.Queries())
+
 	// Create pipeline and processor
-	p := pipeline.New(llmClient)
+	p := pipeline.New(llmClient, stores.LLMEvals())
 	processor := worker.NewPipelineProcessor(p)
 
 	// Create worker
-	w := worker.New(consumer, txRunner, processor, worker.Config{
-		MaxAttempts: 3,
+	// MaxAttempts=1: Infrastructure errors rarely self-heal. DLQ is a safety valve,
+	// not a retry mechanism. Poison messages go to DLQ immediately.
+	w := worker.New(consumer, txRunner, stores.Issues(), processor, worker.Config{
+		MaxAttempts: 1,
 	})
 
-	// Create reclaimer
-	reclaimer := worker.NewReclaimer(redisClient, worker.ReclaimerConfig{
+	reclaimer := worker.NewRedisReclaimer(redisClient, worker.RedisReclaimerConfig{
 		Stream:    cfg.Pipeline.RedisStream,
 		Group:     cfg.Pipeline.RedisGroup,
 		Consumer:  cfg.Pipeline.RedisConsumer + "-reclaimer",
@@ -124,13 +128,32 @@ func main() {
 		BatchSize: 10,
 	}, w.ProcessMessage)
 
-	// Start worker and reclaimer
-	errCh := make(chan error, 2)
+	// Create producer for PG reclaimer (to send Redis messages for stuck 'queued' issues)
+	pgReclaimerProducer := queue.NewRedisProducer(redisClient, cfg.Pipeline.RedisStream)
+
+	// Create PostgreSQL reclaimer (for issues stuck in 'processing' or 'queued' state)
+	pgReclaimer := worker.NewPGReclaimer(
+		stores.Issues(),
+		stores.EventLogs(),
+		pgReclaimerProducer,
+		worker.PGReclaimerConfig{
+			StuckDuration: 15 * time.Minute,
+			Interval:      2 * time.Minute,
+			BatchSize:     100,
+		},
+	)
+
+	// Start worker and reclaimers
+	errCh := make(chan error, 3)
 	go func() {
 		errCh <- w.Run(ctx)
 	}()
 	go func() {
 		reclaimer.Run(ctx)
+		errCh <- nil
+	}()
+	go func() {
+		pgReclaimer.Run(ctx)
 		errCh <- nil
 	}()
 
@@ -147,8 +170,9 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	// Stop reclaimer first (quick)
+	// Stop reclaimers first (quick)
 	reclaimer.Stop()
+	pgReclaimer.Stop()
 
 	// Stop worker (may be processing)
 	w.Stop()
