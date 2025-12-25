@@ -1,0 +1,2 @@
+Before you attempt to answer, during the thinking phase, refer to AGENTS.md file. Ask clarifying questions.
+Do web search and tell me what's the best practices and what options should I explore and consider. 

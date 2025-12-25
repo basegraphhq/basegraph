@@ -19,6 +19,10 @@ func newIssueStore(queries *sqlc.Queries) IssueStore {
 }
 
 func (s *issueStore) Upsert(ctx context.Context, issue *model.Issue) (*model.Issue, error) {
+	keywordsJSON, err := json.Marshal(issue.Keywords)
+	if err != nil {
+		return nil, err
+	}
 	codeFindingsJSON, err := json.Marshal(issue.CodeFindings)
 	if err != nil {
 		return nil, err
@@ -43,7 +47,7 @@ func (s *issueStore) Upsert(ctx context.Context, issue *model.Issue) (*model.Iss
 		Members:         issue.Members,
 		Assignees:       issue.Assignees,
 		Reporter:        issue.Reporter,
-		Keywords:        issue.Keywords,
+		Keywords:        keywordsJSON,
 		CodeFindings:    codeFindingsJSON,
 		Learnings:       learningsJSON,
 		Discussions:     discussionsJSON,
@@ -108,8 +112,8 @@ func (s *issueStore) ClaimQueued(ctx context.Context, issueID int64) (bool, *mod
 	return true, issue, nil
 }
 
-func (s *issueStore) SetProcessed(ctx context.Context, issueID int64) error {
-	rowsAffected, err := s.queries.SetIssueProcessed(ctx, issueID)
+func (s *issueStore) SetIdle(ctx context.Context, issueID int64) error {
+	rowsAffected, err := s.queries.SetIssueIdle(ctx, issueID)
 	if err != nil {
 		return err
 	}
@@ -120,6 +124,13 @@ func (s *issueStore) SetProcessed(ctx context.Context, issueID int64) error {
 }
 
 func toIssueModel(row sqlc.Issue) (*model.Issue, error) {
+	var keywords []model.Keyword
+	if len(row.Keywords) > 0 {
+		if err := json.Unmarshal(row.Keywords, &keywords); err != nil {
+			return nil, err
+		}
+	}
+
 	var codeFindings []model.CodeFinding
 	if len(row.CodeFindings) > 0 {
 		if err := json.Unmarshal(row.CodeFindings, &codeFindings); err != nil {
@@ -152,7 +163,7 @@ func toIssueModel(row sqlc.Issue) (*model.Issue, error) {
 		Members:          row.Members,
 		Assignees:        row.Assignees,
 		Reporter:         row.Reporter,
-		Keywords:         row.Keywords,
+		Keywords:         keywords,
 		CodeFindings:     codeFindings,
 		Learnings:        learnings,
 		Discussions:      discussions,

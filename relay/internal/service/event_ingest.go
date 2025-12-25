@@ -185,10 +185,10 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 	dedupeKey := computeDedupeKey(source, params.EventType, params.ExternalIssueID, params.Payload)
 
 	var (
-		resultIssue  *model.Issue
-		eventLog     *model.EventLog
-		createdEvent bool
-		queued       bool
+		resultIssue       *model.Issue
+		eventLog          *model.EventLog
+		createdEvent      bool
+		issueMarkedQueued bool
 	)
 
 	if err := s.txRunner.WithTx(ctx, func(sp StoreProvider) error {
@@ -215,7 +215,7 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		}
 
 		if createdEvent {
-			queued, err = sp.Issues().QueueIfIdle(ctx, resultIssue.ID)
+			issueMarkedQueued, err = sp.Issues().QueueIfIdle(ctx, resultIssue.ID)
 			if err != nil {
 				return fmt.Errorf("queueing issue: %w", err)
 			}
@@ -227,7 +227,10 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 	}
 
 	enqueued := false
-	if createdEvent {
+	if issueMarkedQueued {
+		// Only send Redis message when issue transitions idle→queued.
+		// If issue is already queued/processing, the active worker will pick up
+		// new events before transitioning back to idle.
 		if err := s.producer.Enqueue(ctx, queue.EventMessage{
 			EventLogID: eventLog.ID,
 			IssueID:    resultIssue.ID,
@@ -238,11 +241,16 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 			return nil, fmt.Errorf("enqueueing event: %w", err)
 		}
 		enqueued = true
-	} else {
+	} else if !createdEvent {
 		slog.InfoContext(ctx, "duplicate event deduped",
 			"event_log_id", eventLog.ID,
 			"issue_id", resultIssue.ID,
 			"dedupe_key", dedupeKey,
+		)
+	} else {
+		slog.InfoContext(ctx, "event logged, issue already being processed",
+			"event_log_id", eventLog.ID,
+			"issue_id", resultIssue.ID,
 		)
 	}
 
@@ -253,7 +261,7 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		DedupeKey:      dedupeKey,
 		EventPublished: enqueued,
 		EventDuplicate: !createdEvent,
-		IssuePickedUp:  queued,
+		IssuePickedUp:  issueMarkedQueued,
 	}, nil
 }
 

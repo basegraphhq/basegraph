@@ -10,22 +10,21 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// ReclaimerConfig holds reclaimer configuration.
-type ReclaimerConfig struct {
+type RedisReclaimerConfig struct {
 	Stream    string
 	Group     string
 	Consumer  string
-	MinIdle   time.Duration // Minimum time a message must be pending before reclaim
-	Interval  time.Duration // How often to run the reclaim check
-	BatchSize int64         // How many pending messages to check at once
+	MinIdle   time.Duration
+	Interval  time.Duration
+	BatchSize int64
 }
 
-// Reclaimer periodically reclaims stale pending messages.
+// RedisReclaimer periodically reclaims stale pending messages.
 // This handles the crash recovery scenario where a worker dies
 // after XREADGROUP but before XACK.
-type Reclaimer struct {
+type RedisReclaimer struct {
 	client    *redis.Client
-	cfg       ReclaimerConfig
+	cfg       RedisReclaimerConfig
 	processor MessageProcessor
 
 	stopCh    chan struct{}
@@ -35,9 +34,9 @@ type Reclaimer struct {
 // MessageProcessor processes a reclaimed message.
 type MessageProcessor func(ctx context.Context, msg queue.Message) error
 
-// NewReclaimer creates a new Reclaimer.
-func NewReclaimer(client *redis.Client, cfg ReclaimerConfig, processor MessageProcessor) *Reclaimer {
-	return &Reclaimer{
+// NewRedisReclaimer creates a new RedisReclaimer.
+func NewRedisReclaimer(client *redis.Client, cfg RedisReclaimerConfig, processor MessageProcessor) *RedisReclaimer {
+	return &RedisReclaimer{
 		client:    client,
 		cfg:       cfg,
 		processor: processor,
@@ -47,7 +46,7 @@ func NewReclaimer(client *redis.Client, cfg ReclaimerConfig, processor MessagePr
 }
 
 // Run starts the reclaimer loop. Blocks until Stop() is called.
-func (r *Reclaimer) Run(ctx context.Context) {
+func (r *RedisReclaimer) Run(ctx context.Context) {
 	defer close(r.stoppedCh)
 
 	ticker := time.NewTicker(r.cfg.Interval)
@@ -73,13 +72,13 @@ func (r *Reclaimer) Run(ctx context.Context) {
 }
 
 // Stop signals the reclaimer to stop gracefully.
-func (r *Reclaimer) Stop() {
+func (r *RedisReclaimer) Stop() {
 	close(r.stopCh)
 	<-r.stoppedCh
 }
 
 // reclaimOnce performs one reclaim cycle.
-func (r *Reclaimer) reclaimOnce(ctx context.Context) error {
+func (r *RedisReclaimer) reclaimOnce(ctx context.Context) error {
 	// Step 1: Find pending messages older than MinIdle
 	pending, err := r.client.XPendingExt(ctx, &redis.XPendingExtArgs{
 		Stream: r.cfg.Stream,
@@ -115,7 +114,7 @@ func (r *Reclaimer) reclaimOnce(ctx context.Context) error {
 }
 
 // reclaimMessage claims and processes a single stale message.
-func (r *Reclaimer) reclaimMessage(ctx context.Context, pending redis.XPendingExt) error {
+func (r *RedisReclaimer) reclaimMessage(ctx context.Context, pending redis.XPendingExt) error {
 	slog.InfoContext(ctx, "reclaiming stale message",
 		"message_id", pending.ID,
 		"original_consumer", pending.Consumer,
@@ -144,7 +143,7 @@ func (r *Reclaimer) reclaimMessage(ctx context.Context, pending redis.XPendingEx
 	msg := messages[0]
 
 	// Step 2: Parse the message
-	parsed, err := parseRedisMessage(msg)
+	parsed, err := queue.ParseMessage(msg)
 	if err != nil {
 		// Can't parse - ACK it to prevent infinite loop
 		slog.ErrorContext(ctx, "failed to parse reclaimed message, acknowledging",
@@ -160,72 +159,4 @@ func (r *Reclaimer) reclaimMessage(ctx context.Context, pending redis.XPendingEx
 	}
 
 	return nil
-}
-
-// parseRedisMessage converts a redis.XMessage to queue.Message.
-// This duplicates queue.parseMessage but is needed here to avoid exporting it.
-func parseRedisMessage(msg redis.XMessage) (queue.Message, error) {
-	eventLogID, err := parseInt64(msg.Values, "event_log_id")
-	if err != nil {
-		return queue.Message{}, err
-	}
-	issueID, err := parseInt64(msg.Values, "issue_id")
-	if err != nil {
-		return queue.Message{}, err
-	}
-	eventType, err := parseString(msg.Values, "event_type")
-	if err != nil {
-		return queue.Message{}, err
-	}
-	attempt, err := parseInt(msg.Values, "attempt")
-	if err != nil {
-		attempt = 1
-	}
-	traceID, _ := parseString(msg.Values, "trace_id")
-
-	return queue.Message{
-		ID:         msg.ID,
-		EventLogID: eventLogID,
-		IssueID:    issueID,
-		EventType:  eventType,
-		Attempt:    attempt,
-		TraceID:    traceID,
-		Raw:        msg,
-	}, nil
-}
-
-func parseInt64(values map[string]any, key string) (int64, error) {
-	raw, ok := values[key]
-	if !ok {
-		return 0, fmt.Errorf("missing %s", key)
-	}
-	str := fmt.Sprint(raw)
-	var num int64
-	_, err := fmt.Sscanf(str, "%d", &num)
-	if err != nil {
-		return 0, fmt.Errorf("parsing %s: %w", key, err)
-	}
-	return num, nil
-}
-
-func parseInt(values map[string]any, key string) (int, error) {
-	raw, ok := values[key]
-	if !ok {
-		return 0, fmt.Errorf("missing %s", key)
-	}
-	str := fmt.Sprint(raw)
-	var num int
-	_, err := fmt.Sscanf(str, "%d", &num)
-	if err != nil {
-		return 0, fmt.Errorf("parsing %s: %w", key, err)
-	}
-	return num, nil
-}
-
-func parseString(values map[string]any, key string) (string, error) {
-	raw, ok := values[key]
-	if !ok {
-		return "", fmt.Errorf("missing %s", key)
-	}
-	return fmt.Sprint(raw), nil
 }

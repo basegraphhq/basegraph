@@ -160,7 +160,7 @@ create table issues (
     reporter text,
     external_issue_url text,
 
-    keywords text[],
+    keywords jsonb not null default '[]'::jsonb,
     code_findings jsonb,
     learnings jsonb,
     discussions jsonb,
@@ -236,11 +236,55 @@ create table learnings (
 create index idx_learnings_workspace_id on learnings (workspace_id);
 create index idx_learnings_type on learnings (type);
 
+
+-- LLM Pipeline Evaluation Logs
+-- Stores inputs/outputs for quality analysis and prompt iteration
+create table llm_evals (
+    id bigint primary key,
+    workspace_id bigint references workspaces(id),
+    issue_id bigint references issues(id),
+
+    -- Pipeline stage: keywords, planner, gap_detector, spec_generator
+    stage text not null,
+
+    -- Input/Output capture
+    input_text text not null,
+    output_json jsonb not null,
+
+    -- Model config at time of generation
+    model text not null,
+    temperature float,
+    prompt_version text, -- e.g., "keywords_v1", "keywords_v2"
+
+    -- Performance
+    latency_ms int,
+    prompt_tokens int,
+    completion_tokens int,
+
+    -- Human evaluation (filled later)
+    rating int check (rating >= 1 and rating <= 5),
+    rating_notes text,
+    rated_by_user_id bigint references users(id),
+    rated_at timestamptz,
+
+    -- Ground truth comparison (for automated evals)
+    expected_json jsonb,
+    eval_score float, -- computed metric (e.g., F1 score)
+
+    created_at timestamptz not null default now()
+);
+
+create index idx_llm_evals_stage on llm_evals (stage);
+create index idx_llm_evals_issue_id on llm_evals (issue_id);
+create index idx_llm_evals_created_at on llm_evals (created_at);
+create index idx_llm_evals_unrated on llm_evals (stage, created_at) where rating is null;
+
 -- +goose StatementEnd
 
 -- +goose Down
 -- +goose StatementBegin
 
+drop table if exists llm_evals;
 drop table if exists learnings;
 drop table if exists sessions;
 drop table if exists event_logs;

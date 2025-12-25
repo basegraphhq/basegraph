@@ -75,7 +75,7 @@ type Issue struct {
 	Assignees        []string `json:"assignees"`
 	Reporter         *string  `json:"reporter"`
 	ExternalIssueUrl *string  `json:"external_issue_url"`
-	Keywords         []string `json:"keywords"`
+	Keywords         []byte   `json:"keywords"`
 	CodeFindings     []byte   `json:"code_findings"`
 	Learnings        []byte   `json:"learnings"`
 	Discussions      []byte   `json:"discussions"`
@@ -96,6 +96,28 @@ type Learning struct {
 	Content              string             `json:"content"`
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
+type LlmEval struct {
+	ID               int64              `json:"id"`
+	WorkspaceID      *int64             `json:"workspace_id"`
+	IssueID          *int64             `json:"issue_id"`
+	Stage            string             `json:"stage"`
+	InputText        string             `json:"input_text"`
+	OutputJson       []byte             `json:"output_json"`
+	Model            string             `json:"model"`
+	Temperature      *float64           `json:"temperature"`
+	PromptVersion    *string            `json:"prompt_version"`
+	LatencyMs        *int32             `json:"latency_ms"`
+	PromptTokens     *int32             `json:"prompt_tokens"`
+	CompletionTokens *int32             `json:"completion_tokens"`
+	Rating           *int32             `json:"rating"`
+	RatingNotes      *string            `json:"rating_notes"`
+	RatedByUserID    *int64             `json:"rated_by_user_id"`
+	RatedAt          pgtype.Timestamptz `json:"rated_at"`
+	ExpectedJson     []byte             `json:"expected_json"`
+	EvalScore        *float64           `json:"eval_score"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
 type Organization struct {

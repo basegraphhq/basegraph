@@ -16,6 +16,7 @@ type Config struct {
 	WorkOS       WorkOSConfig
 	EventWebhook EventWebhookConfig
 	Pipeline     PipelineConfig
+	OpenAI       OpenAIConfig
 	Env          string
 	Port         string
 	DashboardURL string
@@ -46,6 +47,12 @@ type PipelineConfig struct {
 	RedisDLQStream  string
 	RedisConsumer   string
 	TraceHeaderName string
+}
+
+type OpenAIConfig struct {
+	APIKey  string
+	BaseURL string
+	Model   string
 }
 
 type Features struct{}
@@ -86,6 +93,11 @@ func Load() (Config, error) {
 			RedisConsumer:   getEnv("REDIS_CONSUMER_NAME", "api-server"),
 			TraceHeaderName: getEnv("TRACE_HEADER_NAME", "X-Trace-Id"),
 		},
+		OpenAI: OpenAIConfig{
+			APIKey:  getEnv("OPENAI_API_KEY", ""),
+			BaseURL: getEnv("OPENAI_BASE_URL", ""),
+			Model:   getEnv("OPENAI_MODEL", "gpt-4o-mini"),
+		},
 		Features: Features{},
 	}
 
@@ -114,6 +126,10 @@ func (c OTelConfig) Enabled() bool {
 
 func (c WorkOSConfig) Enabled() bool {
 	return c.APIKey != "" && c.ClientID != ""
+}
+
+func (c OpenAIConfig) Enabled() bool {
+	return c.APIKey != ""
 }
 
 func getEnv(key, fallback string) string {

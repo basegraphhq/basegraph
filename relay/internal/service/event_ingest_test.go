@@ -3,6 +3,7 @@ package service_test
 import (
 	"context"
 	"encoding/json"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -93,7 +94,19 @@ func (m *mockIssueStore) ClaimQueued(ctx context.Context, issueID int64) (bool, 
 	return true, nil, nil
 }
 
-func (m *mockIssueStore) SetProcessed(ctx context.Context, issueID int64) error {
+func (m *mockIssueStore) SetIdle(ctx context.Context, issueID int64) error {
+	return nil
+}
+
+func (m *mockIssueStore) ReclaimStuckIssues(ctx context.Context, stuckDuration time.Duration, limit int) ([]int64, error) {
+	return nil, nil
+}
+
+func (m *mockIssueStore) FindStuckQueuedIssues(ctx context.Context, stuckDuration time.Duration, limit int) ([]int64, error) {
+	return nil, nil
+}
+
+func (m *mockIssueStore) ResetQueuedToIdle(ctx context.Context, issueID int64) error {
 	return nil
 }
 
