@@ -52,7 +52,7 @@ func (e *KeywordsExtractor) Extract(ctx context.Context, issue *model.Issue, eva
 	// Keywords extraction is non-critical preprocessing - fail after 3 attempts
 	// rather than blocking the pipeline indefinitely.
 	var err error
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := range 3 {
 		llmResp, err = e.llm.Chat(ctx, llm.Request{
 			SystemPrompt: keywordsSystemPrompt,
 			UserPrompt:   prompt,
