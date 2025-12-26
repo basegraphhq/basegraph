@@ -1,0 +1,192 @@
+{
+  "symbol_findings": {
+    "description": "Findings generated when SymbolHints are provided in the retriever job",
+    "examples": [
+      {
+        "symbol": "UserService",
+        "finding": {
+          "observation": "UserService is the main entry point for user lifecycle operations. It provides CreateUser, UpdateUser, DeleteUser, and GetUser methods. CreateUser validates input via EmailValidator and PasswordPolicy before persisting to UserRepository. Called by HTTPHandler and CLI tool.",
+          "sources": [
+            {
+              "location": "internal/service/user_service.go:24",
+              "snippet": "type UserService struct {\n\trepo     UserRepository\n\temail    EmailValidator\n\tpassword PasswordPolicy\n}\n\nfunc (s *UserService) CreateUser(ctx context.Context, email, password string) (*User, error) {\n\tif err := s.email.Validate(email); err != nil {\n\t\treturn nil, fmt.Errorf(\"invalid email: %w\", err)\n\t}\n\tif err := s.password.Check(password); err != nil {\n\t\treturn nil, fmt.Errorf(\"weak password: %w\", err)\n\t}\n\treturn s.repo.Create(ctx, email, password)\n}"
+            }
+          ],
+          "confidence": 0.92
+        }
+      },
+      {
+        "symbol": "CreateUser",
+        "finding": {
+          "observation": "CreateUser is a method on UserService that validates email format and password strength before persisting a new user. Returns the created user or validation error. No rate limiting currently implemented.",
+          "sources": [
+            {
+              "location": "internal/service/user_service.go:87",
+              "snippet": "func (s *UserService) CreateUser(ctx context.Context, email, password string) (*User, error) {\n\tif err := s.email.Validate(email); err != nil {\n\t\treturn nil, fmt.Errorf(\"invalid email: %w\", err)\n\t}\n\tif err := s.password.Check(password); err != nil {\n\t\treturn nil, fmt.Errorf(\"weak password: %w\", err)\n\t}\n\treturn s.repo.Create(ctx, email, password)\n}"
+            }
+          ],
+          "confidence": 0.92
+        }
+      },
+      {
+        "symbol": "PaymentProcessor",
+        "finding": {
+          "observation": "PaymentProcessor is an interface defining the contract for payment processing. Has two implementations: StripeProcessor for production and MockProcessor for testing. ProcessPayment returns a TransactionID or error.",
+          "sources": [
+            {
+              "location": "internal/domain/payment.go:15",
+              "snippet": "type PaymentProcessor interface {\n\tProcessPayment(ctx context.Context, amount Money, card CardDetails) (TransactionID, error)\n\tRefund(ctx context.Context, txnID TransactionID) error\n\tGetStatus(ctx context.Context, txnID TransactionID) (PaymentStatus, error)\n}"
+            }
+          ],
+          "confidence": 0.92
+        }
+      }
+    ]
+  },
+  "query_findings": {
+    "description": "Findings generated when no SymbolHints provided, based on query text",
+    "examples": [
+      {
+        "query": "authentication flow",
+        "findings": [
+          {
+            "observation": "AuthService.Authenticate handles the full authentication flow: validates credentials, creates session token, and sets cookie. Uses bcrypt for password comparison. Session tokens expire after 24 hours. Called by LoginHandler.",
+            "sources": [
+              {
+                "location": "internal/service/auth_service.go:45",
+                "snippet": "func (s *AuthService) Authenticate(ctx context.Context, email, password string) (*Session, error) {\n\tuser, err := s.users.GetByEmail(ctx, email)\n\tif err != nil {\n\t\treturn nil, ErrInvalidCredentials\n\t}\n\tif err := bcrypt.CompareHashAndPassword(user.PasswordHash, []byte(password)); err != nil {\n\t\treturn nil, ErrInvalidCredentials\n\t}\n\treturn s.sessions.Create(ctx, user.ID, 24*time.Hour)\n}"
+              },
+              {
+                "location": "internal/service/auth_service.go:112",
+                "snippet": "func (s *AuthService) CreateSession(ctx context.Context, userID int64, duration time.Duration) (*Session, error) {\n\ttoken := generateSecureToken()\n\tsession := &Session{UserID: userID, Token: token, ExpiresAt: time.Now().Add(duration)}\n\treturn s.sessions.Store(ctx, session)\n}"
+              }
+            ],
+            "confidence": 0.88
+          },
+          {
+            "observation": "TokenValidator interface implemented by JWTValidator (for API tokens) and APIKeyValidator (for service-to-service auth). JWTValidator uses RS256 signing with rotating keys.",
+            "sources": [
+              {
+                "location": "internal/domain/auth.go:23",
+                "snippet": "type TokenValidator interface {\n\tValidate(ctx context.Context, token string) (*Claims, error)\n\tRevoke(ctx context.Context, token string) error\n}"
+              }
+            ],
+            "confidence": 0.82
+          }
+        ]
+      },
+      {
+        "query": "payment processing",
+        "findings": [
+          {
+            "observation": "BillingService.ProcessPayment orchestrates the payment flow: validates amount, checks user balance, calls Stripe API, and records transaction. Uses idempotency keys to prevent duplicate charges. Emits PaymentProcessed event on success.",
+            "sources": [
+              {
+                "location": "internal/service/billing_service.go:78",
+                "snippet": "func (s *BillingService) ProcessPayment(ctx context.Context, userID int64, amount Money) (*Transaction, error) {\n\tif amount.IsNegative() {\n\t\treturn nil, ErrInvalidAmount\n\t}\n\tidempotencyKey := fmt.Sprintf(\"%d-%s-%d\", userID, amount.Currency, time.Now().Unix())\n\ttxn, err := s.stripe.Charge(ctx, amount, idempotencyKey)\n\tif err != nil {\n\t\treturn nil, fmt.Errorf(\"stripe charge: %w\", err)\n\t}\n\ts.events.Emit(PaymentProcessed{UserID: userID, Amount: amount, TxnID: txn.ID})\n\treturn txn, nil\n}"
+              }
+            ],
+            "confidence": 0.90
+          },
+          {
+            "observation": "PaymentGateway interface abstracts payment providers. StripeGateway is the production implementation. Supports Charge, Refund, and GetTransaction operations. Uses exponential backoff for retries.",
+            "sources": [
+              {
+                "location": "internal/integration/stripe.go:34",
+                "snippet": "type StripeGateway struct {\n\tclient *stripe.Client\n\tretry  RetryPolicy\n}\n\nfunc (g *StripeGateway) Charge(ctx context.Context, amount Money, key string) (*Transaction, error) {\n\treturn g.retry.Do(func() (*Transaction, error) {\n\t\treturn g.client.Charges.Create(ctx, amount, key)\n\t})\n}"
+              },
+              {
+                "location": "internal/domain/payment.go:12",
+                "snippet": "type PaymentGateway interface {\n\tCharge(ctx context.Context, amount Money, idempotencyKey string) (*Transaction, error)\n\tRefund(ctx context.Context, txnID string, amount Money) error\n\tGetTransaction(ctx context.Context, txnID string) (*Transaction, error)\n}"
+              }
+            ],
+            "confidence": 0.85
+          }
+        ]
+      },
+      {
+        "query": "user registration",
+        "findings": [
+          {
+            "observation": "UserService.Register validates input, checks for duplicate emails, hashes password with bcrypt, creates user record, and sends welcome email. Returns ErrEmailTaken if email exists. No email verification implemented yet.",
+            "sources": [
+              {
+                "location": "internal/service/user_service.go:56",
+                "snippet": "func (s *UserService) Register(ctx context.Context, req RegisterRequest) (*User, error) {\n\tif err := s.validator.ValidateEmail(req.Email); err != nil {\n\t\treturn nil, err\n\t}\n\texisting, _ := s.repo.GetByEmail(ctx, req.Email)\n\tif existing != nil {\n\t\treturn nil, ErrEmailTaken\n\t}\n\thash, _ := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)\n\tuser, err := s.repo.Create(ctx, req.Email, hash)\n\tif err != nil {\n\t\treturn nil, err\n\t}\n\ts.email.SendWelcome(ctx, user)\n\treturn user, nil\n}"
+              }
+            ],
+            "confidence": 0.91
+          },
+          {
+            "observation": "EmailValidator and PasswordPolicy used for input validation. EmailValidator checks format and domain blocklist. PasswordPolicy requires 8+ chars, uppercase, lowercase, and number.",
+            "sources": [
+              {
+                "location": "internal/domain/validation.go:18",
+                "snippet": "type EmailValidator struct {\n\tblockedDomains []string\n}\n\nfunc (v *EmailValidator) Validate(email string) error {\n\tif !strings.Contains(email, \"@\") {\n\t\treturn ErrInvalidEmailFormat\n\t}\n\tdomain := strings.Split(email, \"@\")[1]\n\tfor _, blocked := range v.blockedDomains {\n\t\tif domain == blocked {\n\t\t\treturn ErrBlockedDomain\n\t\t}\n\t}\n\treturn nil\n}"
+              },
+              {
+                "location": "internal/domain/validation.go:45",
+                "snippet": "type PasswordPolicy struct {\n\tMinLength     int\n\tRequireUpper  bool\n\tRequireLower  bool\n\tRequireNumber bool\n}\n\nfunc (p *PasswordPolicy) Check(password string) error {\n\tif len(password) < p.MinLength {\n\t\treturn ErrPasswordTooShort\n\t}\n\t// ... validation logic\n}"
+              }
+            ],
+            "confidence": 0.79
+          }
+        ]
+      },
+      {
+        "query": "error handling",
+        "findings": [
+          {
+            "observation": "AppError is the standard error type across the service layer. Wraps underlying errors with user-friendly messages and HTTP status codes. Implements error interface and Unwrap for error chain inspection.",
+            "sources": [
+              {
+                "location": "internal/domain/errors.go:12",
+                "snippet": "type AppError struct {\n\tCode    string\n\tMessage string\n\tStatus  int\n\tCause   error\n}\n\nfunc (e *AppError) Error() string { return e.Message }\nfunc (e *AppError) Unwrap() error { return e.Cause }\n\nvar (\n\tErrNotFound     = &AppError{Code: \"NOT_FOUND\", Message: \"Resource not found\", Status: 404}\n\tErrUnauthorized = &AppError{Code: \"UNAUTHORIZED\", Message: \"Authentication required\", Status: 401}\n)"
+              }
+            ],
+            "confidence": 0.87
+          },
+          {
+            "observation": "ErrorMiddleware catches panics and unhandled errors, formats them as JSON HTTP responses. Logs stack trace for 500 errors. Redacts sensitive information from error messages in production.",
+            "sources": [
+              {
+                "location": "internal/http/middleware/error.go:28",
+                "snippet": "func ErrorMiddleware(next http.Handler) http.Handler {\n\treturn http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {\n\t\tdefer func() {\n\t\t\tif err := recover(); err != nil {\n\t\t\t\tslog.Error(\"panic recovered\", \"error\", err, \"stack\", debug.Stack())\n\t\t\t\twriteErrorResponse(w, ErrInternalServer)\n\t\t\t}\n\t\t}()\n\t\tnext.ServeHTTP(w, r)\n\t})\n}"
+              }
+            ],
+            "confidence": 0.84
+          }
+        ]
+      }
+    ]
+  },
+  "fallback": {
+    "description": "Default findings when query doesn't match any pattern",
+    "findings": [
+      {
+        "observation": "Query matched 4 functions across 2 packages. Primary match is a service-layer function with repository dependency. Functions follow standard patterns: context as first param, error as last return.",
+        "sources": [
+          {
+            "location": "internal/service/handler.go:128",
+            "snippet": "func (s *Service) Handle(ctx context.Context, req Request) (*Response, error) {\n\tif err := req.Validate(); err != nil {\n\t\treturn nil, fmt.Errorf(\"validation: %w\", err)\n\t}\n\tresult, err := s.repo.Process(ctx, req)\n\tif err != nil {\n\t\treturn nil, fmt.Errorf(\"process: %w\", err)\n\t}\n\treturn result, nil\n}"
+          },
+          {
+            "location": "internal/domain/entity.go:45",
+            "snippet": "type Entity struct {\n\tID        int64\n\tName      string\n\tCreatedAt time.Time\n\tUpdatedAt time.Time\n}\n\nfunc (e *Entity) Validate() error {\n\tif e.Name == \"\" {\n\t\treturn ErrNameRequired\n\t}\n\treturn nil\n}"
+          }
+        ],
+        "confidence": 0.85
+      },
+      {
+        "observation": "Related interface found with 2 implementations. Interface defines core behavior, implementations handle specific use cases (production vs test).",
+        "sources": [
+          {
+            "location": "internal/domain/interfaces.go:22",
+            "snippet": "type Repository interface {\n\tGet(ctx context.Context, id int64) (*Entity, error)\n\tCreate(ctx context.Context, entity *Entity) error\n\tUpdate(ctx context.Context, entity *Entity) error\n\tDelete(ctx context.Context, id int64) error\n}"
+          }
+        ],
+        "confidence": 0.78
+      }
+    ]
+  }
+}

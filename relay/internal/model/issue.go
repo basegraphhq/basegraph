@@ -34,11 +34,15 @@ const (
 	DiscussionTypeNote     DiscussionType = "note"
 )
 
+type CodeSource struct {
+	Location string `json:"location"`
+	Snippet  string `json:"snippet"`
+}
+
 type CodeFinding struct {
-	Finding          string   `json:"finding"`
-	Severity         Severity `json:"severity"`
-	Sources          []string `json:"sources"`
-	SuggestedActions []string `json:"suggested_actions"`
+	Observation string       `json:"observation"`
+	Sources     []CodeSource `json:"sources"`
+	Confidence  float64      `json:"confidence"`
 }
 
 type Keyword struct {

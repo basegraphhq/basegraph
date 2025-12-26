@@ -111,7 +111,7 @@ var _ = Describe("KeywordsExtractor", func() {
 						},
 					}
 					data, _ := json.Marshal(response)
-					json.Unmarshal(data, result)
+					_ = json.Unmarshal(data, result)
 					return &llm.Response{PromptTokens: 100, CompletionTokens: 50}, nil
 				}
 
@@ -165,7 +165,7 @@ var _ = Describe("KeywordsExtractor", func() {
 						},
 					}
 					data, _ := json.Marshal(response)
-					json.Unmarshal(data, result)
+					_ = json.Unmarshal(data, result)
 					return &llm.Response{}, nil
 				}
 
@@ -211,7 +211,7 @@ var _ = Describe("KeywordsExtractor", func() {
 						},
 					}
 					data, _ := json.Marshal(response)
-					json.Unmarshal(data, result)
+					_ = json.Unmarshal(data, result)
 					return &llm.Response{}, nil
 				}
 
