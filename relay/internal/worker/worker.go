@@ -225,7 +225,6 @@ func (w *Worker) ProcessMessage(ctx context.Context, msg queue.Message) error {
 				}
 			}
 
-			// Mark events as processed
 			if err := sp.EventLogs().MarkBatchProcessed(ctx, eventIDs); err != nil {
 				return fmt.Errorf("marking events processed: %w", err)
 			}

@@ -5,29 +5,28 @@
       "name": "Server",
       "type": "go",
       "request": "launch",
-      "mode": "debug",
+      "mode": "auto",
       "program": "${workspaceFolder}/relay/cmd/server",
       "cwd": "${workspaceFolder}/relay",
-      "envFile": "${workspaceFolder}/relay/.env",
-      "console": "integratedTerminal",
+      "envFile": "${workspaceFolder}/relay/.env"
     },
     {
       "name": "Worker",
       "type": "go",
       "request": "launch",
-      "mode": "debug",
+      "mode": "auto",
       "program": "${workspaceFolder}/relay/cmd/worker",
       "cwd": "${workspaceFolder}/relay",
-      "envFile": "${workspaceFolder}/relay/.env",
+      "envFile": "${workspaceFolder}/relay/.env"
     },
     {
       "name": "Codegraph CLI",
       "type": "go",
       "request": "launch",
-      "mode": "debug",
+      "mode": "auto",
       "program": "${workspaceFolder}/codegraph/cmd/codegraph",
       "cwd": "${workspaceFolder}/codegraph",
-      "args": [],
+      "args": []
     },
     {
       "name": "Dashboard",
@@ -36,13 +35,20 @@
       "runtimeExecutable": "bun",
       "runtimeArgs": ["run", "dev"],
       "cwd": "${workspaceFolder}/dashboard",
-    },
+      "console": "integratedTerminal",
+      "consoleName": "Dashboard"
+    }
   ],
   "compounds": [
     {
-      "name": "Relay (Server + Worker + Dashboard)",
-      "configurations": ["Server", "Worker", "Dashboard"],
-      "stopAll": true,
+      "name": "Relay Backend",
+      "configurations": ["Server", "Worker"],
+      "stopAll": true
     },
-  ],
+    {
+      "name": "Relay Full Stack",
+      "configurations": ["Server", "Worker", "Dashboard"],
+      "stopAll": true
+    }
+  ]
 }

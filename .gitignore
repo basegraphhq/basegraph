@@ -36,6 +36,9 @@ $RECYCLE.BIN/
 *.test
 *.out
 
+# Delve debugger binaries
+__debug_bin*
+
 # Build directories (monorepo-aware)
 **/bin/
 **/build/
