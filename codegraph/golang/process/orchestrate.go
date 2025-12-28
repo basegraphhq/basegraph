@@ -8,10 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"basegraph.app/relay/common/arangodb"
+	"basegraph.app/relay/common/typesense"
 	"github.com/humanbeeng/lepo/prototypes/codegraph/extract"
 )
 
-// TODO: Refactor tf outta error handling and logging
+// Orchestrate runs the code extraction and ingestion pipeline.
 func Orchestrate(e extract.Extractor) {
 	slog.Info("Begin orchestration")
 	start := time.Now()
@@ -20,9 +22,9 @@ func Orchestrate(e extract.Extractor) {
 		slog.Info("Total time elapsed", "duration", humanizeDuration(elapsed))
 	}()
 	ctx := context.Background()
+
 	// Step 1: Extract
-	// repoRoot := envOrDefault("TARGET_REPO_PATH", "/Users/nithin/workspace/read-only/etcd")
-	repoRoot := envOrDefault("TARGET_REPO_PATH", "/Users/nithin/basegraph/codegraph")
+	repoRoot := envOrDefault("TARGET_REPO_PATH", "/Users/nithin/basegraph/relay")
 	targetModule := strings.TrimSpace(os.Getenv("TARGET_MODULE"))
 
 	mods, err := discoverGoModules(repoRoot)
@@ -60,29 +62,44 @@ func Orchestrate(e extract.Extractor) {
 	}
 
 	extractRes := acc
-	// Calculate and log the size of extractRes
 	dataSize := float64(len(fmt.Sprintf("%+v", extractRes))) / (1024 * 1024)
 	slog.Info("Extract result data size", "size_mb", dataSize)
 
-	cfg := Neo4jConfig{
-		URI:      envOrDefault("NEO4J_URI", "neo4j://localhost:7687"),
-		Username: envOrDefault("NEO4J_USERNAME", "neo4j"),
-		Password: envOrDefault("NEO4J_PASSWORD", "password"),
-		Database: envOrDefault("NEO4J_DATABASE", "neo4j"),
-	}
-
-	ingestor, err := NewNeo4jIngestor(cfg)
+	// Step 2: Create database clients
+	tsClient, err := typesense.New(typesense.Config{
+		URL:        envOrDefault("TYPESENSE_URL", "http://localhost:8108"),
+		APIKey:     envOrDefault("TYPESENSE_API_KEY", "xyz"),
+		Collection: envOrDefault("TYPESENSE_COLLECTION", "code_nodes"),
+	})
 	if err != nil {
-		slog.Error("unable to create neo4j ingestor", "err", err)
+		slog.Error("unable to create typesense client", "err", err)
 		return
 	}
 
-	slog.Info("Ingesting extract result into Neo4j")
-	if err := ingestor.Ingest(ctx, extractRes); err != nil {
-		slog.Error("neo4j ingestion failed", "err", err)
+	arangoClient, err := arangodb.New(ctx, arangodb.Config{
+		URL:      envOrDefault("ARANGO_URL", "http://localhost:8529"),
+		Username: envOrDefault("ARANGO_USERNAME", "root"),
+		Password: envOrDefault("ARANGO_PASSWORD", ""),
+		Database: envOrDefault("ARANGO_DATABASE", "codegraph"),
+	})
+	if err != nil {
+		slog.Error("unable to create arangodb client", "err", err)
 		return
 	}
-	slog.Info("neo4j ingestion finished successfully")
+	defer func() {
+		if closeErr := arangoClient.Close(); closeErr != nil {
+			slog.Error("failed closing arangodb client", "err", closeErr)
+		}
+	}()
+
+	// Step 3: Ingest into databases
+	ingestor := NewIngestor(tsClient, arangoClient)
+	slog.Info("Ingesting extract result into Typesense + ArangoDB")
+	if err := ingestor.Ingest(ctx, extractRes); err != nil {
+		slog.Error("ingestion failed", "err", err)
+		return
+	}
+	slog.Info("Ingestion finished successfully")
 }
 
 func envOrDefault(key, fallback string) string {
