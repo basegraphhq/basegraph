@@ -1,4 +1,4 @@
-.PHONY: build build-server build-worker run-server run-worker test test-unit test-bdd test-integration clean sqlc-generate migrate-up migrate-down format lint install-tools
+.PHONY: build build-server build-worker run-server run-worker test test-unit test-bdd test-integration clean sqlc-generate migrate-up migrate-down format lint install-tools reindex-codegraph reset reset-redis reset-db
 
 # Build binaries
 build: build-server build-worker
@@ -69,6 +69,20 @@ dev-db:
 
 dev-down:
 	docker compose -f dev/docker-compose.yaml down
+
+# Codegraph operations
+reindex-codegraph:
+	@./scripts/reindex-codegraph.sh
+
+# Testing reset operations
+reset:
+	@./scripts/reset.sh
+
+reset-redis:
+	@./scripts/reset.sh --redis-only
+
+reset-db:
+	@./scripts/reset.sh --db-only
 
 # Environment setup
 .env:
