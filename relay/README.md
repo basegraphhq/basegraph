@@ -238,8 +238,8 @@ Read issue → Check sufficiency → {Sufficient: Call Gap Detector}
 Specialized providers that fetch context based on Planner queries:
 
 **Code Context Retriever**:
-- **Powered by**: ArangoDB (code graph) + Typesense (search)
-- **How it works**: Keywords → Typesense top-k hits → LLM-guided graph exploration → Relevant code context
+- **Powered by**: ArangoDB (code graph) + filesystem tools (ripgrep, fd, direct file reading)
+- **How it works**: Keywords → filesystem search → LLM-guided graph exploration → Relevant code context
 - **What it provides**: Verified imports, call chains, architectural patterns, exact file locations
 
 **Learnings Retriever**:
