@@ -45,12 +45,14 @@ func (v *FunctionVisitor) Visit(node ast.Node) ast.Visitor {
 			if n.Recv != nil {
 				for _, field := range n.Recv.List {
 					if id, ok := field.Type.(*ast.Ident); ok {
-						// Regular method
-						stQName := fnObj.Pkg().Path() + "." + id.Name
+						// Regular method - qname includes type: pkg.Type.Method
+						typeName := id.Name
+						stQName := fnObj.Pkg().Path() + "." + typeName
+						methodQName := stQName + "." + fnObj.Name()
 
 						f := extract.Function{
 							Name:        fnObj.Name(),
-							QName:       qname,
+							QName:       methodQName,
 							Namespace:   namespace,
 							ParentQName: stQName,
 							Pos:         pos,
@@ -62,16 +64,19 @@ func (v *FunctionVisitor) Visit(node ast.Node) ast.Visitor {
 						v.extractParamsAndReturns(n, &f)
 						v.extractDoc(n, &f)
 
-						v.Functions[qname] = f
+						v.Functions[methodQName] = f
+						qname = methodQName // Update for body visitor
 
 					} else if se, ok := field.Type.(*ast.StarExpr); ok {
-						// Pointer based method
+						// Pointer based method - qname includes type: pkg.Type.Method
 						if id, ok := se.X.(*ast.Ident); ok {
-							stQName := fnObj.Pkg().Path() + "." + id.Name
+							typeName := id.Name
+							stQName := fnObj.Pkg().Path() + "." + typeName
+							methodQName := stQName + "." + fnObj.Name()
 
 							f := extract.Function{
 								Name:        fnObj.Name(),
-								QName:       qname,
+								QName:       methodQName,
 								Namespace:   namespace,
 								ParentQName: stQName,
 								Pos:         pos,
@@ -83,8 +88,8 @@ func (v *FunctionVisitor) Visit(node ast.Node) ast.Visitor {
 							v.extractParamsAndReturns(n, &f)
 							v.extractDoc(n, &f)
 
-							v.Functions[qname] = f
-
+							v.Functions[methodQName] = f
+							qname = methodQName // Update for body visitor
 						}
 					}
 				}
