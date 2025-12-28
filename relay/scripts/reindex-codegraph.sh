@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Script to clear and re-index the relay codebase into Typesense and ArangoDB
+# Script to clear and re-index the relay codebase into ArangoDB
 # Usage: ./scripts/reindex-codegraph.sh [--skip-cleanup]
 
 set -e  # Exit on error
