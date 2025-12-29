@@ -17,6 +17,7 @@ type Config struct {
 	EventWebhook EventWebhookConfig
 	Pipeline     PipelineConfig
 	OpenAI       OpenAIConfig
+	ArangoDB     ArangoDBConfig
 	Env          string
 	Port         string
 	DashboardURL string
@@ -53,6 +54,13 @@ type OpenAIConfig struct {
 	APIKey  string
 	BaseURL string
 	Model   string
+}
+
+type ArangoDBConfig struct {
+	URL      string
+	Username string
+	Password string
+	Database string
 }
 
 type Features struct{}
@@ -98,6 +106,12 @@ func Load() (Config, error) {
 			BaseURL: getEnv("OPENAI_BASE_URL", ""),
 			Model:   getEnv("OPENAI_MODEL", "gpt-4o-mini"),
 		},
+		ArangoDB: ArangoDBConfig{
+			URL:      getEnv("ARANGO_URL", "http://localhost:8529"),
+			Username: getEnv("ARANGO_USERNAME", "root"),
+			Password: getEnv("ARANGO_PASSWORD", ""),
+			Database: getEnv("ARANGO_DATABASE", "codegraph"),
+		},
 		Features: Features{},
 	}
 
@@ -130,6 +144,10 @@ func (c WorkOSConfig) Enabled() bool {
 
 func (c OpenAIConfig) Enabled() bool {
 	return c.APIKey != ""
+}
+
+func (c ArangoDBConfig) Enabled() bool {
+	return c.URL != "" && c.Username != "" && c.Database != ""
 }
 
 func getEnv(key, fallback string) string {
