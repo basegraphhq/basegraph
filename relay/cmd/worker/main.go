@@ -9,6 +9,7 @@ import (
 	"syscall"
 	"time"
 
+	"basegraph.app/relay/common/arangodb"
 	"basegraph.app/relay/common/id"
 	"basegraph.app/relay/common/llm"
 	"basegraph.app/relay/common/logger"
@@ -38,7 +39,7 @@ func main() {
 		"consumer_group", cfg.Pipeline.RedisGroup,
 		"consumer_name", cfg.Pipeline.RedisConsumer)
 
-	// Initialize snowflake ID generator (use different node ID than server)
+	// Init snowflake id generator with different NodeID(2). API Server has Node ID(1)
 	if err := id.Init(2); err != nil {
 		slog.ErrorContext(ctx, "failed to initialize id generator", "error", err)
 		os.Exit(1)
@@ -71,7 +72,7 @@ func main() {
 		Group:        cfg.Pipeline.RedisGroup,
 		Consumer:     cfg.Pipeline.RedisConsumer,
 		DLQStream:    cfg.Pipeline.RedisDLQStream,
-		BatchSize:    1, // Process one issue at a time
+		BatchSize:    1,
 		Block:        5 * time.Second,
 		MaxAttempts:  3,
 		RequeueDelay: time.Second,
@@ -100,8 +101,64 @@ func main() {
 
 	slog.InfoContext(ctx, "llm client initialized", "model", cfg.OpenAI.Model)
 
+	// Initialize CodeGraph Retriever dependencies (all required)
+	agentClient, err := llm.NewAgentClient(llm.Config{
+		APIKey:  cfg.OpenAI.APIKey,
+		BaseURL: cfg.OpenAI.BaseURL,
+		Model:   cfg.OpenAI.Model,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to create agent client", "error", err)
+		os.Exit(1)
+	}
+	slog.InfoContext(ctx, "agent client initialized", "model", cfg.OpenAI.Model)
+
+	// Get repository root for code search tools
+	repoRoot := os.Getenv("REPO_ROOT")
+	if repoRoot == "" {
+		slog.ErrorContext(ctx, "REPO_ROOT environment variable is required for CodeGraph Retriever")
+		os.Exit(1)
+	}
+
+	// Get module path for qname construction in graph queries
+	modulePath := os.Getenv("MODULE_PATH")
+	if modulePath == "" {
+		slog.ErrorContext(ctx, "MODULE_PATH environment variable is required for CodeGraph Retriever (e.g., 'basegraph.app/relay')")
+		os.Exit(1)
+	}
+	slog.InfoContext(ctx, "repo configured", "root", repoRoot, "module", modulePath)
+
+	if !cfg.ArangoDB.Enabled() {
+		slog.ErrorContext(ctx, "ARANGO_URL, ARANGO_USERNAME, and ARANGO_DATABASE are required for CodeGraph Retriever")
+		os.Exit(1)
+	}
+	arangoClient, err := arangodb.New(ctx, arangodb.Config{
+		URL:      cfg.ArangoDB.URL,
+		Username: cfg.ArangoDB.Username,
+		Password: cfg.ArangoDB.Password,
+		Database: cfg.ArangoDB.Database,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to create ArangoDB client", "error", err)
+		os.Exit(1)
+	}
+	if err := arangoClient.EnsureDatabase(ctx); err != nil {
+		slog.ErrorContext(ctx, "failed to ensure ArangoDB database", "error", err)
+		os.Exit(1)
+	}
+	slog.InfoContext(ctx, "arangodb client initialized",
+		"url", cfg.ArangoDB.URL,
+		"database", cfg.ArangoDB.Database)
+
+	deps := worker.ProcessorDeps{
+		AgentClient: agentClient,
+		RepoRoot:    repoRoot,
+		ModulePath:  modulePath,
+		ArangoDB:    arangoClient,
+	}
+
 	stores := store.NewStores(database.Queries())
-	processor := worker.NewProcessor(llmClient, stores.LLMEvals())
+	processor := worker.NewProcessor(llmClient, stores.LLMEvals(), deps)
 
 	// MaxAttempts=1: DLQ is a safety valve, not a retry mechanism. Poison messages go to DLQ immediately.
 	w := worker.New(consumer, txRunner, stores.Issues(), processor, worker.Config{
