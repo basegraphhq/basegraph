@@ -89,19 +89,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	llmClient, err := llm.New(llm.Config{
-		APIKey:  cfg.OpenAI.APIKey,
-		BaseURL: cfg.OpenAI.BaseURL,
-		Model:   cfg.OpenAI.Model,
-	})
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to create LLM client", "error", err)
-		os.Exit(1)
-	}
-
-	slog.InfoContext(ctx, "llm client initialized", "model", cfg.OpenAI.Model)
-
-	// Initialize CodeGraph Retriever dependencies (all required)
+	// Initialize agent client for agentic planning and retrieval
 	agentClient, err := llm.NewAgentClient(llm.Config{
 		APIKey:  cfg.OpenAI.APIKey,
 		BaseURL: cfg.OpenAI.BaseURL,
@@ -158,7 +146,7 @@ func main() {
 	}
 
 	stores := store.NewStores(database.Queries())
-	processor := worker.NewProcessor(llmClient, stores.LLMEvals(), deps)
+	processor := worker.NewProcessor(stores.LLMEvals(), deps)
 
 	// MaxAttempts=1: DLQ is a safety valve, not a retry mechanism. Poison messages go to DLQ immediately.
 	w := worker.New(consumer, txRunner, stores.Issues(), processor, worker.Config{
