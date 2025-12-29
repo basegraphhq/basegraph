@@ -12,16 +12,15 @@ import (
 )
 
 type ConsumerConfig struct {
-	Stream       string
-	Group        string
-	Consumer     string
-	DLQStream    string
-	BatchSize    int64
-	Block        time.Duration
-	MaxAttempts  int
-	RequeueDelay time.Duration
+	Stream       string        // Redis stream name
+	Group        string        // Redis consumer group name
+	Consumer     string        // Redis consumer name
+	DLQStream    string        // Dead letter queue stream for failed messages
+	BatchSize    int64         // Number of messages to process per batch
+	Block        time.Duration // How long to block/poll for new messages
+	MaxAttempts  int           // Maximum retry attempts before moving to DLQ
+	RequeueDelay time.Duration // Delay before retrying failed messages
 }
-
 type Message struct {
 	ID         string
 	EventLogID int64
