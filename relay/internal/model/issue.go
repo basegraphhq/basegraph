@@ -34,15 +34,27 @@ const (
 	DiscussionTypeNote     DiscussionType = "note"
 )
 
+// CodeSource provides evidence grounding for a code finding.
+// These are the actual code locations that support the synthesis.
 type CodeSource struct {
-	Location string `json:"location"`
-	Snippet  string `json:"snippet"`
+	Location string `json:"location"`        // e.g., "internal/billing/service.go:42"
+	Snippet  string `json:"snippet"`         // Actual code snippet
+	QName    string `json:"qname,omitempty"` // Qualified name for graph lookup
+	Kind     string `json:"kind,omitempty"`  // function, struct, interface, etc.
 }
 
+// CodeFinding represents the Retriever's understanding of code context.
+// Intentionally minimal: prose synthesis + evidence sources.
+// The consumer (Gap Detector) is an LLM that can read natural language.
 type CodeFinding struct {
-	Observation string       `json:"observation"`
-	Sources     []CodeSource `json:"sources"`
-	Confidence  float64      `json:"confidence"`
+	// Synthesis is free-form prose describing what was found and understood.
+	// Written like a senior engineer briefing the team - patterns, relationships,
+	// constraints, gotchas, unknowns - all in natural language.
+	Synthesis string `json:"synthesis"`
+
+	// Sources provide evidence/grounding for the synthesis.
+	// These are the actual code locations referenced.
+	Sources []CodeSource `json:"sources"`
 }
 
 type Keyword struct {
