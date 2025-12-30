@@ -2,143 +2,239 @@ package brain
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
-	"basegraph.app/relay/common/id"
 	"basegraph.app/relay/common/llm"
 	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/store"
 )
-
-type RetrieverType string
 
 const (
-	RetrieverTypeCodeGraph RetrieverType = "codegraph"
-	RetrieverTypeLearnings RetrieverType = "learnings"
+	maxParallelRetrievers = 6 // Limit for retriever sub agent
 )
 
-type RetrieverJob struct {
-	Type     RetrieverType `json:"type" jsonschema:"enum=codegraph,enum=learnings" jsonschema_description:"The retriever to use"`
-	Query    string        `json:"query" jsonschema_description:"The search query or question to answer"`
-	Intent   string        `json:"intent" jsonschema_description:"What information this retrieval aims to find"`
-	Priority int           `json:"priority" jsonschema_description:"Execution priority 1-3 (1=highest)"`
-
-	SymbolHints   []string `json:"symbol_hints" jsonschema_description:"Expected symbol names, function names, or types to search for"`
-	Kinds         []string `json:"kinds" jsonschema_description:"Node kinds to filter: function, struct, interface, method"`
-	LearningTypes []string `json:"learning_types" jsonschema_description:"Learning categories: project_standards, codebase_standards, domain_knowledge"`
+type RetrieveParams struct {
+	Query string `json:"query" jsonschema:"required,description=Question about the codebase to explore. Be specific about what you need to understand."`
 }
 
-type PlannerResponse struct {
-	ContextSufficient bool           `json:"context_sufficient" jsonschema_description:"True if current issue context is enough to generate a spec without retrieval"`
-	Reasoning         string         `json:"reasoning" jsonschema_description:"Brief explanation of the decision"`
-	Jobs              []RetrieverJob `json:"jobs" jsonschema_description:"Retrieval jobs to execute if context is insufficient"`
+// PlanResult contains accumulated context for downstream agents.
+type PlanResult struct {
+	Context   string // Accumulated retrieval reports (prose with code snippets)
+	Reasoning string // Why context is sufficient (or final thoughts)
 }
 
-var plannerSchema = llm.GenerateSchema[PlannerResponse]()
-
+// Planner gathers code context for issue scoping.
+// It spawns Retriever sub-agents to explore the codebase, preserving its own context window.
 type Planner struct {
-	llm llm.Client
+	llm       llm.AgentClient
+	retriever *Retriever
+	debugDir  string // Directory for debug logs (empty = no logging)
 }
 
-func NewPlanner(client llm.Client) *Planner {
-	return &Planner{llm: client}
+// NewPlanner creates a Planner with a Retriever sub-agent.
+func NewPlanner(llmClient llm.AgentClient, retriever *Retriever) *Planner {
+	return &Planner{
+		llm:       llmClient,
+		retriever: retriever,
+		debugDir:  os.Getenv("BRAIN_DEBUG_DIR"),
+	}
 }
 
-const plannerPromptVersion = "v1"
-
-func (p *Planner) Plan(ctx context.Context, issue *model.Issue, evalStore store.LLMEvalStore) (*PlannerResponse, error) {
-	prompt := p.buildPrompt(issue)
+// Plan gathers code context by spawning retrieval sub-agents.
+// Returns when sufficient context is gathered for gap analysis.
+func (p *Planner) Plan(ctx context.Context, issue *model.Issue) (*PlanResult, error) {
+	prompt := formatIssue(issue)
 	if prompt == "" {
 		slog.DebugContext(ctx, "no content to plan from", "issue_id", issue.ID)
-		return &PlannerResponse{
-			ContextSufficient: true,
-			Reasoning:         "Empty issue - no content to analyze",
-			Jobs:              nil,
+		return &PlanResult{
+			Context:   "",
+			Reasoning: "Empty issue - no content to analyze",
 		}, nil
 	}
 
-	var response PlannerResponse
-	var llmResp *llm.Response
-	start := time.Now()
-
-	// Retry with exponential backoff to handle transient rate limits
-	var err error
-	for attempt := range 3 {
-		llmResp, err = p.llm.Chat(ctx, llm.Request{
-			SystemPrompt: plannerSystemPrompt,
-			UserPrompt:   prompt,
-			SchemaName:   "planner_response",
-			Schema:       plannerSchema,
-			Temperature:  llm.Temp(0.1),
-		}, &response)
-
-		if err == nil {
-			break
-		}
-		if !llm.IsRetryable(ctx, err) {
-			return nil, fmt.Errorf("planner: %w", err)
-		}
-		slog.WarnContext(ctx, "planner retry",
-			"issue_id", issue.ID,
-			"attempt", attempt+1,
-			"error", err)
-		time.Sleep(time.Duration(1<<attempt) * time.Second)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("planner after 3 attempts: %w", err)
+	messages := []llm.Message{
+		{Role: "system", Content: plannerSystemPrompt},
+		{Role: "user", Content: prompt},
 	}
 
-	latency := time.Since(start)
-	p.logEval(ctx, evalStore, issue.ID, prompt, response, latency, llmResp)
+	// Debug logging
+	sessionID := time.Now().Format("20060102-150405")
+	var debugLog strings.Builder
+	debugLog.WriteString(fmt.Sprintf("=== PLANNER SESSION %s ===\n", sessionID))
+	debugLog.WriteString(fmt.Sprintf("Issue ID: %d\n\n", issue.ID))
+	debugLog.WriteString(fmt.Sprintf("[USER]\n%s\n\n", prompt))
 
-	slog.InfoContext(ctx, "planner completed",
-		"issue_id", issue.ID,
-		"context_sufficient", response.ContextSufficient,
-		"job_count", len(response.Jobs),
-		"latency_ms", latency.Milliseconds())
+	var accumulatedContext strings.Builder
+	iterations := 0
 
-	return &response, nil
+	slog.InfoContext(ctx, "planner starting", "issue_id", issue.ID)
+
+	for {
+		iterations++
+
+		resp, err := p.llm.ChatWithTools(ctx, llm.AgentRequest{
+			Messages: messages,
+			Tools:    p.tools(),
+		})
+		if err != nil {
+			p.writeDebugLog(sessionID, debugLog.String())
+			return nil, fmt.Errorf("planner chat iteration %d: %w", iterations, err)
+		}
+
+		// Log assistant response
+		debugLog.WriteString(fmt.Sprintf("--- ITERATION %d ---\n", iterations))
+		debugLog.WriteString(fmt.Sprintf("[ASSISTANT]\n%s\n\n", resp.Content))
+
+		// No tool calls = done planning
+		if len(resp.ToolCalls) == 0 {
+			debugLog.WriteString("=== PLANNER COMPLETED ===\n")
+			debugLog.WriteString(fmt.Sprintf("\nAccumulated Context Length: %d\n", accumulatedContext.Len()))
+			p.writeDebugLog(sessionID, debugLog.String())
+
+			slog.InfoContext(ctx, "planner completed",
+				"issue_id", issue.ID,
+				"iterations", iterations,
+				"context_length", accumulatedContext.Len())
+
+			return &PlanResult{
+				Context:   accumulatedContext.String(),
+				Reasoning: resp.Content,
+			}, nil
+		}
+
+		// Log tool calls
+		for _, tc := range resp.ToolCalls {
+			debugLog.WriteString(fmt.Sprintf("[TOOL CALL] %s\n", tc.Name))
+			debugLog.WriteString(fmt.Sprintf("Arguments: %s\n\n", tc.Arguments))
+		}
+
+		// Execute retrieve calls in parallel
+		messages = append(messages, llm.Message{
+			Role:      "assistant",
+			Content:   resp.Content,
+			ToolCalls: resp.ToolCalls,
+		})
+
+		results := p.executeRetrievalsParallel(ctx, resp.ToolCalls)
+
+		for _, r := range results {
+			// Log tool result (truncated for readability)
+			debugLog.WriteString(fmt.Sprintf("[TOOL RESULT] (length: %d)\n", len(r.report)))
+			if len(r.report) > 2000 {
+				debugLog.WriteString(r.report[:2000])
+				debugLog.WriteString("\n... (truncated)\n\n")
+			} else {
+				debugLog.WriteString(r.report)
+				debugLog.WriteString("\n\n")
+			}
+
+			if r.report != "" {
+				accumulatedContext.WriteString(r.report)
+				accumulatedContext.WriteString("\n\n---\n\n")
+			}
+			messages = append(messages, llm.Message{
+				Role:       "tool",
+				Content:    r.report,
+				ToolCallID: r.callID,
+			})
+		}
+	}
 }
 
-func (p *Planner) logEval(ctx context.Context, evalStore store.LLMEvalStore, issueID int64, prompt string, response PlannerResponse, latency time.Duration, llmResp *llm.Response) {
-	if evalStore == nil {
+func (p *Planner) writeDebugLog(sessionID, content string) {
+	if p.debugDir == "" {
 		return
 	}
 
-	outputJSON, err := json.Marshal(response)
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to marshal planner response for eval", "error", err)
+	if err := os.MkdirAll(p.debugDir, 0o755); err != nil {
+		slog.Warn("failed to create debug dir", "dir", p.debugDir, "error", err)
 		return
 	}
 
-	eval := &model.LLMEval{
-		ID:            id.New(),
-		IssueID:       int64Ptr(issueID),
-		Stage:         "planner",
-		InputText:     prompt,
-		OutputJSON:    outputJSON,
-		Model:         p.llm.Model(),
-		Temperature:   floatPtr(0.1),
-		PromptVersion: stringPtr(plannerPromptVersion),
-		LatencyMs:     intPtr(int(latency.Milliseconds())),
-	}
-
-	if llmResp != nil {
-		eval.PromptTokens = intPtr(llmResp.PromptTokens)
-		eval.CompletionTokens = intPtr(llmResp.CompletionTokens)
-	}
-
-	if _, err := evalStore.Create(ctx, eval); err != nil {
-		// Eval logging is observability, not critical path
-		slog.ErrorContext(ctx, "failed to log planner eval", "error", err, "issue_id", issueID)
+	filename := filepath.Join(p.debugDir, fmt.Sprintf("planner_%s.txt", sessionID))
+	if err := os.WriteFile(filename, []byte(content), 0o644); err != nil {
+		slog.Warn("failed to write debug log", "file", filename, "error", err)
+	} else {
+		slog.Info("debug log written", "file", filename)
 	}
 }
 
-func (p *Planner) buildPrompt(issue *model.Issue) string {
+type retrievalResult struct {
+	callID string
+	report string
+}
+
+// executeRetrievalsParallel runs multiple retrieve calls concurrently with bounded parallelism.
+func (p *Planner) executeRetrievalsParallel(ctx context.Context, toolCalls []llm.ToolCall) []retrievalResult {
+	results := make([]retrievalResult, len(toolCalls))
+	var wg sync.WaitGroup
+
+	// Semaphore to limit concurrent retrievers
+	sem := make(chan struct{}, maxParallelRetrievers)
+
+	for i, tc := range toolCalls {
+		if tc.Name != "retrieve" {
+			results[i] = retrievalResult{
+				callID: tc.ID,
+				report: fmt.Sprintf("Unknown tool: %s", tc.Name),
+			}
+			continue
+		}
+
+		wg.Add(1)
+		go func(idx int, call llm.ToolCall) {
+			defer wg.Done()
+
+			// Acquire semaphore slot
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			params, err := llm.ParseToolArguments[RetrieveParams](call.Arguments)
+			if err != nil {
+				results[idx] = retrievalResult{
+					callID: call.ID,
+					report: fmt.Sprintf("Error parsing arguments: %s", err),
+				}
+				return
+			}
+
+			slog.InfoContext(ctx, "planner spawning retriever",
+				"query", truncate(params.Query, 100),
+				"slot", idx+1,
+				"total", len(toolCalls))
+
+			report, err := p.retriever.Query(ctx, params.Query)
+			if err != nil {
+				report = fmt.Sprintf("Retrieval error: %s", err)
+			}
+
+			results[idx] = retrievalResult{
+				callID: call.ID,
+				report: report,
+			}
+		}(i, tc)
+	}
+
+	wg.Wait()
+	return results
+}
+
+func (p *Planner) tools() []llm.Tool {
+	return []llm.Tool{
+		{
+			Name:        "retrieve",
+			Description: "Explore the codebase to gather context. Ask a specific question about code structure, relationships, or behavior. Returns a prose report with relevant code snippets. You can call this multiple times in parallel for independent questions.",
+			Parameters:  llm.GenerateSchemaFrom(RetrieveParams{}),
+		},
+	}
+}
+
+func formatIssue(issue *model.Issue) string {
 	var sb strings.Builder
 
 	if issue.Title != nil && *issue.Title != "" {
@@ -153,31 +249,8 @@ func (p *Planner) buildPrompt(issue *model.Issue) string {
 		sb.WriteString("\n\n")
 	}
 
-	if len(issue.Keywords) > 0 {
-		sb.WriteString("## Extracted Keywords\n")
-		for _, k := range issue.Keywords {
-			sb.WriteString(fmt.Sprintf("- %s (category: %s, weight: %.2f)\n", k.Value, k.Category, k.Weight))
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(issue.CodeFindings) > 0 {
-		sb.WriteString("## Code Context (Already Retrieved)\n")
-		for _, cf := range issue.CodeFindings {
-			sb.WriteString(fmt.Sprintf("### %s\n", cf.Observation))
-			if len(cf.Sources) > 0 {
-				locations := make([]string, len(cf.Sources))
-				for i, src := range cf.Sources {
-					locations[i] = src.Location
-				}
-				sb.WriteString("Sources: " + strings.Join(locations, ", ") + "\n")
-			}
-			sb.WriteString("\n")
-		}
-	}
-
 	if len(issue.Learnings) > 0 {
-		sb.WriteString("## Team Learnings (Already Retrieved)\n")
+		sb.WriteString("## Team Learnings\n")
 		for _, l := range issue.Learnings {
 			sb.WriteString(fmt.Sprintf("- [%s]: %s\n", l.Type, l.Content))
 		}
@@ -194,64 +267,38 @@ func (p *Planner) buildPrompt(issue *model.Issue) string {
 	return sb.String()
 }
 
-const plannerSystemPrompt = `You are a planning agent that decides what context to gather before gap analysis.
+const plannerSystemPrompt = `You gather code context for issue scoping. You have one tool:
 
-## How This Works
+- retrieve(query) — Ask a specific question about the codebase. A search specialist will find the answer.
 
-This is a ONE-SHOT decision. You will NOT see the retrieval results.
+# Tool usage policy
 
-Pipeline: Planner (you) → Retriever → Gap Detector → Questions/Spec
+- You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel. Maximize use of parallel tool calls where possible to increase efficiency. However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially. For instance, if one operation must complete before another starts, run these operations sequentially instead. Never use placeholders or guess missing parameters in tool calls.
+- Launch multiple retrieve calls concurrently whenever possible, to maximize performance; to do that, use a single message with multiple tool uses.
+- It is always better to speculatively perform multiple retrievals as a batch that are potentially useful.
 
-Your job: Decide what code context and team knowledge to fetch BEFORE the Gap Detector analyzes the issue.
+# How to Ask Good Questions
 
-## Your Decision
+Ask bounded, specific questions:
+- "Find the function that sends notifications" (not "How does notification work?")
+- "What calls PaymentService.process?" (not "Explain the payment flow")
+- "What types implement the Storage interface?"
+- "Find where user permissions are checked"
 
-- context_sufficient=true: The issue is clear enough. Skip retrieval, proceed to gap analysis.
-- context_sufficient=false: We need more context. Specify what to retrieve.
+Each retrieve spawns a search agent. Be specific so it knows when it's done.
 
-## Available Retrievers
+# Workflow
 
-### codegraph
-Query the code graph to find:
-- Function signatures and call chains
-- Struct/interface definitions
-- File locations and import relationships
-- Implementation patterns
+1. Read the issue and identify 2-4 key areas to explore
+2. Call retrieve() for multiple independent questions in parallel
+3. Review the answers, then decide: need more context or done?
+4. If needed, call more retrievals in parallel for follow-up questions
+5. Usually 1-2 batches of parallel retrievals is enough
 
-Use when the issue references code you haven't seen.
+# When Done
 
-### learnings
-Query team knowledge to find:
-- Conventions and standards
-- Past decisions and rationale
-- Known gotchas and edge cases
+Stop when you can identify:
+- What code is affected
+- Key functions/types involved
 
-Use when team preferences or domain rules might affect the implementation.
-
-## Output Rules
-
-1. Be SPECIFIC with queries:
-   - Bad: "Find code related to users"
-   - Good: "Find UserService.Create() and its validation logic"
-2. Limit to 3-5 jobs (prioritize what's critical for gap analysis)
-3. Priority 1 = most important
-
-## Examples
-
-### Simple Bug Fix (Skip Retrieval)
-Issue: "Fix typo in login error message - says 'pasword' instead of 'password'"
-Keywords: [login, auth_handler, error_message, password]
-
--> context_sufficient: true
--> reasoning: "Clear typo fix. Keywords point to auth_handler. Gap Detector can proceed."
-
-### Feature Addition (Needs Context)
-Issue: "Add Stripe payment integration"
-Keywords: [stripe, payment, checkout, billing_service]
-
--> context_sufficient: false
--> reasoning: "Need to understand existing payment architecture before identifying gaps."
--> jobs: [
-    {type: codegraph, query: "BillingService payment processing", intent: "Understand existing payment flow", priority: 1},
-    {type: learnings, query: "payment processing security", intent: "Find team security requirements", priority: 2}
-]`
+Write a brief summary of what you gathered. Don't over-explore.`
