@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"time"
 
 	"github.com/invopop/jsonschema"
@@ -12,6 +13,8 @@ import (
 	"github.com/openai/openai-go/option"
 	"github.com/openai/openai-go/shared"
 )
+
+var nameInvalidChars = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 // Config holds LLM client configuration.
 type Config struct {
@@ -37,6 +40,7 @@ type AgentRequest struct {
 // Message represents a conversation message.
 type Message struct {
 	Role       string     // "system", "user", "assistant", "tool"
+	Name       string     // Optional: participant name for multi-user conversations (user messages only)
 	Content    string     // Text content
 	ToolCalls  []ToolCall // For assistant messages that request tool calls
 	ToolCallID string     // For tool result messages (references the tool call)
@@ -97,7 +101,7 @@ func NewAgentClient(cfg Config) (AgentClient, error) {
 func (c *agentClient) ChatWithTools(ctx context.Context, req AgentRequest) (*AgentResponse, error) {
 	maxTokens := req.MaxTokens
 	if maxTokens == 0 {
-		maxTokens = 4096
+		maxTokens = 8192
 	}
 
 	messages := convertMessages(req.Messages)
@@ -167,7 +171,18 @@ func convertMessages(msgs []Message) []openai.ChatCompletionMessageParamUnion {
 			result = append(result, openai.SystemMessage(msg.Content))
 
 		case "user":
-			result = append(result, openai.UserMessage(msg.Content))
+			if msg.Name != "" {
+				result = append(result, openai.ChatCompletionMessageParamUnion{
+					OfUser: &openai.ChatCompletionUserMessageParam{
+						Name: openai.String(msg.Name),
+						Content: openai.ChatCompletionUserMessageParamContentUnion{
+							OfString: openai.String(msg.Content),
+						},
+					},
+				})
+			} else {
+				result = append(result, openai.UserMessage(msg.Content))
+			}
 
 		case "assistant":
 			if len(msg.ToolCalls) > 0 {
@@ -245,4 +260,15 @@ func GenerateSchemaFrom(v any) any {
 		DoNotReference:            true,
 	}
 	return reflector.Reflect(v)
+}
+
+// SanitizeName converts a username to a valid OpenAI name parameter.
+// The name must match ^[a-zA-Z0-9_-]{1,64}$.
+// Invalid characters are replaced with underscores, and the result is truncated to 64 characters.
+func SanitizeName(username string) string {
+	sanitized := nameInvalidChars.ReplaceAllString(username, "_")
+	if len(sanitized) > 64 {
+		sanitized = sanitized[:64]
+	}
+	return sanitized
 }
