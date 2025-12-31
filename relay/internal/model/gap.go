@@ -1,4 +1,4 @@
-package domain
+package model
 
 import "time"
 
@@ -27,14 +27,14 @@ const (
 )
 
 type Gap struct {
-	ID         string        `json:"id"`
+	ID         int64         `json:"id"`
 	IssueID    int64         `json:"issue_id"`
 	Status     GapStatus     `json:"status"`
 	Question   string        `json:"question"`
 	Evidence   string        `json:"evidence,omitempty"`
 	Severity   GapSeverity   `json:"severity"`
 	Respondent GapRespondent `json:"respondent"`
-	LearningID *string       `json:"learning_id,omitempty"`
+	LearningID *int64        `json:"learning_id,omitempty"`
 	CreatedAt  time.Time     `json:"created_at"`
 	ResolvedAt *time.Time    `json:"resolved_at,omitempty"`
 }

@@ -23,6 +23,22 @@ type EventLog struct {
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
+type Gap struct {
+	ID      int64 `json:"id"`
+	IssueID int64 `json:"issue_id"`
+	// open | resolved | skipped
+	Status   string  `json:"status"`
+	Question string  `json:"question"`
+	Evidence *string `json:"evidence"`
+	// blocking | high | medium | low
+	Severity string `json:"severity"`
+	// reporter | assignee
+	Respondent string             `json:"respondent"`
+	LearningID *int64             `json:"learning_id"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ResolvedAt pgtype.Timestamptz `json:"resolved_at"`
+}
+
 type Integration struct {
 	ID                  int64              `json:"id"`
 	WorkspaceID         int64              `json:"workspace_id"`

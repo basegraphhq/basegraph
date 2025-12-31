@@ -59,3 +59,7 @@ func (s *Stores) Learnings() LearningStore {
 func (s *Stores) LLMEvals() LLMEvalStore {
 	return newLLMEvalStore(s.queries)
 }
+
+func (s *Stores) Gaps() GapStore {
+	return newGapStore(s.queries)
+}

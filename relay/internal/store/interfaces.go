@@ -151,3 +151,14 @@ type LLMEvalStore interface {
 	SetExpected(ctx context.Context, id int64, expectedJSON []byte, evalScore float64) error
 	GetStats(ctx context.Context, stage string, since time.Time) (*model.LLMEvalStats, error)
 }
+
+type GapStore interface {
+	Create(ctx context.Context, gap model.Gap) (model.Gap, error)
+	GetByID(ctx context.Context, id int64) (model.Gap, error)
+	ListByIssue(ctx context.Context, issueID int64) ([]model.Gap, error)
+	ListOpenByIssue(ctx context.Context, issueID int64) ([]model.Gap, error)
+	Resolve(ctx context.Context, id int64) (model.Gap, error)
+	Skip(ctx context.Context, id int64) (model.Gap, error)
+	SetLearning(ctx context.Context, id int64, learningID int64) (model.Gap, error)
+	CountOpenBlocking(ctx context.Context, issueID int64) (int64, error)
+}
