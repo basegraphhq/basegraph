@@ -1,8 +1,11 @@
 package brain
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+
+	"basegraph.app/relay/internal/model"
 )
 
 type ActionType string
@@ -89,4 +92,22 @@ type ReadyForSpecAction struct {
 	RelevantFindings []string `json:"relevant_finding_ids"`
 	ResolvedGaps     []string `json:"resolved_gap_ids"`
 	LearningsApplied []string `json:"learning_ids"`
+}
+
+// ActionExecutor executes actions returned by the Planner.
+type ActionExecutor interface {
+	Execute(ctx context.Context, issue model.Issue, action Action) error
+	ExecuteBatch(ctx context.Context, issue model.Issue, actions []Action) []ActionError
+}
+
+// ActionError represents a failed action execution.
+type ActionError struct {
+	Action      Action
+	Error       string
+	Recoverable bool
+}
+
+// ActionValidator validates actions before execution.
+type ActionValidator interface {
+	Validate(ctx context.Context, issue model.Issue, input SubmitActionsInput) error
 }
