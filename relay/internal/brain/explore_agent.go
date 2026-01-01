@@ -16,11 +16,10 @@ import (
 )
 
 const (
-	exploreTimeout      = 5 * time.Minute
-	doomLoopThreshold   = 3  // Stop if same tool called 3 times with identical args
-	maxExploreSteps     = 20 // Soft limit - inject synthesis prompt after this
-	hardMaxExploreSteps = 30 // Hard limit - force stop
-	maxParallelTools    = 4  // Limit concurrent tool executions
+	exploreTimeout    = 10 * time.Minute
+	doomLoopThreshold = 3      // Stop if same tool called 3 times with identical args
+	maxParallelTools  = 4      // Limit concurrent tool executions
+	maxContextTokens  = 150000 // Token limit for explore agent context window
 )
 
 // ExploreAgent is a sub-agent that explores the codebase.
@@ -105,27 +104,40 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error
 	for {
 		iterations++
 
-		// Hard stop after max iterations
-		if iterations > hardMaxExploreSteps {
-			slog.WarnContext(ctx, "explore agent hit hard max, forcing completion",
-				"iterations", iterations)
-			debugLog.WriteString(fmt.Sprintf("\n=== HARD STOP (max %d iterations) ===\n", hardMaxExploreSteps))
-			e.writeDebugLog(sessionID, "explore", debugLog.String())
-			return "Exploration stopped after maximum iterations. Based on the code examined, please refer to the search results above for relevant context.", nil
-		}
+		// Check token limit before making another LLM call
+		if totalPromptTokens+totalCompletionTokens >= maxContextTokens {
+			slog.InfoContext(ctx, "explore agent hit token limit, synthesizing findings",
+				"iterations", iterations,
+				"total_tokens", totalPromptTokens+totalCompletionTokens)
+			debugLog.WriteString(fmt.Sprintf("\n=== TOKEN LIMIT REACHED (%d tokens) - synthesizing findings ===\n",
+				totalPromptTokens+totalCompletionTokens))
 
-		// After soft limit, remove tools to encourage synthesis
-		tools := e.tools.Definitions()
-		if iterations > maxExploreSteps {
-			slog.InfoContext(ctx, "explore agent past soft limit, removing tools to encourage synthesis",
-				"iterations", iterations)
-			debugLog.WriteString(fmt.Sprintf("\n--- SOFT LIMIT REACHED (iteration %d > %d) - removing tools ---\n", iterations, maxExploreSteps))
-			tools = nil // Force text-only response
+			// Ask the model to synthesize findings without tools
+			messages = append(messages, llm.Message{
+				Role:    "user",
+				Content: "You've gathered substantial information. Please write your final report now based on everything you've found.",
+			})
+
+			synthResp, err := e.llm.ChatWithTools(ctx, llm.AgentRequest{
+				Messages: messages,
+				Tools:    nil, // No tools = force text response
+			})
+			if err != nil {
+				e.writeDebugLog(sessionID, "explore", debugLog.String())
+				return "", fmt.Errorf("explore agent synthesis after token limit: %w", err)
+			}
+
+			totalPromptTokens += synthResp.PromptTokens
+			totalCompletionTokens += synthResp.CompletionTokens
+
+			debugLog.WriteString(fmt.Sprintf("[SYNTHESIS]\n%s\n", synthResp.Content))
+			e.writeDebugLog(sessionID, "explore", debugLog.String())
+			return synthResp.Content, nil
 		}
 
 		resp, err := e.llm.ChatWithTools(ctx, llm.AgentRequest{
 			Messages: messages,
-			Tools:    tools,
+			Tools:    e.tools.Definitions(),
 		})
 		if err != nil {
 			e.writeDebugLog(sessionID, "explore", debugLog.String())
