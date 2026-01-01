@@ -17,12 +17,22 @@ const (
 	ProviderAnthropic = "anthropic"
 )
 
+// ReasoningEffort controls the amount of reasoning for supported models.
+type ReasoningEffort string
+
+const (
+	ReasoningEffortLow    ReasoningEffort = "low"
+	ReasoningEffortMedium ReasoningEffort = "medium"
+	ReasoningEffortHigh   ReasoningEffort = "high"
+)
+
 // Config holds LLM client configuration.
 type Config struct {
-	Provider string // "openai" or "anthropic"
-	APIKey   string
-	BaseURL  string
-	Model    string
+	Provider        string          // "openai" or "anthropic"
+	APIKey          string          // Required: API key for the provider
+	BaseURL         string          // Optional: custom API endpoint
+	Model           string          // Model name (e.g., "gpt-5.1", "claude-sonnet-4-5-20250514")
+	ReasoningEffort ReasoningEffort // Optional: for models that support reasoning (gpt-5.1, o1, o3)
 }
 
 // AgentClient supports tool-calling conversations for agent loops.

@@ -13,8 +13,9 @@ import (
 )
 
 type openaiClient struct {
-	client openai.Client
-	model  string
+	client          openai.Client
+	model           string
+	reasoningEffort shared.ReasoningEffort
 }
 
 // newOpenAIClient creates an AgentClient using the OpenAI API.
@@ -31,9 +32,21 @@ func newOpenAIClient(cfg Config) (AgentClient, error) {
 		model = "gpt-4o"
 	}
 
+	// Map our ReasoningEffort to OpenAI's
+	var reasoningEffort shared.ReasoningEffort
+	switch cfg.ReasoningEffort {
+	case ReasoningEffortLow:
+		reasoningEffort = shared.ReasoningEffortLow
+	case ReasoningEffortMedium:
+		reasoningEffort = shared.ReasoningEffortMedium
+	case ReasoningEffortHigh:
+		reasoningEffort = shared.ReasoningEffortHigh
+	}
+
 	return &openaiClient{
-		client: openai.NewClient(opts...),
-		model:  model,
+		client:          openai.NewClient(opts...),
+		model:           model,
+		reasoningEffort: reasoningEffort,
 	}, nil
 }
 
@@ -58,6 +71,11 @@ func (c *openaiClient) ChatWithTools(ctx context.Context, req AgentRequest) (*Ag
 
 	if req.Temperature != nil {
 		params.Temperature = openai.Float(*req.Temperature)
+	}
+
+	// Enable reasoning for supported models (gpt-5.1, o1, o3, etc.)
+	if c.reasoningEffort != "" {
+		params.ReasoningEffort = c.reasoningEffort
 	}
 
 	start := time.Now()

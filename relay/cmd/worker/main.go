@@ -94,16 +94,20 @@ func main() {
 	}
 
 	agentClient, err := llm.NewAgentClient(llm.Config{
-		Provider: cfg.LLM.Provider,
-		APIKey:   cfg.LLM.APIKey,
-		BaseURL:  cfg.LLM.BaseURL,
-		Model:    cfg.LLM.Model,
+		Provider:        cfg.LLM.Provider,
+		APIKey:          cfg.LLM.APIKey,
+		BaseURL:         cfg.LLM.BaseURL,
+		Model:           cfg.LLM.Model,
+		ReasoningEffort: llm.ReasoningEffort(cfg.LLM.ReasoningEffort),
 	})
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to create agent client", "error", err)
 		os.Exit(1)
 	}
-	slog.InfoContext(ctx, "agent client initialized", "provider", cfg.LLM.Provider, "model", cfg.LLM.Model)
+	slog.InfoContext(ctx, "agent client initialized",
+		"provider", cfg.LLM.Provider,
+		"model", cfg.LLM.Model,
+		"reasoning_effort", cfg.LLM.ReasoningEffort)
 
 	repoRoot := os.Getenv("REPO_ROOT")
 	if repoRoot == "" {

@@ -58,11 +58,12 @@ type OpenAIConfig struct {
 }
 
 type LLMConfig struct {
-	Provider  string // "openai" or "anthropic"
-	APIKey    string
-	BaseURL   string // Optional: for custom endpoints
-	Model     string
-	MaxTokens int
+	Provider        string // "openai" or "anthropic"
+	APIKey          string
+	BaseURL         string // Optional: for custom endpoints
+	Model           string
+	MaxTokens       int
+	ReasoningEffort string // Optional: "low", "medium", "high" for reasoning models (gpt-5.1, o1, o3)
 }
 
 type ArangoDBConfig struct {
@@ -116,11 +117,12 @@ func Load() (Config, error) {
 			Model:   getEnv("OPENAI_MODEL", "gpt-4o-mini"),
 		},
 		LLM: LLMConfig{
-			Provider:  getEnv("LLM_PROVIDER", "anthropic"),
-			APIKey:    getEnv("LLM_API_KEY", ""),
-			BaseURL:   getEnv("LLM_BASE_URL", ""),
-			Model:     getEnv("LLM_MODEL", "claude-sonnet-4-5-20250514"),
-			MaxTokens: getEnvInt("LLM_MAX_TOKENS", 8192),
+			Provider:        getEnv("LLM_PROVIDER", "anthropic"),
+			APIKey:          getEnv("LLM_API_KEY", ""),
+			BaseURL:         getEnv("LLM_BASE_URL", ""),
+			Model:           getEnv("LLM_MODEL", "claude-sonnet-4-5-20250514"),
+			MaxTokens:       getEnvInt("LLM_MAX_TOKENS", 8192),
+			ReasoningEffort: getEnv("LLM_REASONING_EFFORT", "medium"),
 		},
 		ArangoDB: ArangoDBConfig{
 			URL:      getEnv("ARANGO_URL", "http://localhost:8529"),
