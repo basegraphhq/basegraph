@@ -2,8 +2,12 @@ package logger
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
+	"time"
 
 	"basegraph.app/relay/core/config"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
@@ -29,10 +33,34 @@ func Setup(cfg config.Config) {
 	} else if cfg.IsProduction() {
 		handler = NewTraceHandler(slog.NewJSONHandler(os.Stdout, opts))
 	} else {
-		handler = NewTraceHandler(slog.NewTextHandler(os.Stdout, opts))
+		// Development mode: write logs to both stdout and file
+		writer := createDevWriter()
+		handler = NewTraceHandler(slog.NewTextHandler(writer, opts))
 	}
 
 	slog.SetDefault(slog.New(handler))
+}
+
+func createDevWriter() io.Writer {
+	// Create logs directory if it doesn't exist
+	logsDir := "logs"
+	if err := os.MkdirAll(logsDir, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to create logs directory: %v\n", err)
+		return os.Stdout
+	}
+
+	// Create log file with timestamp
+	timestamp := time.Now().Format("2006-01-02")
+	logFileName := filepath.Join(logsDir, fmt.Sprintf("relay-%s.log", timestamp))
+
+	logFile, err := os.OpenFile(logFileName, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to open log file: %v\n", err)
+		return os.Stdout
+	}
+
+	// Write to both stdout and file
+	return io.MultiWriter(os.Stdout, logFile)
 }
 
 type TraceHandler struct {

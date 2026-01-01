@@ -31,4 +31,26 @@ type IssueTrackerService interface {
 	FetchIssue(ctx context.Context, params FetchIssueParams) (*model.Issue, error)
 	FetchDiscussions(ctx context.Context, params FetchDiscussionsParams) ([]model.Discussion, error)
 	IsReplyToUser(ctx context.Context, params IsReplyParams) (bool, error)
+	CreateDiscussion(ctx context.Context, params CreateDiscussionParams) (CreateDiscussionResult, error)
+	ReplyToThread(ctx context.Context, params ReplyToThreadParams) (ReplyToThreadResult, error)
+}
+
+type CreateDiscussionParams struct {
+	Issue   model.Issue
+	Content string
+}
+
+type CreateDiscussionResult struct {
+	DiscussionID string
+	NoteID       string
+}
+
+type ReplyToThreadParams struct {
+	Issue        model.Issue
+	DiscussionID string
+	Content      string
+}
+
+type ReplyToThreadResult struct {
+	NoteID string
 }

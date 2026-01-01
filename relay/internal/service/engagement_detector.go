@@ -20,6 +20,7 @@ type EngagementResult struct {
 
 type EngagementDetector interface {
 	ShouldEngage(ctx context.Context, integrationID int64, req EngagementRequest) (EngagementResult, error)
+	IsSelfTriggered(ctx context.Context, integrationID int64, username string) (bool, error)
 }
 
 type EngagementRequest struct {
@@ -30,11 +31,6 @@ type EngagementRequest struct {
 	CommentID         string
 	ExternalProjectID int64
 	ExternalIssueIID  int64
-}
-
-type ServiceAccountConfig struct {
-	Username string `json:"username"`
-	UserID   int64  `json:"user_id"`
 }
 
 type engagementDetector struct {
@@ -55,7 +51,7 @@ func NewEngagementDetector(
 func (d *engagementDetector) ShouldEngage(ctx context.Context, integrationID int64, req EngagementRequest) (EngagementResult, error) {
 	notEngaged := EngagementResult{ShouldEngage: false}
 
-	config, err := d.configStore.GetByIntegrationAndKey(ctx, integrationID, "service_account")
+	config, err := d.configStore.GetByIntegrationAndKey(ctx, integrationID, model.ConfigKeyServiceAccount)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return notEngaged, nil
@@ -63,7 +59,7 @@ func (d *engagementDetector) ShouldEngage(ctx context.Context, integrationID int
 		return notEngaged, fmt.Errorf("fetching service account config: %w", err)
 	}
 
-	var sa ServiceAccountConfig
+	var sa model.ServiceAccountConfig
 	if err := json.Unmarshal(config.Value, &sa); err != nil {
 		return notEngaged, fmt.Errorf("parsing service account config: %w", err)
 	}
@@ -150,4 +146,37 @@ func (d *engagementDetector) fetchDiscussions(
 		ProjectID:     req.ExternalProjectID,
 		IssueIID:      req.ExternalIssueIID,
 	})
+}
+
+// IsSelfTriggered checks if the given username is Relay's service account.
+// Used to filter out events triggered by Relay's own actions.
+func (d *engagementDetector) IsSelfTriggered(ctx context.Context, integrationID int64, username string) (bool, error) {
+	if username == "" {
+		return false, nil
+	}
+
+	config, err := d.configStore.GetByIntegrationAndKey(ctx, integrationID, model.ConfigKeyServiceAccount)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			slog.DebugContext(ctx, "no service account config found for self-trigger check",
+				"integration_id", integrationID,
+			)
+			return false, nil
+		}
+		return false, fmt.Errorf("fetching service account config: %w", err)
+	}
+
+	var sa model.ServiceAccountConfig
+	if err := json.Unmarshal(config.Value, &sa); err != nil {
+		return false, fmt.Errorf("parsing service account config: %w", err)
+	}
+
+	isSelf := strings.EqualFold(username, sa.Username)
+	slog.DebugContext(ctx, "self-trigger comparison",
+		"triggered_by", username,
+		"service_account", sa.Username,
+		"is_self", isSelf,
+	)
+
+	return isSelf, nil
 }

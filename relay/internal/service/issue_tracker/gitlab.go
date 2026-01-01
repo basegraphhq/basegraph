@@ -3,6 +3,7 @@ package issue_tracker
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"basegraph.app/relay/internal/model"
@@ -91,6 +92,14 @@ func (s *gitLabIssueTrackerService) IsReplyToUser(ctx context.Context, params Is
 	return false, nil
 }
 
+func (s *gitLabIssueTrackerService) newClient(baseURL *string, token string) (*gitlab.Client, error) {
+	if baseURL == nil || *baseURL == "" {
+		return gitlab.NewClient(token)
+	}
+	apiURL := strings.TrimSuffix(*baseURL, "/") + "/api/v4"
+	return gitlab.NewClient(token, gitlab.WithBaseURL(apiURL))
+}
+
 func (s *gitLabIssueTrackerService) getClient(ctx context.Context, integrationID int64) (*gitlab.Client, error) {
 	integration, err := s.integrations.GetByID(ctx, integrationID)
 	if err != nil {
@@ -108,14 +117,6 @@ func (s *gitLabIssueTrackerService) getClient(ctx context.Context, integrationID
 	}
 
 	return client, nil
-}
-
-func (s *gitLabIssueTrackerService) newClient(baseURL *string, token string) (*gitlab.Client, error) {
-	if baseURL == nil || *baseURL == "" {
-		return gitlab.NewClient(token)
-	}
-	apiURL := strings.TrimSuffix(*baseURL, "/") + "/api/v4"
-	return gitlab.NewClient(token, gitlab.WithBaseURL(apiURL))
 }
 
 func (s *gitLabIssueTrackerService) mapDiscussions(gitlabDiscussions []*gitlab.Discussion) []model.Discussion {
@@ -187,4 +188,70 @@ func (s *gitLabIssueTrackerService) mapToIssue(gitlabIssue *gitlab.Issue) *model
 		Reporter:         reporter,
 		ExternalIssueURL: &gitlabIssue.WebURL,
 	}
+}
+
+func (s *gitLabIssueTrackerService) CreateDiscussion(ctx context.Context, params CreateDiscussionParams) (CreateDiscussionResult, error) {
+	if params.Issue.ExternalProjectID == nil {
+		return CreateDiscussionResult{}, fmt.Errorf("external project id is required")
+	}
+
+	client, err := s.getClient(ctx, params.Issue.IntegrationID)
+	if err != nil {
+		return CreateDiscussionResult{}, err
+	}
+
+	issueIID, err := strconv.ParseInt(params.Issue.ExternalIssueID, 10, 64)
+	if err != nil {
+		return CreateDiscussionResult{}, fmt.Errorf("parsing issue iid: %w", err)
+	}
+
+	discussion, _, err := client.Discussions.CreateIssueDiscussion(
+		*params.Issue.ExternalProjectID,
+		issueIID,
+		&gitlab.CreateIssueDiscussionOptions{Body: &params.Content},
+		gitlab.WithContext(ctx),
+	)
+	if err != nil {
+		return CreateDiscussionResult{}, fmt.Errorf("creating discussion: %w", err)
+	}
+
+	if len(discussion.Notes) == 0 {
+		return CreateDiscussionResult{}, fmt.Errorf("discussion created but no notes returned")
+	}
+
+	return CreateDiscussionResult{
+		DiscussionID: discussion.ID,
+		NoteID:       strconv.FormatInt(discussion.Notes[0].ID, 10),
+	}, nil
+}
+
+func (s *gitLabIssueTrackerService) ReplyToThread(ctx context.Context, params ReplyToThreadParams) (ReplyToThreadResult, error) {
+	if params.Issue.ExternalProjectID == nil {
+		return ReplyToThreadResult{}, fmt.Errorf("external project id is required")
+	}
+
+	client, err := s.getClient(ctx, params.Issue.IntegrationID)
+	if err != nil {
+		return ReplyToThreadResult{}, err
+	}
+
+	issueIID, err := strconv.ParseInt(params.Issue.ExternalIssueID, 10, 64)
+	if err != nil {
+		return ReplyToThreadResult{}, fmt.Errorf("parsing issue iid: %w", err)
+	}
+
+	note, _, err := client.Discussions.AddIssueDiscussionNote(
+		*params.Issue.ExternalProjectID,
+		issueIID,
+		params.DiscussionID,
+		&gitlab.AddIssueDiscussionNoteOptions{Body: &params.Content},
+		gitlab.WithContext(ctx),
+	)
+	if err != nil {
+		return ReplyToThreadResult{}, fmt.Errorf("replying to thread: %w", err)
+	}
+
+	return ReplyToThreadResult{
+		NoteID: strconv.FormatInt(note.ID, 10),
+	}, nil
 }

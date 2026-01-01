@@ -17,6 +17,7 @@ type Config struct {
 	EventWebhook EventWebhookConfig
 	Pipeline     PipelineConfig
 	OpenAI       OpenAIConfig
+	LLM          LLMConfig
 	ArangoDB     ArangoDBConfig
 	Env          string
 	Port         string
@@ -54,6 +55,14 @@ type OpenAIConfig struct {
 	APIKey  string
 	BaseURL string
 	Model   string
+}
+
+type LLMConfig struct {
+	Provider  string // "openai" or "anthropic"
+	APIKey    string
+	BaseURL   string // Optional: for custom endpoints
+	Model     string
+	MaxTokens int
 }
 
 type ArangoDBConfig struct {
@@ -106,6 +115,13 @@ func Load() (Config, error) {
 			BaseURL: getEnv("OPENAI_BASE_URL", ""),
 			Model:   getEnv("OPENAI_MODEL", "gpt-4o-mini"),
 		},
+		LLM: LLMConfig{
+			Provider:  getEnv("LLM_PROVIDER", "anthropic"),
+			APIKey:    getEnv("LLM_API_KEY", ""),
+			BaseURL:   getEnv("LLM_BASE_URL", ""),
+			Model:     getEnv("LLM_MODEL", "claude-sonnet-4-5-20250514"),
+			MaxTokens: getEnvInt("LLM_MAX_TOKENS", 8192),
+		},
 		ArangoDB: ArangoDBConfig{
 			URL:      getEnv("ARANGO_URL", "http://localhost:8529"),
 			Username: getEnv("ARANGO_USERNAME", "root"),
@@ -146,6 +162,10 @@ func (c OpenAIConfig) Enabled() bool {
 	return c.APIKey != ""
 }
 
+func (c LLMConfig) Enabled() bool {
+	return c.APIKey != "" && (c.Provider == "openai" || c.Provider == "anthropic")
+}
+
 func (c ArangoDBConfig) Enabled() bool {
 	return c.URL != "" && c.Username != "" && c.Database != ""
 }
@@ -161,6 +181,15 @@ func getEnvInt32(key string, fallback int32) int32 {
 	if value, ok := os.LookupEnv(key); ok {
 		if i, err := strconv.ParseInt(value, 10, 32); err == nil {
 			return int32(i)
+		}
+	}
+	return fallback
+}
+
+func getEnvInt(key string, fallback int) int {
+	if value, ok := os.LookupEnv(key); ok {
+		if i, err := strconv.Atoi(value); err == nil {
+			return i
 		}
 	}
 	return fallback

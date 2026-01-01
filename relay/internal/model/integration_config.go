@@ -15,3 +15,15 @@ type IntegrationConfig struct {
 	ID            int64           `json:"id"`
 	IntegrationID int64           `json:"integration_id"`
 }
+
+// Config key constants
+const (
+	ConfigKeyServiceAccount = "service_account"
+)
+
+// ServiceAccountConfig represents the bot/service account identity for an integration.
+// Stored as IntegrationConfig with key="service_account" and config_type="identity".
+type ServiceAccountConfig struct {
+	Username string `json:"username"`
+	UserID   int64  `json:"user_id"`
+}

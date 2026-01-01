@@ -24,13 +24,14 @@ type ConsumerConfig struct {
 }
 
 type Message struct {
-	ID         string
-	EventLogID int64
-	IssueID    int64
-	EventType  string
-	Attempt    int
-	TraceID    string
-	Raw        redis.XMessage
+	ID              string
+	EventLogID      int64
+	IssueID         int64
+	EventType       string
+	Attempt         int
+	TraceID         string
+	TriggerThreadID string
+	Raw             redis.XMessage
 }
 
 // MessageProcessor processes a queue message.
@@ -137,6 +138,9 @@ func (c *RedisConsumer) Requeue(ctx context.Context, msg Message, errMsg string)
 	if msg.TraceID != "" {
 		values["trace_id"] = msg.TraceID
 	}
+	if msg.TriggerThreadID != "" {
+		values["trigger_thread_id"] = msg.TriggerThreadID
+	}
 	if errMsg != "" {
 		values["last_error"] = errMsg
 	}
@@ -205,15 +209,17 @@ func ParseMessage(msg redis.XMessage) (Message, error) {
 		attempt = 1
 	}
 	traceID, _ := parseString(msg.Values, "trace_id")
+	triggerThreadID, _ := parseString(msg.Values, "trigger_thread_id")
 
 	return Message{
-		ID:         msg.ID,
-		EventLogID: eventLogID,
-		IssueID:    issueID,
-		EventType:  eventType,
-		Attempt:    attempt,
-		TraceID:    traceID,
-		Raw:        msg,
+		ID:              msg.ID,
+		EventLogID:      eventLogID,
+		IssueID:         issueID,
+		EventType:       eventType,
+		Attempt:         attempt,
+		TraceID:         traceID,
+		TriggerThreadID: triggerThreadID,
+		Raw:             msg,
 	}, nil
 }
 

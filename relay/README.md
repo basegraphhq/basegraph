@@ -157,6 +157,17 @@ make lint         # Run golangci-lint
 make test         # Run tests
 ```
 
+### Logging
+
+In development mode, logs are automatically written to both stdout and daily log files in the `logs/` directory:
+
+- **Log files**: `logs/relay-YYYY-MM-DD.log` (auto-created, date-stamped)
+- **Log level**: DEBUG in development, INFO in production
+- **Format**: Text in development, JSON in production
+- **Trace context**: Automatically includes trace_id, span_id, and structured fields (issue_id, workspace_id, etc.)
+
+The `logs/` directory is ignored by git and will be created automatically on first run.
+
 ## How It Works
 
 ### High-Level Flow

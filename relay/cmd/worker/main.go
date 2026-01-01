@@ -18,7 +18,9 @@ import (
 	"basegraph.app/relay/core/config"
 	"basegraph.app/relay/core/db"
 	"basegraph.app/relay/internal/brain"
+	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/queue"
+	"basegraph.app/relay/internal/service/issue_tracker"
 	"basegraph.app/relay/internal/store"
 	"basegraph.app/relay/internal/worker"
 	"github.com/redis/go-redis/v9"
@@ -86,21 +88,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	if !cfg.OpenAI.Enabled() {
-		slog.ErrorContext(ctx, "OPENAI_API_KEY is required for pipeline processing")
+	if !cfg.LLM.Enabled() {
+		slog.ErrorContext(ctx, "LLM_API_KEY is required for pipeline processing")
 		os.Exit(1)
 	}
 
 	agentClient, err := llm.NewAgentClient(llm.Config{
-		APIKey:  cfg.OpenAI.APIKey,
-		BaseURL: cfg.OpenAI.BaseURL,
-		Model:   cfg.OpenAI.Model,
+		Provider: cfg.LLM.Provider,
+		APIKey:   cfg.LLM.APIKey,
+		BaseURL:  cfg.LLM.BaseURL,
+		Model:    cfg.LLM.Model,
 	})
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to create agent client", "error", err)
 		os.Exit(1)
 	}
-	slog.InfoContext(ctx, "agent client initialized", "model", cfg.OpenAI.Model)
+	slog.InfoContext(ctx, "agent client initialized", "provider", cfg.LLM.Provider, "model", cfg.LLM.Model)
 
 	repoRoot := os.Getenv("REPO_ROOT")
 	if repoRoot == "" {
@@ -137,6 +140,13 @@ func main() {
 
 	stores := store.NewStores(database.Queries())
 
+	issueTrackers := map[model.Provider]issue_tracker.IssueTrackerService{
+		model.ProviderGitLab: issue_tracker.NewGitLabIssueTrackerService(
+			stores.Integrations(),
+			stores.IntegrationCredentials(),
+		),
+	}
+
 	orchestrator := brain.NewOrchestrator(
 		brain.OrchestratorConfig{
 			RepoRoot:   repoRoot,
@@ -145,7 +155,12 @@ func main() {
 		agentClient,
 		arangoClient,
 		stores.Issues(),
+		stores.Gaps(),
 		stores.EventLogs(),
+		stores.Integrations(),
+		stores.IntegrationConfigs(),
+		stores.Learnings(),
+		issueTrackers,
 	)
 
 	processMessage := newMessageProcessor(consumer, orchestrator)
@@ -265,15 +280,16 @@ func processMessageSafe(ctx context.Context, msg queue.Message, process queue.Me
 	return process(ctx, msg)
 }
 
-func newMessageProcessor(consumer *queue.RedisConsumer, orchestrator brain.Orchestrator) queue.MessageProcessor {
+func newMessageProcessor(consumer *queue.RedisConsumer, orchestrator *brain.Orchestrator) queue.MessageProcessor {
 	return func(ctx context.Context, msg queue.Message) error {
 		slog.InfoContext(ctx, "processing message",
 			"attempt", msg.Attempt)
 
 		input := brain.EngagementInput{
-			IssueID:    msg.IssueID,
-			EventLogID: msg.EventLogID,
-			EventType:  msg.EventType,
+			IssueID:         msg.IssueID,
+			EventLogID:      msg.EventLogID,
+			EventType:       msg.EventType,
+			TriggerThreadID: msg.TriggerThreadID,
 		}
 
 		if err := orchestrator.HandleEngagement(ctx, input); err != nil {

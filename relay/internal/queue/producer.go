@@ -9,16 +9,17 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-type EventMessage struct {
-	EventLogID int64
-	IssueID    int64
-	EventType  string
-	TraceID    *string
-	Attempt    int
+type Event struct {
+	EventLogID      int64
+	IssueID         int64
+	EventType       string
+	TraceID         *string
+	Attempt         int
+	TriggerThreadID string
 }
 
 type Producer interface {
-	Enqueue(ctx context.Context, msg EventMessage) error
+	Enqueue(ctx context.Context, event Event) error
 	Close() error
 }
 
@@ -34,29 +35,33 @@ func NewRedisProducer(client *redis.Client, stream string) Producer {
 	}
 }
 
-func (p *redisProducer) Enqueue(ctx context.Context, msg EventMessage) error {
+func (p *redisProducer) Enqueue(ctx context.Context, event Event) error {
 	ctx = logger.WithLogFields(ctx, logger.LogFields{
-		IssueID:    &msg.IssueID,
-		EventLogID: &msg.EventLogID,
+		IssueID:    &event.IssueID,
+		EventLogID: &event.EventLogID,
 		Component:  "relay.queue.producer",
 	})
 
-	attempt := msg.Attempt
+	attempt := event.Attempt
 	if attempt <= 0 {
 		attempt = 1
 	}
 
 	fields := map[string]any{
-		"event_log_id": msg.EventLogID,
-		"issue_id":     msg.IssueID,
-		"event_type":   msg.EventType,
+		"event_log_id": event.EventLogID,
+		"issue_id":     event.IssueID,
+		"event_type":   event.EventType,
 		"attempt":      attempt,
 	}
 
 	traceIDStr := ""
-	if msg.TraceID != nil && *msg.TraceID != "" {
-		fields["trace_id"] = *msg.TraceID
-		traceIDStr = *msg.TraceID
+	if event.TraceID != nil && *event.TraceID != "" {
+		fields["trace_id"] = *event.TraceID
+		traceIDStr = *event.TraceID
+	}
+
+	if event.TriggerThreadID != "" {
+		fields["trigger_thread_id"] = event.TriggerThreadID
 	}
 
 	// TODO - @nithinsj - Add MAXLEN to prevent stream growing unbounded. Redis streams grow until out of memory.
@@ -69,7 +74,7 @@ func (p *redisProducer) Enqueue(ctx context.Context, msg EventMessage) error {
 	}
 
 	slog.InfoContext(ctx, "enqueued event log",
-		"event_type", msg.EventType,
+		"event_type", event.EventType,
 		"attempt", attempt,
 		"trace_id", traceIDStr,
 		"stream", p.stream)
