@@ -149,6 +149,7 @@ create index idx_integration_configs_config_type on integration_configs (config_
 create table issues (
     id bigint primary key,
     integration_id bigint not null references integrations(id),
+    external_project_id text,
     external_issue_id text not null,
     provider text not null,
 

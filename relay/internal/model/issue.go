@@ -47,6 +47,9 @@ type CodeSource struct {
 // Intentionally minimal: prose synthesis + evidence sources.
 // The consumer (Gap Detector) is an LLM that can read natural language.
 type CodeFinding struct {
+	// ID is a Snowflake ID for referencing this finding in actions (e.g., removal).
+	ID string `json:"id"`
+
 	// Synthesis is free-form prose describing what was found and understood.
 	// Written like a senior engineer briefing the team - patterns, relationships,
 	// constraints, gotchas, unknowns - all in natural language.
@@ -79,22 +82,23 @@ type Discussion struct {
 }
 
 type Issue struct {
-	ID               int64         `json:"id"`
-	IntegrationID    int64         `json:"integration_id"`
-	ExternalIssueID  string        `json:"external_issue_id"`
-	Provider         Provider      `json:"provider"`
-	Title            *string       `json:"title,omitempty"`
-	Description      *string       `json:"description,omitempty"`
-	Labels           []string      `json:"labels,omitempty"`
-	Members          []string      `json:"members,omitempty"`
-	Assignees        []string      `json:"assignees,omitempty"`
-	Reporter         *string       `json:"reporter,omitempty"`
-	ExternalIssueURL *string       `json:"external_issue_url,omitempty"`
-	Keywords         []Keyword     `json:"keywords,omitempty"`
-	CodeFindings     []CodeFinding `json:"code_findings,omitempty"`
-	Learnings        []Learning    `json:"learnings,omitempty"`
-	Discussions      []Discussion  `json:"discussions,omitempty"`
-	Spec             *string       `json:"spec,omitempty"`
+	ID                int64         `json:"id"`
+	IntegrationID     int64         `json:"integration_id"`
+	ExternalProjectID *string       `json:"external_project_id,omitempty"`
+	ExternalIssueID   string        `json:"external_issue_id"`
+	Provider          Provider      `json:"provider"`
+	Title             *string       `json:"title,omitempty"`
+	Description       *string       `json:"description,omitempty"`
+	Labels            []string      `json:"labels,omitempty"`
+	Members           []string      `json:"members,omitempty"`
+	Assignees         []string      `json:"assignees,omitempty"`
+	Reporter          *string       `json:"reporter,omitempty"`
+	ExternalIssueURL  *string       `json:"external_issue_url,omitempty"`
+	Keywords          []Keyword     `json:"keywords,omitempty"`
+	CodeFindings      []CodeFinding `json:"code_findings,omitempty"`
+	Learnings         []Learning    `json:"learnings,omitempty"`
+	Discussions       []Discussion  `json:"discussions,omitempty"`
+	Spec              *string       `json:"spec,omitempty"`
 
 	// Processing state for issue-centric queue handling
 	ProcessingStatus    ProcessingStatus `json:"processing_status"`

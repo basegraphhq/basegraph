@@ -80,22 +80,23 @@ type IntegrationCredential struct {
 }
 
 type Issue struct {
-	ID               int64    `json:"id"`
-	IntegrationID    int64    `json:"integration_id"`
-	ExternalIssueID  string   `json:"external_issue_id"`
-	Provider         string   `json:"provider"`
-	Title            *string  `json:"title"`
-	Description      *string  `json:"description"`
-	Labels           []string `json:"labels"`
-	Members          []string `json:"members"`
-	Assignees        []string `json:"assignees"`
-	Reporter         *string  `json:"reporter"`
-	ExternalIssueUrl *string  `json:"external_issue_url"`
-	Keywords         []byte   `json:"keywords"`
-	CodeFindings     []byte   `json:"code_findings"`
-	Learnings        []byte   `json:"learnings"`
-	Discussions      []byte   `json:"discussions"`
-	Spec             *string  `json:"spec"`
+	ID                int64    `json:"id"`
+	IntegrationID     int64    `json:"integration_id"`
+	ExternalProjectID *string  `json:"external_project_id"`
+	ExternalIssueID   string   `json:"external_issue_id"`
+	Provider          string   `json:"provider"`
+	Title             *string  `json:"title"`
+	Description       *string  `json:"description"`
+	Labels            []string `json:"labels"`
+	Members           []string `json:"members"`
+	Assignees         []string `json:"assignees"`
+	Reporter          *string  `json:"reporter"`
+	ExternalIssueUrl  *string  `json:"external_issue_url"`
+	Keywords          []byte   `json:"keywords"`
+	CodeFindings      []byte   `json:"code_findings"`
+	Learnings         []byte   `json:"learnings"`
+	Discussions       []byte   `json:"discussions"`
+	Spec              *string  `json:"spec"`
 	// idle | queued | processing
 	ProcessingStatus    string             `json:"processing_status"`
 	ProcessingStartedAt pgtype.Timestamptz `json:"processing_started_at"`
