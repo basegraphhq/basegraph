@@ -4,34 +4,30 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"regexp"
-	"strings"
 	"time"
 
 	"basegraph.app/relay/common/arangodb"
-	"basegraph.app/relay/common/typesense"
 	"github.com/humanbeeng/lepo/prototypes/codegraph/extract"
 )
 
-// Ingestor handles ingestion of extracted code into Typesense and ArangoDB.
+// Ingestor handles ingestion of extracted code into ArangoDB.
 type Ingestor struct {
-	ts     typesense.Client
 	arango arangodb.Client
 }
 
 // NewIngestor creates a new Ingestor with the provided clients.
-func NewIngestor(ts typesense.Client, arango arangodb.Client) *Ingestor {
+func NewIngestor(arango arangodb.Client) *Ingestor {
 	return &Ingestor{
-		ts:     ts,
 		arango: arango,
 	}
 }
 
-// Ingest processes the extraction result and ingests it into both databases.
+// Ingest processes the extraction result and ingests it into ArangoDB.
+// It wipes all existing data and rebuilds the graph from scratch.
 func (i *Ingestor) Ingest(ctx context.Context, res extract.ExtractNodesResult) error {
 	start := time.Now()
 
-	// Step 1: Setup databases
+	// Step 1: Setup database
 	slog.Info("Setting up ArangoDB schema")
 	if err := i.arango.EnsureDatabase(ctx); err != nil {
 		return fmt.Errorf("ensure database: %w", err)
@@ -43,19 +39,13 @@ func (i *Ingestor) Ingest(ctx context.Context, res extract.ExtractNodesResult) e
 		return fmt.Errorf("ensure graph: %w", err)
 	}
 
-	slog.Info("Setting up Typesense collection")
-	if err := i.ts.CreateCollection(ctx); err != nil {
-		// Ignore error if collection already exists
-		slog.Debug("Create collection result (may already exist)", "err", err)
+	// Step 2: Wipe existing data for clean rebuild
+	slog.Info("Truncating existing collections")
+	if err := i.arango.TruncateCollections(ctx); err != nil {
+		return fmt.Errorf("truncate collections: %w", err)
 	}
 
-	// Step 2: Ingest nodes into Typesense (for full-text search)
-	slog.Info("Ingesting nodes into Typesense")
-	if err := i.ingestToTypesense(ctx, res); err != nil {
-		return fmt.Errorf("typesense ingestion: %w", err)
-	}
-
-	// Step 3: Ingest edges into ArangoDB (for graph traversal)
+	// Step 3: Ingest nodes and edges into ArangoDB
 	slog.Info("Ingesting nodes and edges into ArangoDB")
 	if err := i.ingestToArangoDB(ctx, res); err != nil {
 		return fmt.Errorf("arangodb ingestion: %w", err)
@@ -64,138 +54,6 @@ func (i *Ingestor) Ingest(ctx context.Context, res extract.ExtractNodesResult) e
 	slog.Info("Ingestion completed",
 		"duration_ms", time.Since(start).Milliseconds())
 	return nil
-}
-
-func (i *Ingestor) ingestToTypesense(ctx context.Context, res extract.ExtractNodesResult) error {
-	var docs []typesense.Document
-
-	// Functions
-	for qname, fn := range res.Functions {
-		if qname == "" || fn.Filepath == "" {
-			continue
-		}
-		docs = append(docs, typesense.Document{
-			QName:        qname,
-			Name:         fn.Name,
-			Kind:         kindForFunction(fn),
-			Code:         fn.Code,
-			Doc:          fn.Doc.Comment,
-			Filepath:     fn.Filepath,
-			Namespace:    fn.Namespace.Name,
-			Language:     extract.Go,
-			Pos:          fn.Pos,
-			End:          fn.End,
-			NameVariants: generateNameVariants(fn.Name),
-		})
-	}
-
-	// Type declarations (structs)
-	for qname, decl := range res.TypeDecls {
-		if qname == "" {
-			continue
-		}
-		docs = append(docs, typesense.Document{
-			QName:        qname,
-			Name:         decl.Name,
-			Kind:         string(decl.Kind),
-			Code:         decl.Code,
-			Doc:          decl.Doc.Comment,
-			Filepath:     decl.Filepath,
-			Namespace:    decl.Namespace.Name,
-			Language:     extract.Go,
-			Pos:          decl.Pos,
-			End:          decl.End,
-			NameVariants: generateNameVariants(decl.Name),
-		})
-	}
-
-	// Interfaces
-	for qname, iface := range res.Interfaces {
-		if qname == "" {
-			continue
-		}
-		docs = append(docs, typesense.Document{
-			QName:        qname,
-			Name:         iface.Name,
-			Kind:         "interface",
-			Code:         iface.Code,
-			Doc:          iface.Doc.Comment,
-			Filepath:     iface.Filepath,
-			Namespace:    iface.Namespace.Name,
-			Language:     extract.Go,
-			Pos:          iface.Pos,
-			End:          iface.End,
-			NameVariants: generateNameVariants(iface.Name),
-		})
-	}
-
-	// Named types (type aliases)
-	for qname, named := range res.NamedTypes {
-		if qname == "" {
-			continue
-		}
-		docs = append(docs, typesense.Document{
-			QName:        qname,
-			Name:         named.Name,
-			Kind:         "alias",
-			Code:         named.Code,
-			Doc:          named.Doc.Comment,
-			Filepath:     named.Filepath,
-			Namespace:    named.Namespace.Name,
-			Language:     extract.Go,
-			Pos:          named.Pos,
-			End:          named.End,
-			NameVariants: generateNameVariants(named.Name),
-		})
-	}
-
-	// Members (struct fields)
-	for qname, member := range res.Members {
-		if qname == "" {
-			continue
-		}
-		docs = append(docs, typesense.Document{
-			QName:        qname,
-			Name:         member.Name,
-			Kind:         "member",
-			Code:         member.Code,
-			Doc:          member.Doc.Comment,
-			Filepath:     member.Filepath,
-			Namespace:    member.Namespace.Name,
-			Language:     extract.Go,
-			Pos:          member.Pos,
-			End:          member.End,
-			NameVariants: generateNameVariants(member.Name),
-		})
-	}
-
-	// Variables
-	for qname, v := range res.Vars {
-		if qname == "" {
-			continue
-		}
-		docs = append(docs, typesense.Document{
-			QName:        qname,
-			Name:         v.Name,
-			Kind:         "variable",
-			Code:         v.Code,
-			Doc:          v.Doc.Comment,
-			Filepath:     v.Filepath,
-			Namespace:    v.Namespace.Name,
-			Language:     extract.Go,
-			Pos:          v.Pos,
-			End:          v.End,
-			NameVariants: generateNameVariants(v.Name),
-		})
-	}
-
-	if len(docs) == 0 {
-		slog.Info("No documents to ingest into Typesense")
-		return nil
-	}
-
-	slog.Info("Upserting documents into Typesense", "count", len(docs))
-	return i.ts.UpsertDocuments(ctx, docs)
 }
 
 func (i *Ingestor) ingestToArangoDB(ctx context.Context, res extract.ExtractNodesResult) error {
@@ -273,8 +131,8 @@ func (i *Ingestor) ingestFunctionNodes(ctx context.Context, functions map[string
 		})
 	}
 
-	slog.Info("Upserting function nodes", "count", len(nodes))
-	return i.arango.UpsertNodes(ctx, "functions", nodes)
+	slog.Info("Ingesting function nodes", "count", len(nodes))
+	return i.arango.IngestNodes(ctx, "functions", nodes)
 }
 
 func (i *Ingestor) ingestTypeNodes(ctx context.Context, decls, interfaces map[string]extract.TypeDecl, named map[string]extract.Named) error {
@@ -335,8 +193,8 @@ func (i *Ingestor) ingestTypeNodes(ctx context.Context, decls, interfaces map[st
 		return nil
 	}
 
-	slog.Info("Upserting type nodes", "count", len(nodes))
-	return i.arango.UpsertNodes(ctx, "types", nodes)
+	slog.Info("Ingesting type nodes", "count", len(nodes))
+	return i.arango.IngestNodes(ctx, "types", nodes)
 }
 
 func (i *Ingestor) ingestMemberNodes(ctx context.Context, members map[string]extract.Member, vars map[string]extract.Variable) error {
@@ -382,8 +240,8 @@ func (i *Ingestor) ingestMemberNodes(ctx context.Context, members map[string]ext
 		return nil
 	}
 
-	slog.Info("Upserting member nodes", "count", len(nodes))
-	return i.arango.UpsertNodes(ctx, "members", nodes)
+	slog.Info("Ingesting member nodes", "count", len(nodes))
+	return i.arango.IngestNodes(ctx, "members", nodes)
 }
 
 func (i *Ingestor) ingestFileNodes(ctx context.Context, files map[string]extract.File) error {
@@ -405,8 +263,8 @@ func (i *Ingestor) ingestFileNodes(ctx context.Context, files map[string]extract
 		})
 	}
 
-	slog.Info("Upserting file nodes", "count", len(nodes))
-	return i.arango.UpsertNodes(ctx, "files", nodes)
+	slog.Info("Ingesting file nodes", "count", len(nodes))
+	return i.arango.IngestNodes(ctx, "files", nodes)
 }
 
 func (i *Ingestor) ingestModuleNodes(ctx context.Context, namespaces []extract.Namespace, files map[string]extract.File) error {
@@ -441,8 +299,8 @@ func (i *Ingestor) ingestModuleNodes(ctx context.Context, namespaces []extract.N
 		})
 	}
 
-	slog.Info("Upserting module nodes", "count", len(nodes))
-	return i.arango.UpsertNodes(ctx, "modules", nodes)
+	slog.Info("Ingesting module nodes", "count", len(nodes))
+	return i.arango.IngestNodes(ctx, "modules", nodes)
 }
 
 func (i *Ingestor) ingestCallEdges(ctx context.Context, functions map[string]extract.Function) error {
@@ -469,8 +327,8 @@ func (i *Ingestor) ingestCallEdges(ctx context.Context, functions map[string]ext
 		return nil
 	}
 
-	slog.Info("Upserting call edges", "count", len(edges))
-	return i.arango.UpsertEdges(ctx, "calls", edges)
+	slog.Info("Ingesting call edges", "count", len(edges))
+	return i.arango.IngestEdges(ctx, "calls", edges)
 }
 
 func (i *Ingestor) ingestReturnEdges(ctx context.Context, functions map[string]extract.Function) error {
@@ -497,8 +355,8 @@ func (i *Ingestor) ingestReturnEdges(ctx context.Context, functions map[string]e
 		return nil
 	}
 
-	slog.Info("Upserting return edges", "count", len(edges))
-	return i.arango.UpsertEdges(ctx, "returns", edges)
+	slog.Info("Ingesting return edges", "count", len(edges))
+	return i.arango.IngestEdges(ctx, "returns", edges)
 }
 
 func (i *Ingestor) ingestParamEdges(ctx context.Context, functions map[string]extract.Function) error {
@@ -525,8 +383,8 @@ func (i *Ingestor) ingestParamEdges(ctx context.Context, functions map[string]ex
 		return nil
 	}
 
-	slog.Info("Upserting param edges", "count", len(edges))
-	return i.arango.UpsertEdges(ctx, "param_of", edges)
+	slog.Info("Ingesting param edges", "count", len(edges))
+	return i.arango.IngestEdges(ctx, "param_of", edges)
 }
 
 func (i *Ingestor) ingestImplementsEdges(ctx context.Context, decls map[string]extract.TypeDecl) error {
@@ -553,8 +411,8 @@ func (i *Ingestor) ingestImplementsEdges(ctx context.Context, decls map[string]e
 		return nil
 	}
 
-	slog.Info("Upserting implements edges", "count", len(edges))
-	return i.arango.UpsertEdges(ctx, "implements", edges)
+	slog.Info("Ingesting implements edges", "count", len(edges))
+	return i.arango.IngestEdges(ctx, "implements", edges)
 }
 
 func (i *Ingestor) ingestParentEdges(ctx context.Context, functions map[string]extract.Function, members map[string]extract.Member) error {
@@ -590,8 +448,8 @@ func (i *Ingestor) ingestParentEdges(ctx context.Context, functions map[string]e
 		return nil
 	}
 
-	slog.Info("Upserting parent edges", "count", len(edges))
-	return i.arango.UpsertEdges(ctx, "parent", edges)
+	slog.Info("Ingesting parent edges", "count", len(edges))
+	return i.arango.IngestEdges(ctx, "parent", edges)
 }
 
 func (i *Ingestor) ingestImportEdges(ctx context.Context, files map[string]extract.File) error {
@@ -618,8 +476,8 @@ func (i *Ingestor) ingestImportEdges(ctx context.Context, files map[string]extra
 		return nil
 	}
 
-	slog.Info("Upserting import edges", "count", len(edges))
-	return i.arango.UpsertEdges(ctx, "imports", edges)
+	slog.Info("Ingesting import edges", "count", len(edges))
+	return i.arango.IngestEdges(ctx, "imports", edges)
 }
 
 // kindForFunction returns "method" if the function has a receiver, otherwise "function".
@@ -628,75 +486,4 @@ func kindForFunction(fn extract.Function) string {
 		return "method"
 	}
 	return "function"
-}
-
-// generateNameVariants creates searchable variations of a name.
-// For example, "ProcessPayment" becomes ["ProcessPayment", "process_payment", "processpayment"].
-func generateNameVariants(name string) []string {
-	if name == "" {
-		return nil
-	}
-
-	variants := []string{name}
-	seen := map[string]bool{name: true}
-
-	// Add lowercase
-	lower := strings.ToLower(name)
-	if !seen[lower] {
-		variants = append(variants, lower)
-		seen[lower] = true
-	}
-
-	// Convert CamelCase to snake_case
-	snake := camelToSnake(name)
-	if !seen[snake] {
-		variants = append(variants, snake)
-		seen[snake] = true
-	}
-
-	// Convert CamelCase to kebab-case
-	kebab := strings.ReplaceAll(snake, "_", "-")
-	if !seen[kebab] {
-		variants = append(variants, kebab)
-		seen[kebab] = true
-	}
-
-	// Split CamelCase into words
-	words := splitCamelCase(name)
-	for _, word := range words {
-		wordLower := strings.ToLower(word)
-		if !seen[wordLower] && len(wordLower) > 2 {
-			variants = append(variants, wordLower)
-			seen[wordLower] = true
-		}
-	}
-
-	return variants
-}
-
-var camelCaseRe = regexp.MustCompile(`([a-z0-9])([A-Z])`)
-
-func camelToSnake(s string) string {
-	snake := camelCaseRe.ReplaceAllString(s, "${1}_${2}")
-	return strings.ToLower(snake)
-}
-
-func splitCamelCase(s string) []string {
-	var words []string
-	var current strings.Builder
-
-	for i, r := range s {
-		if i > 0 && r >= 'A' && r <= 'Z' {
-			if current.Len() > 0 {
-				words = append(words, current.String())
-				current.Reset()
-			}
-		}
-		current.WriteRune(r)
-	}
-	if current.Len() > 0 {
-		words = append(words, current.String())
-	}
-
-	return words
 }

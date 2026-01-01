@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"basegraph.app/relay/common/arangodb"
-	"basegraph.app/relay/common/typesense"
 	"github.com/humanbeeng/lepo/prototypes/codegraph/extract"
 )
 
@@ -65,17 +64,7 @@ func Orchestrate(e extract.Extractor) {
 	dataSize := float64(len(fmt.Sprintf("%+v", extractRes))) / (1024 * 1024)
 	slog.Info("Extract result data size", "size_mb", dataSize)
 
-	// Step 2: Create database clients
-	tsClient, err := typesense.New(typesense.Config{
-		URL:        envOrDefault("TYPESENSE_URL", "http://localhost:8108"),
-		APIKey:     envOrDefault("TYPESENSE_API_KEY", "xyz"),
-		Collection: envOrDefault("TYPESENSE_COLLECTION", "code_nodes"),
-	})
-	if err != nil {
-		slog.Error("unable to create typesense client", "err", err)
-		return
-	}
-
+	// Step 2: Create database client
 	arangoClient, err := arangodb.New(ctx, arangodb.Config{
 		URL:      envOrDefault("ARANGO_URL", "http://localhost:8529"),
 		Username: envOrDefault("ARANGO_USERNAME", "root"),
@@ -92,9 +81,9 @@ func Orchestrate(e extract.Extractor) {
 		}
 	}()
 
-	// Step 3: Ingest into databases
-	ingestor := NewIngestor(tsClient, arangoClient)
-	slog.Info("Ingesting extract result into Typesense + ArangoDB")
+	// Step 3: Ingest into database
+	ingestor := NewIngestor(arangoClient)
+	slog.Info("Ingesting extract result into ArangoDB")
 	if err := ingestor.Ingest(ctx, extractRes); err != nil {
 		slog.Error("ingestion failed", "err", err)
 		return

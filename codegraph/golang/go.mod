@@ -11,7 +11,6 @@ require (
 )
 
 require (
-	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/arangodb/go-driver/v2 v2.1.6 // indirect
 	github.com/arangodb/go-velocypack v0.0.0-20200318135517-5af53c29c67e // indirect
 	github.com/dchest/siphash v1.2.3 // indirect
@@ -19,11 +18,8 @@ require (
 	github.com/kkdai/maglev v0.2.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
-	github.com/oapi-codegen/runtime v1.1.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rs/zerolog v1.34.0 // indirect
-	github.com/sony/gobreaker v1.0.0 // indirect
-	github.com/typesense/typesense-go/v4 v4.0.0-alpha2 // indirect
 	golang.org/x/mod v0.29.0 // indirect
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sync v0.18.0 // indirect

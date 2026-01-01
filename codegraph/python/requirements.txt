@@ -3,9 +3,6 @@
 # ArangoDB client
 python-arango>=7.0.0
 
-# Typesense client
-typesense>=0.15.0
-
 # Git support (for cloning repos)
 gitpython>=3.0.0
 
