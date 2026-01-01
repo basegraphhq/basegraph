@@ -79,6 +79,7 @@ type AgentResponse struct {
 	FinishReason     string     // "stop", "tool_calls", "length"
 	PromptTokens     int
 	CompletionTokens int
+	ReasoningTokens  int // Tokens used for reasoning (gpt-5.1, o1, o3 models)
 }
 
 // NewAgentClient creates an AgentClient for tool-calling conversations.

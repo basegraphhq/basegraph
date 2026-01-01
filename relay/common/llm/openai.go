@@ -89,6 +89,7 @@ func (c *openaiClient) ChatWithTools(ctx context.Context, req AgentRequest) (*Ag
 		"duration_ms", time.Since(start).Milliseconds(),
 		"prompt_tokens", resp.Usage.PromptTokens,
 		"completion_tokens", resp.Usage.CompletionTokens,
+		"reasoning_tokens", resp.Usage.CompletionTokensDetails.ReasoningTokens,
 		"finish_reason", resp.Choices[0].FinishReason)
 
 	if len(resp.Choices) == 0 {
@@ -101,6 +102,7 @@ func (c *openaiClient) ChatWithTools(ctx context.Context, req AgentRequest) (*Ag
 		FinishReason:     string(choice.FinishReason),
 		PromptTokens:     int(resp.Usage.PromptTokens),
 		CompletionTokens: int(resp.Usage.CompletionTokens),
+		ReasoningTokens:  int(resp.Usage.CompletionTokensDetails.ReasoningTokens),
 	}
 
 	for _, tc := range choice.Message.ToolCalls {
