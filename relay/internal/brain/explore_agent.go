@@ -16,10 +16,11 @@ import (
 )
 
 const (
-	exploreTimeout    = 10 * time.Minute
-	doomLoopThreshold = 3      // Stop if same tool called 3 times with identical args
-	maxParallelTools  = 4      // Limit concurrent tool executions
-	maxContextTokens  = 150000 // Token limit for explore agent context window
+	exploreTimeout    = 5 * time.Minute
+	doomLoopThreshold = 3     // Stop if same tool called 3 times with identical args
+	maxParallelTools  = 4     // Limit concurrent tool executions
+	maxIterations     = 6     // Force synthesis after this many iterations
+	maxContextTokens  = 30000 // Token limit - keep exploration focused
 )
 
 // ExploreAgent is a sub-agent that explores the codebase.
@@ -103,6 +104,34 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error
 	var recentCalls []toolCallRecord
 	for {
 		iterations++
+
+		// Check iteration limit
+		if iterations > maxIterations {
+			slog.InfoContext(ctx, "explore agent hit iteration limit, synthesizing findings",
+				"iterations", iterations)
+			debugLog.WriteString(fmt.Sprintf("\n=== ITERATION LIMIT REACHED (%d iterations) - synthesizing findings ===\n", iterations))
+
+			messages = append(messages, llm.Message{
+				Role:    "user",
+				Content: "Maximum exploration steps reached. Write your final report now based on what you've found.",
+			})
+
+			synthResp, err := e.llm.ChatWithTools(ctx, llm.AgentRequest{
+				Messages: messages,
+				Tools:    nil,
+			})
+			if err != nil {
+				e.writeDebugLog(sessionID, "explore", debugLog.String())
+				return "", fmt.Errorf("explore agent synthesis after iteration limit: %w", err)
+			}
+
+			totalPromptTokens += synthResp.PromptTokens
+			totalCompletionTokens += synthResp.CompletionTokens
+
+			debugLog.WriteString(fmt.Sprintf("[SYNTHESIS]\n%s\n", synthResp.Content))
+			e.writeDebugLog(sessionID, "explore", debugLog.String())
+			return synthResp.Content, nil
+		}
 
 		// Check token limit before making another LLM call
 		if totalPromptTokens+totalCompletionTokens >= maxContextTokens {
@@ -322,26 +351,28 @@ func (e *ExploreAgent) writeDebugLog(sessionID, agentType, content string) {
 
 // systemPrompt returns the system prompt with the module path for qname construction.
 func (e *ExploreAgent) systemPrompt() string {
-	return fmt.Sprintf(`You are a code search specialist. You excel at thoroughly navigating and exploring codebases.
+	return fmt.Sprintf(`You are a focused code search specialist. Find specific answers quickly.
 
-Your strengths:
-- Rapidly finding files using glob patterns
-- Searching code and text with powerful regex patterns
-- Reading and analyzing file contents
-- Querying code relationships from the indexed code graph
+# Core Rules
 
-# Guidelines
+1. **Be targeted** - Don't explore broadly. Find what you need and stop.
+2. **Read selectively** - Don't read entire files. Use start_line/num_lines to read relevant sections only.
+3. **One search strategy** - Pick the most direct approach. Don't try multiple grep patterns for the same thing.
+4. **Stop when you have enough** - If you found the answer, write your report. Don't keep exploring "just in case".
 
-- Use Glob for broad file pattern matching
-- Use Grep for searching file contents with regex
-- Use Read when you know the specific file path you need to read
-- Use Graph to trace code relationships like callers, callees, and implementations
-- Return file paths and line numbers in your final response
-- Do not create any files or modify the codebase in any way
+# Tool Usage
 
-# Tool usage policy
+- **grep**: Use specific patterns. If you get 30+ results, your pattern is too broad.
+- **read**: Read 50-100 lines max. If you need more context, make a second targeted read.
+- **glob**: Use specific paths like "internal/brain/*.go", not "**/*.go".
+- **graph**: Great for finding callers/callees. Use it instead of grepping for function names.
 
-You can call multiple tools in a single response. If you intend to call multiple tools and there are no dependencies between them, make all independent tool calls in parallel. Maximize use of parallel tool calls where possible to increase efficiency. However, if some tool calls depend on previous calls to inform dependent values, do NOT call these tools in parallel and instead call them sequentially. Never use placeholders or guess missing parameters in tool calls.
+# Anti-patterns (DON'T DO THESE)
+
+- Reading the same file multiple times with overlapping ranges
+- Grepping for the same concept with different patterns
+- Reading an entire 500-line file when you only need one function
+- Exploring "related" code that wasn't asked about
 
 # Tools
 
