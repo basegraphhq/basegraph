@@ -5,253 +5,441 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
-	"basegraph.app/relay/common/id"
 	"basegraph.app/relay/common/llm"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/store"
+	"basegraph.app/relay/common/logger"
 )
-
-type RetrieverType string
 
 const (
-	RetrieverTypeCodeGraph RetrieverType = "codegraph"
-	RetrieverTypeLearnings RetrieverType = "learnings"
+	maxParallelExplorers = 2 // Limit for explore sub agent
 )
 
-type RetrieverJob struct {
-	Type     RetrieverType `json:"type" jsonschema:"enum=codegraph,enum=learnings" jsonschema_description:"The retriever to use"`
-	Query    string        `json:"query" jsonschema_description:"The search query or question to answer"`
-	Intent   string        `json:"intent" jsonschema_description:"What information this retrieval aims to find"`
-	Priority int           `json:"priority" jsonschema_description:"Execution priority 1-3 (1=highest)"`
-
-	SymbolHints   []string `json:"symbol_hints" jsonschema_description:"Expected symbol names, function names, or types to search for"`
-	Kinds         []string `json:"kinds" jsonschema_description:"Node kinds to filter: function, struct, interface, method"`
-	LearningTypes []string `json:"learning_types" jsonschema_description:"Learning categories: project_standards, codebase_standards, domain_knowledge"`
+type ExploreParams struct {
+	Query string `json:"query" jsonschema:"required,description=Question about the codebase to explore. Be specific about what you need to understand."`
 }
 
-type PlannerResponse struct {
-	ContextSufficient bool           `json:"context_sufficient" jsonschema_description:"True if current issue context is enough to generate a spec without retrieval"`
-	Reasoning         string         `json:"reasoning" jsonschema_description:"Brief explanation of the decision"`
-	Jobs              []RetrieverJob `json:"jobs" jsonschema_description:"Retrieval jobs to execute if context is insufficient"`
+// SubmitActionsParams defines the schema for the submit_actions tool.
+// This tool terminates the Planner loop and returns actions to Orchestrator.
+type SubmitActionsParams struct {
+	Actions   []ActionParam `json:"actions" jsonschema:"required,description=List of actions for orchestrator to execute"`
+	Reasoning string        `json:"reasoning" jsonschema:"required,description=Brief explanation of why these actions were chosen"`
 }
 
-var plannerSchema = llm.GenerateSchema[PlannerResponse]()
+// ActionParam is the JSON schema for a single action in submit_actions.
+type ActionParam struct {
+	Type string          `json:"type" jsonschema:"required,enum=post_comment|update_findings|update_gaps|ready_for_plan"`
+	Data json.RawMessage `json:"data" jsonschema:"required"`
+}
 
+// PlannerOutput contains the structured actions returned by Planner.
+// The Orchestrator executes these actions.
+type PlannerOutput struct {
+	Actions   []Action // Actions to execute (post_comment, update_gaps, etc.)
+	Reasoning string   // Brief explanation (for debugging/logging)
+}
+
+// Planner gathers code context for issue scoping.
+// It spawns ExploreAgent sub-agents to explore the codebase, preserving its own context window.
 type Planner struct {
-	llm llm.Client
+	llm      llm.AgentClient
+	explore  *ExploreAgent
+	debugDir string // Directory for debug logs (empty = no logging)
 }
 
-func NewPlanner(client llm.Client) *Planner {
-	return &Planner{llm: client}
+// NewPlanner creates a Planner with an ExploreAgent sub-agent.
+func NewPlanner(llmClient llm.AgentClient, explore *ExploreAgent) *Planner {
+	return &Planner{
+		llm:      llmClient,
+		explore:  explore,
+		debugDir: os.Getenv("BRAIN_DEBUG_DIR"),
+	}
 }
 
-const plannerPromptVersion = "v1"
+// Plan runs the reasoning loop with pre-built messages from ContextBuilder.
+// Returns structured actions for Orchestrator to execute.
+func (p *Planner) Plan(ctx context.Context, messages []llm.Message) (PlannerOutput, error) {
+	start := time.Now()
 
-func (p *Planner) Plan(ctx context.Context, issue *model.Issue, evalStore store.LLMEvalStore) (*PlannerResponse, error) {
-	prompt := p.buildPrompt(issue)
-	if prompt == "" {
-		slog.DebugContext(ctx, "no content to plan from", "issue_id", issue.ID)
-		return &PlannerResponse{
-			ContextSufficient: true,
-			Reasoning:         "Empty issue - no content to analyze",
-			Jobs:              nil,
+	// Enrich context with planner component
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		Component: "relay.brain.planner",
+	})
+
+	if len(messages) == 0 {
+		slog.DebugContext(ctx, "no messages to plan from")
+		return PlannerOutput{
+			Actions:   nil,
+			Reasoning: "Empty input - no messages to analyze",
 		}, nil
 	}
 
-	var response PlannerResponse
-	var llmResp *llm.Response
-	start := time.Now()
+	// Debug logging
+	sessionID := time.Now().Format("20060102-150405")
+	var debugLog strings.Builder
+	debugLog.WriteString(fmt.Sprintf("=== PLANNER SESSION %s ===\n", sessionID))
+	debugLog.WriteString(fmt.Sprintf("Messages: %d\n\n", len(messages)))
+	for i, m := range messages {
+		debugLog.WriteString(fmt.Sprintf("[%d] %s: %s\n", i, m.Role, logger.Truncate(m.Content, 500)))
+	}
+	debugLog.WriteString("\n")
 
-	// Retry with exponential backoff to handle transient rate limits
-	var err error
-	for attempt := range 3 {
-		llmResp, err = p.llm.Chat(ctx, llm.Request{
-			SystemPrompt: plannerSystemPrompt,
-			UserPrompt:   prompt,
-			SchemaName:   "planner_response",
-			Schema:       plannerSchema,
-			Temperature:  llm.Temp(0.1),
-		}, &response)
+	var accumulatedContext strings.Builder
+	iterations := 0
+	totalPromptTokens := 0
+	totalCompletionTokens := 0
 
-		if err == nil {
-			break
+	slog.InfoContext(ctx, "planner starting")
+
+	defer func() {
+		slog.InfoContext(ctx, "planner completed",
+			"total_duration_ms", time.Since(start).Milliseconds(),
+			"iterations", iterations,
+			"total_prompt_tokens", totalPromptTokens,
+			"total_completion_tokens", totalCompletionTokens,
+			"total_tokens", totalPromptTokens+totalCompletionTokens)
+	}()
+
+	for {
+		iterations++
+		iterStart := time.Now()
+
+		slog.DebugContext(ctx, "planner iteration starting", "iteration", iterations)
+
+		resp, err := p.llm.ChatWithTools(ctx, llm.AgentRequest{
+			Messages: messages,
+			Tools:    p.tools(),
+		})
+		if err != nil {
+			p.writeDebugLog(sessionID, debugLog.String())
+			return PlannerOutput{}, fmt.Errorf("planner chat iteration %d: %w", iterations, err)
 		}
-		if !llm.IsRetryable(ctx, err) {
-			return nil, fmt.Errorf("planner: %w", err)
-		}
-		slog.WarnContext(ctx, "planner retry",
-			"issue_id", issue.ID,
-			"attempt", attempt+1,
-			"error", err)
-		time.Sleep(time.Duration(1<<attempt) * time.Second)
-	}
-	if err != nil {
-		return nil, fmt.Errorf("planner after 3 attempts: %w", err)
-	}
 
-	latency := time.Since(start)
-	p.logEval(ctx, evalStore, issue.ID, prompt, response, latency, llmResp)
+		// Track token usage
+		totalPromptTokens += resp.PromptTokens
+		totalCompletionTokens += resp.CompletionTokens
 
-	slog.InfoContext(ctx, "planner completed",
-		"issue_id", issue.ID,
-		"context_sufficient", response.ContextSufficient,
-		"job_count", len(response.Jobs),
-		"latency_ms", latency.Milliseconds())
+		slog.DebugContext(ctx, "planner iteration LLM response received",
+			"iteration", iterations,
+			"duration_ms", time.Since(iterStart).Milliseconds(),
+			"tool_calls", len(resp.ToolCalls),
+			"prompt_tokens", resp.PromptTokens,
+			"completion_tokens", resp.CompletionTokens)
 
-	return &response, nil
-}
+		// Log assistant response
+		debugLog.WriteString(fmt.Sprintf("--- ITERATION %d ---\n", iterations))
+		debugLog.WriteString(fmt.Sprintf("[ASSISTANT]\n%s\n\n", resp.Content))
 
-func (p *Planner) logEval(ctx context.Context, evalStore store.LLMEvalStore, issueID int64, prompt string, response PlannerResponse, latency time.Duration, llmResp *llm.Response) {
-	if evalStore == nil {
-		return
-	}
-
-	outputJSON, err := json.Marshal(response)
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to marshal planner response for eval", "error", err)
-		return
-	}
-
-	eval := &model.LLMEval{
-		ID:            id.New(),
-		IssueID:       int64Ptr(issueID),
-		Stage:         "planner",
-		InputText:     prompt,
-		OutputJSON:    outputJSON,
-		Model:         p.llm.Model(),
-		Temperature:   floatPtr(0.1),
-		PromptVersion: stringPtr(plannerPromptVersion),
-		LatencyMs:     intPtr(int(latency.Milliseconds())),
-	}
-
-	if llmResp != nil {
-		eval.PromptTokens = intPtr(llmResp.PromptTokens)
-		eval.CompletionTokens = intPtr(llmResp.CompletionTokens)
-	}
-
-	if _, err := evalStore.Create(ctx, eval); err != nil {
-		// Eval logging is observability, not critical path
-		slog.ErrorContext(ctx, "failed to log planner eval", "error", err, "issue_id", issueID)
-	}
-}
-
-func (p *Planner) buildPrompt(issue *model.Issue) string {
-	var sb strings.Builder
-
-	if issue.Title != nil && *issue.Title != "" {
-		sb.WriteString("## Issue Title\n")
-		sb.WriteString(*issue.Title)
-		sb.WriteString("\n\n")
-	}
-
-	if issue.Description != nil && *issue.Description != "" {
-		sb.WriteString("## Issue Description\n")
-		sb.WriteString(*issue.Description)
-		sb.WriteString("\n\n")
-	}
-
-	if len(issue.Keywords) > 0 {
-		sb.WriteString("## Extracted Keywords\n")
-		for _, k := range issue.Keywords {
-			sb.WriteString(fmt.Sprintf("- %s (category: %s, weight: %.2f)\n", k.Value, k.Category, k.Weight))
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(issue.CodeFindings) > 0 {
-		sb.WriteString("## Code Context (Already Retrieved)\n")
-		for _, cf := range issue.CodeFindings {
-			sb.WriteString(fmt.Sprintf("### %s\n", cf.Observation))
-			if len(cf.Sources) > 0 {
-				locations := make([]string, len(cf.Sources))
-				for i, src := range cf.Sources {
-					locations[i] = src.Location
+		// Check for submit_actions - terminates the loop
+		for _, tc := range resp.ToolCalls {
+			if tc.Name == "submit_actions" {
+				params, err := llm.ParseToolArguments[SubmitActionsParams](tc.Arguments)
+				if err != nil {
+					p.writeDebugLog(sessionID, debugLog.String())
+					return PlannerOutput{}, fmt.Errorf("parsing submit_actions: %w", err)
 				}
-				sb.WriteString("Sources: " + strings.Join(locations, ", ") + "\n")
+
+				actions := make([]Action, len(params.Actions))
+				for i, ap := range params.Actions {
+					actions[i] = Action{
+						Type: ActionType(ap.Type),
+						Data: ap.Data,
+					}
+				}
+
+				debugLog.WriteString("=== PLANNER COMPLETED (submit_actions) ===\n")
+				debugLog.WriteString(fmt.Sprintf("Actions: %d, Reasoning: %s\n", len(actions), params.Reasoning))
+				p.writeDebugLog(sessionID, debugLog.String())
+
+				slog.InfoContext(ctx, "planner submitted actions",
+					"iterations", iterations,
+					"action_count", len(actions),
+					"total_duration_ms", time.Since(start).Milliseconds(),
+					"reasoning", logger.Truncate(params.Reasoning, 200))
+
+				return PlannerOutput{
+					Actions:   actions,
+					Reasoning: params.Reasoning,
+				}, nil
 			}
-			sb.WriteString("\n")
+		}
+
+		// No tool calls = LLM finished without submitting actions (unexpected)
+		if len(resp.ToolCalls) == 0 {
+			debugLog.WriteString("=== PLANNER COMPLETED (no submit_actions) ===\n")
+			p.writeDebugLog(sessionID, debugLog.String())
+
+			slog.WarnContext(ctx, "planner completed without submit_actions",
+				"iterations", iterations,
+				"total_duration_ms", time.Since(start).Milliseconds())
+
+			return PlannerOutput{
+				Actions:   nil,
+				Reasoning: resp.Content,
+			}, nil
+		}
+
+		// Log tool calls
+		for _, tc := range resp.ToolCalls {
+			debugLog.WriteString(fmt.Sprintf("[TOOL CALL] %s\n", tc.Name))
+			debugLog.WriteString(fmt.Sprintf("Arguments: %s\n\n", tc.Arguments))
+		}
+
+		// Execute retrieve calls in parallel
+		messages = append(messages, llm.Message{
+			Role:      "assistant",
+			Content:   resp.Content,
+			ToolCalls: resp.ToolCalls,
+		})
+
+		results := p.executeExploresParallel(ctx, resp.ToolCalls)
+
+		for _, r := range results {
+			// Log tool result (truncated for readability)
+			debugLog.WriteString(fmt.Sprintf("[TOOL RESULT] (length: %d)\n", len(r.report)))
+			if len(r.report) > 2000 {
+				debugLog.WriteString(r.report[:2000])
+				debugLog.WriteString("\n... (truncated)\n\n")
+			} else {
+				debugLog.WriteString(r.report)
+				debugLog.WriteString("\n\n")
+			}
+
+			if r.report != "" {
+				accumulatedContext.WriteString(r.report)
+				accumulatedContext.WriteString("\n\n---\n\n")
+			}
+			messages = append(messages, llm.Message{
+				Role:       "tool",
+				Content:    r.report,
+				ToolCallID: r.callID,
+			})
 		}
 	}
-
-	if len(issue.Learnings) > 0 {
-		sb.WriteString("## Team Learnings (Already Retrieved)\n")
-		for _, l := range issue.Learnings {
-			sb.WriteString(fmt.Sprintf("- [%s]: %s\n", l.Type, l.Content))
-		}
-		sb.WriteString("\n")
-	}
-
-	if len(issue.Discussions) > 0 {
-		sb.WriteString("## Discussion History\n")
-		for _, d := range issue.Discussions {
-			sb.WriteString(fmt.Sprintf("- [%s]: %s\n", d.Author, d.Body))
-		}
-	}
-
-	return sb.String()
 }
 
-const plannerSystemPrompt = `You are a planning agent that decides what context to gather before gap analysis.
+func (p *Planner) writeDebugLog(sessionID, content string) {
+	ctx := context.Background()
+	if p.debugDir == "" {
+		return
+	}
 
-## How This Works
+	if err := os.MkdirAll(p.debugDir, 0o755); err != nil {
+		slog.WarnContext(ctx, "failed to create debug dir", "dir", p.debugDir, "error", err)
+		return
+	}
 
-This is a ONE-SHOT decision. You will NOT see the retrieval results.
+	filename := filepath.Join(p.debugDir, fmt.Sprintf("planner_%s.txt", sessionID))
+	if err := os.WriteFile(filename, []byte(content), 0o644); err != nil {
+		slog.WarnContext(ctx, "failed to write debug log", "file", filename, "error", err)
+	} else {
+		slog.InfoContext(ctx, "debug log written", "file", filename)
+	}
+}
 
-Pipeline: Planner (you) → Retriever → Gap Detector → Questions/Spec
+type exploreResult struct {
+	callID string
+	report string
+}
 
-Your job: Decide what code context and team knowledge to fetch BEFORE the Gap Detector analyzes the issue.
+// executeExploresParallel runs multiple explore calls concurrently with bounded parallelism.
+func (p *Planner) executeExploresParallel(ctx context.Context, toolCalls []llm.ToolCall) []exploreResult {
+	results := make([]exploreResult, len(toolCalls))
+	var wg sync.WaitGroup
 
-## Your Decision
+	// Semaphore to limit concurrent explore agents
+	sem := make(chan struct{}, maxParallelExplorers)
 
-- context_sufficient=true: The issue is clear enough. Skip retrieval, proceed to gap analysis.
-- context_sufficient=false: We need more context. Specify what to retrieve.
+	for i, tc := range toolCalls {
+		if tc.Name != "explore" {
+			results[i] = exploreResult{
+				callID: tc.ID,
+				report: fmt.Sprintf("Unknown tool: %s", tc.Name),
+			}
+			continue
+		}
 
-## Available Retrievers
+		wg.Add(1)
+		go func(idx int, call llm.ToolCall) {
+			defer wg.Done()
 
-### codegraph
-Query the code graph to find:
-- Function signatures and call chains
-- Struct/interface definitions
-- File locations and import relationships
-- Implementation patterns
+			// Acquire semaphore slot
+			sem <- struct{}{}
+			defer func() { <-sem }()
 
-Use when the issue references code you haven't seen.
+			params, err := llm.ParseToolArguments[ExploreParams](call.Arguments)
+			if err != nil {
+				results[idx] = exploreResult{
+					callID: call.ID,
+					report: fmt.Sprintf("Error parsing arguments: %s", err),
+				}
+				return
+			}
 
-### learnings
-Query team knowledge to find:
-- Conventions and standards
-- Past decisions and rationale
-- Known gotchas and edge cases
+			exploreStart := time.Now()
+			slog.InfoContext(ctx, "planner spawning explore agent",
+				"query", logger.Truncate(params.Query, 100),
+				"slot", idx+1,
+				"total", len(toolCalls))
 
-Use when team preferences or domain rules might affect the implementation.
+			report, err := p.explore.Explore(ctx, params.Query)
+			if err != nil {
+				slog.WarnContext(ctx, "explore agent failed",
+					"error", err,
+					"query", logger.Truncate(params.Query, 100),
+					"duration_ms", time.Since(exploreStart).Milliseconds())
+				report = fmt.Sprintf("Explore error: %s", err)
+			} else {
+				slog.DebugContext(ctx, "explore agent completed",
+					"query", logger.Truncate(params.Query, 100),
+					"duration_ms", time.Since(exploreStart).Milliseconds(),
+					"report_length", len(report))
+			}
 
-## Output Rules
+			results[idx] = exploreResult{
+				callID: call.ID,
+				report: report,
+			}
+		}(i, tc)
+	}
 
-1. Be SPECIFIC with queries:
-   - Bad: "Find code related to users"
-   - Good: "Find UserService.Create() and its validation logic"
-2. Limit to 3-5 jobs (prioritize what's critical for gap analysis)
-3. Priority 1 = most important
+	wg.Wait()
+	return results
+}
 
-## Examples
+func (p *Planner) tools() []llm.Tool {
+	return []llm.Tool{
+		{
+			Name:        "explore",
+			Description: "Explore the codebase to gather context. Ask a specific question about code structure, relationships, or behavior. Returns a prose report with relevant code snippets. You can call this multiple times in parallel for independent questions.",
+			Parameters:  llm.GenerateSchemaFrom(ExploreParams{}),
+		},
+		{
+			Name:        "submit_actions",
+			Description: "Submit actions for the orchestrator to execute. Call this when you've gathered enough context and are ready to respond.",
+			Parameters:  llm.GenerateSchemaFrom(SubmitActionsParams{}),
+		},
+	}
+}
 
-### Simple Bug Fix (Skip Retrieval)
-Issue: "Fix typo in login error message - says 'pasword' instead of 'password'"
-Keywords: [login, auth_handler, error_message, password]
+const plannerSystemPrompt = `You are Relay, a planning agent that helps teams scope work before implementation.
 
--> context_sufficient: true
--> reasoning: "Clear typo fix. Keywords point to auth_handler. Gap Detector can proceed."
+# Your Job
 
-### Feature Addition (Needs Context)
-Issue: "Add Stripe payment integration"
-Keywords: [stripe, payment, checkout, billing_service]
+You generate implementation plans—you don't write code. Your job is to extract context from people's heads and bridge business requirements with code reality. You surface gaps, provide evidence, and let humans decide.
 
--> context_sufficient: false
--> reasoning: "Need to understand existing payment architecture before identifying gaps."
--> jobs: [
-    {type: codegraph, query: "BillingService payment processing", intent: "Understand existing payment flow", priority: 1},
-    {type: learnings, query: "payment processing security", intent: "Find team security requirements", priority: 2}
-]`
+Bugs happen because requirements were misunderstood, not because of typos. You fix that by asking informed questions with evidence.
+
+# Core Behavior
+
+1. **Read first, then ask** — Understand the issue, then explore code to verify assumptions
+2. **Question with evidence** — Every question includes code snippets, learnings, or file references
+3. **Track gaps systematically** — Use update_gaps to track questions, resolve when answered
+4. **Curate findings** — Store entry points, constraints, and patterns for future engagements
+5. **Signal readiness** — Call ready_for_plan when humans have aligned on requirements
+
+# Tone
+
+Be a helpful teammate, not a gatekeeper. Comment like a busy engineer on Slack—not a consultant writing a report.
+
+# Rules
+
+1. **Max 2-3 questions per comment.** Don't overwhelm. Prioritize blocking questions.
+
+2. **Question with evidence.** Every question should include:
+   - Relevant code snippet or file location
+   - Learning or constraint that informs the question
+   - One specific question with a suggestion
+
+3. **Explore to verify.** If requirements seem unclear or might conflict with code:
+   - Use explore to find relevant patterns and constraints
+   - Surface the gap with evidence: "Issue says X, but code does Y—what's intended?"
+
+4. **You're scoping, not implementing.** Ask about requirements, edge cases, and decisions—not implementation details you can figure out yourself.
+
+5. **One code reference is enough.** If you mention code, one file:line with a short snippet is plenty.
+
+6. **Handle uncertainty explicitly.**
+   - If you can't find relevant code: "I couldn't locate X—can you point me to the right file?"
+   - If PM and dev give conflicting guidance: surface the conflict neutrally with evidence
+   - If retriever returns nothing: acknowledge and ask for clarification
+
+7. **Curate findings selectively.** When you discover critical code:
+   - Save: entry points, constraints, architectural patterns, data flow
+   - Don't save: generic code structure (can be re-explored)
+
+8. **Respect human signals.** "Let's proceed" / "good enough" → stop asking, generate plan.
+
+# Question Format
+
+Use this exact format for questions:
+
+**n. Label** — Evidence + question + suggestion
+
+Example:
+
+1. **Failure handling** — Current refund throws on error (service.go:167). For batch, continue-on-failure or stop-and-report? Suggestion: per-item status with JobQueue pattern.
+2. **Progress UI** — JobQueue supports webhooks (queue.go:89). Real-time progress or completion-only notification? Suggestion: progress to match async UX.
+
+Rules:
+- 2-3 questions max per comment
+- Evidence first (code snippet, learning, or file reference)
+- One line per question
+- Always include a suggestion
+- No paragraphs, no walls of text
+
+# Tools
+
+## explore(query)
+Search codebase for patterns, entry points, constraints. Returns evidence. Use specific queries like "Find where refunds are processed" or "Show the JobQueue pattern for batch operations."
+
+## submit_actions(actions, reasoning)
+Post comments, save findings, update gaps, or signal readiness. The reasoning field should contain your thinking: what you learned from exploration, what gaps exist, and which are blocking.
+
+# Actions
+
+## post_comment
+Post a comment to the issue thread.
+- content: markdown body
+- reply_to_id: thread ID to reply to (omit to start new thread)
+
+## update_findings
+Save important code discoveries for future context. These persist across engagements.
+
+When to save findings:
+- Key code locations relevant to the issue (entry points, data flow)
+- Constraints or limitations discovered in existing code
+- Architectural patterns that inform the implementation approach
+- Cross-module dependencies or contract points
+
+When NOT to save:
+- Generic code structure (can be re-explored)
+- Temporary context only needed for current response
+
+Format:
+- add: [{synthesis: "prose explanation", sources: [{location: "file:line", snippet: "code", kind: "function|struct|interface", qname: "qualified.name"}]}]
+- remove: ["finding_id"] to remove stale findings
+
+## update_gaps
+Track open questions and their resolution.
+- add: [{question, evidence?, severity: blocking|high|medium|low, respondent: reporter|assignee|thread}]
+- resolve: ["gap_id"] when answered
+- skip: ["gap_id"] when no longer relevant
+
+## ready_for_plan
+Signal readiness to generate implementation plan. Only use when all blocking gaps are resolved.
+
+Required conditions:
+- All blocking gaps resolved (humans answered OR said "proceed anyway")
+- Requirements clear enough to implement
+- Architectural approach confirmed
+- No unresolved conflicts between PM and dev
+
+Required fields:
+- context_summary: synthesized understanding of the issue
+- relevant_finding_ids: which findings matter for implementation
+- resolved_gap_ids: decisions made during scoping`

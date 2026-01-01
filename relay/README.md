@@ -157,6 +157,17 @@ make lint         # Run golangci-lint
 make test         # Run tests
 ```
 
+### Logging
+
+In development mode, logs are automatically written to both stdout and daily log files in the `logs/` directory:
+
+- **Log files**: `logs/relay-YYYY-MM-DD.log` (auto-created, date-stamped)
+- **Log level**: DEBUG in development, INFO in production
+- **Format**: Text in development, JSON in production
+- **Trace context**: Automatically includes trace_id, span_id, and structured fields (issue_id, workspace_id, etc.)
+
+The `logs/` directory is ignored by git and will be created automatically on first run.
+
 ## How It Works
 
 ### High-Level Flow
@@ -238,8 +249,8 @@ Read issue → Check sufficiency → {Sufficient: Call Gap Detector}
 Specialized providers that fetch context based on Planner queries:
 
 **Code Context Retriever**:
-- **Powered by**: ArangoDB (code graph) + Typesense (search)
-- **How it works**: Keywords → Typesense top-k hits → LLM-guided graph exploration → Relevant code context
+- **Powered by**: ArangoDB (code graph) + filesystem tools (ripgrep, fd, direct file reading)
+- **How it works**: Keywords → filesystem search → LLM-guided graph exploration → Relevant code context
 - **What it provides**: Verified imports, call chains, architectural patterns, exact file locations
 
 **Learnings Retriever**:

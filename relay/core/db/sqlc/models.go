@@ -23,6 +23,22 @@ type EventLog struct {
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 }
 
+type Gap struct {
+	ID      int64 `json:"id"`
+	IssueID int64 `json:"issue_id"`
+	// open | resolved | skipped
+	Status   string  `json:"status"`
+	Question string  `json:"question"`
+	Evidence *string `json:"evidence"`
+	// blocking | high | medium | low
+	Severity string `json:"severity"`
+	// reporter | assignee
+	Respondent string             `json:"respondent"`
+	LearningID *int64             `json:"learning_id"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ResolvedAt pgtype.Timestamptz `json:"resolved_at"`
+}
+
 type Integration struct {
 	ID                  int64              `json:"id"`
 	WorkspaceID         int64              `json:"workspace_id"`
@@ -64,22 +80,23 @@ type IntegrationCredential struct {
 }
 
 type Issue struct {
-	ID               int64    `json:"id"`
-	IntegrationID    int64    `json:"integration_id"`
-	ExternalIssueID  string   `json:"external_issue_id"`
-	Provider         string   `json:"provider"`
-	Title            *string  `json:"title"`
-	Description      *string  `json:"description"`
-	Labels           []string `json:"labels"`
-	Members          []string `json:"members"`
-	Assignees        []string `json:"assignees"`
-	Reporter         *string  `json:"reporter"`
-	ExternalIssueUrl *string  `json:"external_issue_url"`
-	Keywords         []byte   `json:"keywords"`
-	CodeFindings     []byte   `json:"code_findings"`
-	Learnings        []byte   `json:"learnings"`
-	Discussions      []byte   `json:"discussions"`
-	Spec             *string  `json:"spec"`
+	ID                int64    `json:"id"`
+	IntegrationID     int64    `json:"integration_id"`
+	ExternalProjectID *string  `json:"external_project_id"`
+	ExternalIssueID   string   `json:"external_issue_id"`
+	Provider          string   `json:"provider"`
+	Title             *string  `json:"title"`
+	Description       *string  `json:"description"`
+	Labels            []string `json:"labels"`
+	Members           []string `json:"members"`
+	Assignees         []string `json:"assignees"`
+	Reporter          *string  `json:"reporter"`
+	ExternalIssueUrl  *string  `json:"external_issue_url"`
+	Keywords          []byte   `json:"keywords"`
+	CodeFindings      []byte   `json:"code_findings"`
+	Learnings         []byte   `json:"learnings"`
+	Discussions       []byte   `json:"discussions"`
+	Spec              *string  `json:"spec"`
 	// idle | queued | processing
 	ProcessingStatus    string             `json:"processing_status"`
 	ProcessingStartedAt pgtype.Timestamptz `json:"processing_started_at"`

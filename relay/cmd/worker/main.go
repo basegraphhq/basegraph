@@ -2,24 +2,32 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 	"time"
 
+	"basegraph.app/relay/common/arangodb"
 	"basegraph.app/relay/common/id"
 	"basegraph.app/relay/common/llm"
 	"basegraph.app/relay/common/logger"
 	"basegraph.app/relay/core/config"
 	"basegraph.app/relay/core/db"
+	"basegraph.app/relay/internal/brain"
+	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/queue"
-	"basegraph.app/relay/internal/service"
+	"basegraph.app/relay/internal/service/issue_tracker"
 	"basegraph.app/relay/internal/store"
 	"basegraph.app/relay/internal/worker"
 	"github.com/redis/go-redis/v9"
+	"go.opentelemetry.io/otel/trace"
 )
+
+const maxAttempts = 3
 
 func main() {
 	ctx := context.Background()
@@ -38,7 +46,6 @@ func main() {
 		"consumer_group", cfg.Pipeline.RedisGroup,
 		"consumer_name", cfg.Pipeline.RedisConsumer)
 
-	// Initialize snowflake ID generator (use different node ID than server)
 	if err := id.Init(2); err != nil {
 		slog.ErrorContext(ctx, "failed to initialize id generator", "error", err)
 		os.Exit(1)
@@ -71,7 +78,7 @@ func main() {
 		Group:        cfg.Pipeline.RedisGroup,
 		Consumer:     cfg.Pipeline.RedisConsumer,
 		DLQStream:    cfg.Pipeline.RedisDLQStream,
-		BatchSize:    1, // Process one issue at a time
+		BatchSize:    1,
 		Block:        5 * time.Second,
 		MaxAttempts:  3,
 		RequeueDelay: time.Second,
@@ -81,34 +88,83 @@ func main() {
 		os.Exit(1)
 	}
 
-	txRunner := &workerTxRunnerAdapter{tx: service.NewTxRunner(database)}
-
-	if !cfg.OpenAI.Enabled() {
-		slog.ErrorContext(ctx, "OPENAI_API_KEY is required for pipeline processing")
+	if !cfg.LLM.Enabled() {
+		slog.ErrorContext(ctx, "LLM_API_KEY is required for pipeline processing")
 		os.Exit(1)
 	}
 
-	llmClient, err := llm.New(llm.Config{
-		APIKey:  cfg.OpenAI.APIKey,
-		BaseURL: cfg.OpenAI.BaseURL,
-		Model:   cfg.OpenAI.Model,
+	agentClient, err := llm.NewAgentClient(llm.Config{
+		Provider: cfg.LLM.Provider,
+		APIKey:   cfg.LLM.APIKey,
+		BaseURL:  cfg.LLM.BaseURL,
+		Model:    cfg.LLM.Model,
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to create LLM client", "error", err)
+		slog.ErrorContext(ctx, "failed to create agent client", "error", err)
+		os.Exit(1)
+	}
+	slog.InfoContext(ctx, "agent client initialized", "provider", cfg.LLM.Provider, "model", cfg.LLM.Model)
+
+	repoRoot := os.Getenv("REPO_ROOT")
+	if repoRoot == "" {
+		slog.ErrorContext(ctx, "REPO_ROOT environment variable is required")
 		os.Exit(1)
 	}
 
-	slog.InfoContext(ctx, "llm client initialized", "model", cfg.OpenAI.Model)
+	modulePath := os.Getenv("MODULE_PATH")
+	if modulePath == "" {
+		slog.ErrorContext(ctx, "MODULE_PATH environment variable is required")
+		os.Exit(1)
+	}
+	slog.InfoContext(ctx, "repo configured", "root", repoRoot, "module", modulePath)
+
+	if !cfg.ArangoDB.Enabled() {
+		slog.ErrorContext(ctx, "ArangoDB configuration is required")
+		os.Exit(1)
+	}
+	arangoClient, err := arangodb.New(ctx, arangodb.Config{
+		URL:      cfg.ArangoDB.URL,
+		Username: cfg.ArangoDB.Username,
+		Password: cfg.ArangoDB.Password,
+		Database: cfg.ArangoDB.Database,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to create ArangoDB client", "error", err)
+		os.Exit(1)
+	}
+	if err := arangoClient.EnsureDatabase(ctx); err != nil {
+		slog.ErrorContext(ctx, "failed to ensure ArangoDB database", "error", err)
+		os.Exit(1)
+	}
+	slog.InfoContext(ctx, "arangodb connected", "database", cfg.ArangoDB.Database)
 
 	stores := store.NewStores(database.Queries())
-	processor := worker.NewProcessor(llmClient, stores.LLMEvals())
 
-	// MaxAttempts=1: DLQ is a safety valve, not a retry mechanism. Poison messages go to DLQ immediately.
-	w := worker.New(consumer, txRunner, stores.Issues(), processor, worker.Config{
-		MaxAttempts: 1,
-	})
+	issueTrackers := map[model.Provider]issue_tracker.IssueTrackerService{
+		model.ProviderGitLab: issue_tracker.NewGitLabIssueTrackerService(
+			stores.Integrations(),
+			stores.IntegrationCredentials(),
+		),
+	}
 
-	// Redis reclaimer handles unACK'd messages from crashed workers.
+	orchestrator := brain.NewOrchestrator(
+		brain.OrchestratorConfig{
+			RepoRoot:   repoRoot,
+			ModulePath: modulePath,
+		},
+		agentClient,
+		arangoClient,
+		stores.Issues(),
+		stores.Gaps(),
+		stores.EventLogs(),
+		stores.Integrations(),
+		stores.IntegrationConfigs(),
+		stores.Learnings(),
+		issueTrackers,
+	)
+
+	processMessage := newMessageProcessor(consumer, orchestrator)
+
 	reclaimer := worker.NewRedisReclaimer(redisClient, worker.RedisReclaimerConfig{
 		Stream:    cfg.Pipeline.RedisStream,
 		Group:     cfg.Pipeline.RedisGroup,
@@ -116,61 +172,167 @@ func main() {
 		MinIdle:   5 * time.Minute,
 		Interval:  1 * time.Minute,
 		BatchSize: 10,
-	}, w.ProcessMessage)
+	}, consumer, processMessage)
 
-	// Start worker and reclaimer
-	errCh := make(chan error, 2)
-	go func() {
-		errCh <- w.Run(ctx)
-	}()
-	go func() {
-		reclaimer.Run(ctx)
-		errCh <- nil
-	}()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 
-	slog.InfoContext(ctx, "worker initialized and running")
+	go reclaimer.Run(ctx)
+	go runLoop(ctx, consumer, processMessage)
+
+	slog.InfoContext(ctx, "worker running")
 
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	slog.InfoContext(ctx, "shutting down worker...")
-
-	shutdownCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-
-	// Stop reclaimer first (quick)
+	slog.InfoContext(ctx, "shutting down...")
+	cancel()
 	reclaimer.Stop()
+	slog.InfoContext(ctx, "shutdown complete")
+}
 
-	// Stop worker (may be processing)
-	w.Stop()
+func runLoop(ctx context.Context, consumer *queue.RedisConsumer, process queue.MessageProcessor) {
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		Component: "relay.worker.loop",
+	})
 
-	// Wait for goroutines with timeout
-	select {
-	case <-shutdownCtx.Done():
-		slog.WarnContext(ctx, "shutdown timeout exceeded")
-	case err := <-errCh:
-		if err != nil {
-			slog.ErrorContext(ctx, "worker error during shutdown", "error", err)
+	slog.InfoContext(ctx, "worker loop started")
+
+	for {
+		select {
+		case <-ctx.Done():
+			slog.InfoContext(ctx, "worker loop stopping")
+			return
+		default:
+			messages, err := consumer.Read(ctx)
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				slog.ErrorContext(ctx, "failed to read from stream", "error", err)
+				time.Sleep(time.Second)
+				continue
+			}
+
+			for _, msg := range messages {
+				// Create message-specific context with trace propagation
+				msgCtx, endSpan := createMessageContext(ctx, msg)
+
+				err := processMessageSafe(msgCtx, msg, process)
+				endSpan()
+
+				if err != nil {
+					slog.ErrorContext(msgCtx, "message processing failed", "error", err)
+					handleFailure(msgCtx, consumer, msg, err)
+				}
+			}
 		}
 	}
-
-	slog.InfoContext(ctx, "worker shutdown complete")
 }
 
-// workerTxRunnerAdapter bridges service.TxRunner to worker.TxRunner.
-type workerTxRunnerAdapter struct {
-	tx service.TxRunner
-}
+// createMessageContext creates a context enriched with message metadata and trace propagation.
+// Returns the context and a function to end the span.
+func createMessageContext(ctx context.Context, msg queue.Message) (context.Context, func()) {
+	// Start a new span linked to the original trace from the API server
+	sc := logger.StartSpanFromTraceID(ctx, msg.TraceID, "worker.process_message",
+		trace.WithSpanKind(trace.SpanKindConsumer))
 
-func (a *workerTxRunnerAdapter) WithTx(ctx context.Context, fn func(stores worker.StoreProvider) error) error {
-	return a.tx.WithTx(ctx, func(sp service.StoreProvider) error {
-		s, ok := sp.(*store.Stores)
-		if !ok {
-			return fmt.Errorf("unexpected store provider type %T", sp)
-		}
-		return fn(s)
+	ctx = sc.Context()
+
+	// Enrich context with message metadata for automatic logging
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		IssueID:    &msg.IssueID,
+		EventLogID: &msg.EventLogID,
+		MessageID:  &msg.ID,
+		EventType:  &msg.EventType,
+		Component:  "relay.worker.processor",
 	})
+
+	return ctx, sc.End
+}
+
+func processMessageSafe(ctx context.Context, msg queue.Message, process queue.MessageProcessor) (err error) {
+	start := time.Now()
+	span := trace.SpanFromContext(ctx)
+
+	defer func() {
+		duration := time.Since(start)
+
+		if rec := recover(); rec != nil {
+			if span.SpanContext().IsValid() {
+				span.RecordError(fmt.Errorf("panic: %v", rec))
+			}
+			slog.ErrorContext(ctx, "panic recovered",
+				"panic", rec,
+				"stack", string(debug.Stack()),
+				"duration_ms", duration.Milliseconds())
+			err = fmt.Errorf("panic: %v", rec)
+			return
+		}
+
+		if err == nil {
+			slog.InfoContext(ctx, "message processed successfully",
+				"duration_ms", duration.Milliseconds())
+		}
+	}()
+
+	return process(ctx, msg)
+}
+
+func newMessageProcessor(consumer *queue.RedisConsumer, orchestrator *brain.Orchestrator) queue.MessageProcessor {
+	return func(ctx context.Context, msg queue.Message) error {
+		slog.InfoContext(ctx, "processing message",
+			"attempt", msg.Attempt)
+
+		input := brain.EngagementInput{
+			IssueID:         msg.IssueID,
+			EventLogID:      msg.EventLogID,
+			EventType:       msg.EventType,
+			TriggerThreadID: msg.TriggerThreadID,
+		}
+
+		if err := orchestrator.HandleEngagement(ctx, input); err != nil {
+			return err
+		}
+
+		if err := consumer.Ack(ctx, msg); err != nil {
+			slog.WarnContext(ctx, "failed to ack message", "error", err)
+		}
+
+		return nil
+	}
+}
+
+func handleFailure(ctx context.Context, consumer *queue.RedisConsumer, msg queue.Message, err error) {
+	var engErr *brain.EngagementError
+	retryable := true
+	if errors.As(err, &engErr) {
+		retryable = engErr.Retryable
+	}
+
+	willRequeue := retryable && msg.Attempt < maxAttempts
+	willDLQ := !retryable || msg.Attempt >= maxAttempts
+
+	slog.InfoContext(ctx, "handling message failure",
+		"error", err,
+		"error_type", fmt.Sprintf("%T", err),
+		"retryable", retryable,
+		"attempt", msg.Attempt,
+		"max_attempts", maxAttempts,
+		"will_requeue", willRequeue,
+		"will_dlq", willDLQ)
+
+	if willDLQ {
+		if dlqErr := consumer.SendDLQ(ctx, msg, err.Error()); dlqErr != nil {
+			slog.ErrorContext(ctx, "failed to send to DLQ", "error", dlqErr)
+		}
+		return
+	}
+
+	if requeueErr := consumer.Requeue(ctx, msg, err.Error()); requeueErr != nil {
+		slog.ErrorContext(ctx, "failed to requeue", "error", requeueErr)
+	}
 }
 
 const banner = `

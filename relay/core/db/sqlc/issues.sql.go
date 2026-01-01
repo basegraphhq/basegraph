@@ -16,7 +16,7 @@ SET processing_status = 'processing',
     updated_at = now()
 WHERE id = $1
   AND processing_status = 'queued'
-RETURNING id, integration_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
+RETURNING id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
 `
 
 // Atomically transition issue from 'queued' to 'processing'.
@@ -27,6 +27,7 @@ func (q *Queries) ClaimQueuedIssue(ctx context.Context, id int64) (Issue, error)
 	err := row.Scan(
 		&i.ID,
 		&i.IntegrationID,
+		&i.ExternalProjectID,
 		&i.ExternalIssueID,
 		&i.Provider,
 		&i.Title,
@@ -51,7 +52,7 @@ func (q *Queries) ClaimQueuedIssue(ctx context.Context, id int64) (Issue, error)
 }
 
 const getIssue = `-- name: GetIssue :one
-SELECT id, integration_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at FROM issues WHERE id = $1
+SELECT id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at FROM issues WHERE id = $1
 `
 
 func (q *Queries) GetIssue(ctx context.Context, id int64) (Issue, error) {
@@ -60,6 +61,7 @@ func (q *Queries) GetIssue(ctx context.Context, id int64) (Issue, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.IntegrationID,
+		&i.ExternalProjectID,
 		&i.ExternalIssueID,
 		&i.Provider,
 		&i.Title,
@@ -84,7 +86,7 @@ func (q *Queries) GetIssue(ctx context.Context, id int64) (Issue, error) {
 }
 
 const getIssueByIntegrationAndExternalID = `-- name: GetIssueByIntegrationAndExternalID :one
-SELECT id, integration_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at FROM issues WHERE integration_id = $1 AND external_issue_id = $2
+SELECT id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at FROM issues WHERE integration_id = $1 AND external_issue_id = $2
 `
 
 type GetIssueByIntegrationAndExternalIDParams struct {
@@ -98,6 +100,7 @@ func (q *Queries) GetIssueByIntegrationAndExternalID(ctx context.Context, arg Ge
 	err := row.Scan(
 		&i.ID,
 		&i.IntegrationID,
+		&i.ExternalProjectID,
 		&i.ExternalIssueID,
 		&i.Provider,
 		&i.Title,
@@ -132,7 +135,7 @@ WHERE id = $1
     OR (processing_status = 'processing' AND processing_started_at < NOW() - INTERVAL '15 minutes')
     OR (processing_status = 'queued' AND updated_at < NOW() - INTERVAL '15 minutes')
   )
-RETURNING id, integration_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
+RETURNING id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
 `
 
 // Queue an issue for processing, with automatic recovery of stuck issues.
@@ -167,6 +170,7 @@ func (q *Queries) QueueIssueIfIdle(ctx context.Context, id int64) (Issue, error)
 	err := row.Scan(
 		&i.ID,
 		&i.IntegrationID,
+		&i.ExternalProjectID,
 		&i.ExternalIssueID,
 		&i.Provider,
 		&i.Title,
@@ -213,6 +217,7 @@ const upsertIssue = `-- name: UpsertIssue :one
 INSERT INTO issues (
     id,
     integration_id,
+    external_project_id,
     external_issue_id,
     provider,
     title,
@@ -230,11 +235,12 @@ INSERT INTO issues (
     updated_at
 )
 VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, now(), now()
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, now(), now()
 )
 ON CONFLICT (integration_id, external_issue_id)
 DO UPDATE
 SET
+    external_project_id = EXCLUDED.external_project_id,
     title = EXCLUDED.title,
     description = EXCLUDED.description,
     labels = EXCLUDED.labels,
@@ -247,31 +253,33 @@ SET
     discussions = EXCLUDED.discussions,
     spec = EXCLUDED.spec,
     updated_at = now()
-RETURNING id, integration_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
+RETURNING id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
 `
 
 type UpsertIssueParams struct {
-	ID              int64    `json:"id"`
-	IntegrationID   int64    `json:"integration_id"`
-	ExternalIssueID string   `json:"external_issue_id"`
-	Provider        string   `json:"provider"`
-	Title           *string  `json:"title"`
-	Description     *string  `json:"description"`
-	Labels          []string `json:"labels"`
-	Members         []string `json:"members"`
-	Assignees       []string `json:"assignees"`
-	Reporter        *string  `json:"reporter"`
-	Keywords        []byte   `json:"keywords"`
-	CodeFindings    []byte   `json:"code_findings"`
-	Learnings       []byte   `json:"learnings"`
-	Discussions     []byte   `json:"discussions"`
-	Spec            *string  `json:"spec"`
+	ID                int64    `json:"id"`
+	IntegrationID     int64    `json:"integration_id"`
+	ExternalProjectID *string  `json:"external_project_id"`
+	ExternalIssueID   string   `json:"external_issue_id"`
+	Provider          string   `json:"provider"`
+	Title             *string  `json:"title"`
+	Description       *string  `json:"description"`
+	Labels            []string `json:"labels"`
+	Members           []string `json:"members"`
+	Assignees         []string `json:"assignees"`
+	Reporter          *string  `json:"reporter"`
+	Keywords          []byte   `json:"keywords"`
+	CodeFindings      []byte   `json:"code_findings"`
+	Learnings         []byte   `json:"learnings"`
+	Discussions       []byte   `json:"discussions"`
+	Spec              *string  `json:"spec"`
 }
 
 func (q *Queries) UpsertIssue(ctx context.Context, arg UpsertIssueParams) (Issue, error) {
 	row := q.db.QueryRow(ctx, upsertIssue,
 		arg.ID,
 		arg.IntegrationID,
+		arg.ExternalProjectID,
 		arg.ExternalIssueID,
 		arg.Provider,
 		arg.Title,
@@ -290,6 +298,7 @@ func (q *Queries) UpsertIssue(ctx context.Context, arg UpsertIssueParams) (Issue
 	err := row.Scan(
 		&i.ID,
 		&i.IntegrationID,
+		&i.ExternalProjectID,
 		&i.ExternalIssueID,
 		&i.Provider,
 		&i.Title,

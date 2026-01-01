@@ -78,6 +78,11 @@ Logging and observability are core to this project.
 4. **Interfaces:** Describe behavior (`CodeGraphReader`, not `ICodeGraph`)
 5. **Comments:** Default to none. Only add for "why" explanations, not "what"
 6. **Domain models:** Use `time.Time`, not `pgtype.Timestamptz` - keep service layer clean
+7. **Value semantics:** Prefer value types over pointers. Only use pointers when:
+   - The receiver must mutate the value
+   - The type represents a shared resource (e.g., `*sql.DB`)
+   - Optional fields that need nil/absent distinction
+   - Store methods return `(T, error)` not `(*T, error)`
 
 ## AI Agent Guidelines
 

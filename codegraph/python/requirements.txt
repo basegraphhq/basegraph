@@ -1,0 +1,13 @@
+# CodeGraph Python Extractor Dependencies
+
+# ArangoDB client
+python-arango>=7.0.0
+
+# Git support (for cloning repos)
+gitpython>=3.0.0
+
+# Neo4j client (legacy, for reference)
+neo4j>=5.0.0
+
+# Environment variable loading
+python-dotenv>=1.0.0

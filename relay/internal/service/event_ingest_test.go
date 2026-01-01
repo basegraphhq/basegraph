@@ -146,6 +146,14 @@ func (m *mockIssueTrackerService) IsReplyToUser(ctx context.Context, params issu
 	return false, nil
 }
 
+func (m *mockIssueTrackerService) CreateDiscussion(ctx context.Context, params issue_tracker.CreateDiscussionParams) (issue_tracker.CreateDiscussionResult, error) {
+	return issue_tracker.CreateDiscussionResult{}, nil
+}
+
+func (m *mockIssueTrackerService) ReplyToThread(ctx context.Context, params issue_tracker.ReplyToThreadParams) (issue_tracker.ReplyToThreadResult, error) {
+	return issue_tracker.ReplyToThreadResult{}, nil
+}
+
 // Mock EventLogStore
 type mockEventLogStore struct {
 	createOrGetFn func(ctx context.Context, log *model.EventLog) (*model.EventLog, bool, error)
@@ -188,12 +196,12 @@ func (m *mockEventLogStore) MarkBatchProcessed(ctx context.Context, ids []int64)
 
 // Mock QueueProducer
 type mockQueueProducer struct {
-	enqueueFn func(ctx context.Context, msg queue.EventMessage) error
+	enqueueFn func(ctx context.Context, event queue.Event) error
 }
 
-func (m *mockQueueProducer) Enqueue(ctx context.Context, msg queue.EventMessage) error {
+func (m *mockQueueProducer) Enqueue(ctx context.Context, event queue.Event) error {
 	if m.enqueueFn != nil {
-		return m.enqueueFn(ctx, msg)
+		return m.enqueueFn(ctx, event)
 	}
 	return nil
 }
@@ -204,7 +212,8 @@ func (m *mockQueueProducer) Close() error {
 
 // Mock EngagementDetector
 type mockEngagementDetector struct {
-	shouldEngageFn func(ctx context.Context, integrationID int64, req service.EngagementRequest) (service.EngagementResult, error)
+	shouldEngageFn    func(ctx context.Context, integrationID int64, req service.EngagementRequest) (service.EngagementResult, error)
+	isSelfTriggeredFn func(ctx context.Context, integrationID int64, username string) (bool, error)
 }
 
 func (m *mockEngagementDetector) ShouldEngage(ctx context.Context, integrationID int64, req service.EngagementRequest) (service.EngagementResult, error) {
@@ -212,6 +221,13 @@ func (m *mockEngagementDetector) ShouldEngage(ctx context.Context, integrationID
 		return m.shouldEngageFn(ctx, integrationID, req)
 	}
 	return service.EngagementResult{ShouldEngage: false}, nil
+}
+
+func (m *mockEngagementDetector) IsSelfTriggered(ctx context.Context, integrationID int64, username string) (bool, error) {
+	if m.isSelfTriggeredFn != nil {
+		return m.isSelfTriggeredFn(ctx, integrationID, username)
+	}
+	return false, nil
 }
 
 var _ = Describe("EventIngestService", func() {
