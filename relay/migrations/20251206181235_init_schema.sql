@@ -237,6 +237,37 @@ create index idx_learnings_workspace_id on learnings (workspace_id);
 create index idx_learnings_type on learnings (type);
 
 
+create table gaps (
+    id bigint primary key,
+    issue_id bigint not null references issues(id),
+    status text not null default 'open',
+    question text not null,
+    evidence text,
+    severity text not null,
+    respondent text not null,
+    learning_id bigint references learnings(id),
+    created_at timestamptz not null default now(),
+    resolved_at timestamptz
+);
+
+comment on column gaps.status is 'open | resolved | skipped';
+comment on column gaps.severity is 'blocking | high | medium | low';
+comment on column gaps.respondent is 'reporter | assignee';
+
+alter table gaps add constraint chk_gaps_status
+    check (status in ('open', 'resolved', 'skipped'));
+
+alter table gaps add constraint chk_gaps_severity
+    check (severity in ('blocking', 'high', 'medium', 'low'));
+
+alter table gaps add constraint chk_gaps_respondent
+    check (respondent in ('reporter', 'assignee'));
+
+create index idx_gaps_issue_id on gaps (issue_id);
+create index idx_gaps_status on gaps (status) where status = 'open';
+create index idx_gaps_issue_status on gaps (issue_id, status);
+
+
 -- LLM Pipeline Evaluation Logs
 -- Stores inputs/outputs for quality analysis and prompt iteration
 create table llm_evals (
@@ -285,6 +316,7 @@ create index idx_llm_evals_unrated on llm_evals (stage, created_at) where rating
 -- +goose StatementBegin
 
 drop table if exists llm_evals;
+drop table if exists gaps;
 drop table if exists learnings;
 drop table if exists sessions;
 drop table if exists event_logs;
