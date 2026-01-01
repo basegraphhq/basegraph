@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	"basegraph.app/relay/common/logger"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -34,6 +35,12 @@ func NewRedisProducer(client *redis.Client, stream string) Producer {
 }
 
 func (p *redisProducer) Enqueue(ctx context.Context, msg EventMessage) error {
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		IssueID:    &msg.IssueID,
+		EventLogID: &msg.EventLogID,
+		Component:  "relay.queue.producer",
+	})
+
 	attempt := msg.Attempt
 	if attempt <= 0 {
 		attempt = 1
@@ -46,8 +53,10 @@ func (p *redisProducer) Enqueue(ctx context.Context, msg EventMessage) error {
 		"attempt":      attempt,
 	}
 
+	traceIDStr := ""
 	if msg.TraceID != nil && *msg.TraceID != "" {
 		fields["trace_id"] = *msg.TraceID
+		traceIDStr = *msg.TraceID
 	}
 
 	// TODO - @nithinsj - Add MAXLEN to prevent stream growing unbounded. Redis streams grow until out of memory.
@@ -56,10 +65,14 @@ func (p *redisProducer) Enqueue(ctx context.Context, msg EventMessage) error {
 		Stream: p.stream,
 		Values: fields,
 	}).Err(); err != nil {
-		return fmt.Errorf("enqueue event: %w", err)
+		return fmt.Errorf("enqueue event (stream=%s): %w", p.stream, err)
 	}
 
-	slog.InfoContext(ctx, "enqueued event log", "event_log_id", msg.EventLogID, "issue_id", msg.IssueID, "event_type", msg.EventType, "attempt", attempt)
+	slog.InfoContext(ctx, "enqueued event log",
+		"event_type", msg.EventType,
+		"attempt", attempt,
+		"trace_id", traceIDStr,
+		"stream", p.stream)
 	return nil
 }
 

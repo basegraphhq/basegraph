@@ -11,6 +11,7 @@ import (
 	"strconv"
 
 	"basegraph.app/relay/common/id"
+	"basegraph.app/relay/common/logger"
 	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/queue"
 	tracker "basegraph.app/relay/internal/service/issue_tracker"
@@ -77,6 +78,12 @@ func NewEventIngestService(
 }
 
 func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParams) (*EventIngestResult, error) {
+	// Enrich context with component and integration ID early
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		IntegrationID: &params.IntegrationID,
+		Component:     "relay.service.event_ingest",
+	})
+
 	if params.IntegrationID == 0 || params.ExternalIssueID == "" || params.EventType == "" {
 		return nil, fmt.Errorf("integration_id, external_issue_id, and event_type are required")
 	}
@@ -91,6 +98,11 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		}
 		return nil, fmt.Errorf("fetching integration: %w", err)
 	}
+
+	// Enrich context with workspace ID after integration lookup
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		WorkspaceID: &integration.WorkspaceID,
+	})
 
 	if !integration.IsEnabled {
 		return nil, fmt.Errorf("integration is disabled")
@@ -117,7 +129,6 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 
 	if isSubscribed {
 		slog.InfoContext(ctx, "refreshing discussions for tracked issue",
-			"integration_id", params.IntegrationID,
 			"external_issue_id", params.ExternalIssueID,
 		)
 
@@ -129,7 +140,6 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		if err != nil {
 			slog.WarnContext(ctx, "failed to fetch discussions for existing issue",
 				"error", err,
-				"integration_id", params.IntegrationID,
 			)
 		}
 
@@ -165,7 +175,6 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		}
 
 		slog.InfoContext(ctx, "engagement detected, fetched issue from provider",
-			"integration_id", params.IntegrationID,
 			"external_issue_id", params.ExternalIssueID,
 			"title", issue.Title,
 			"discussions_count", len(engagement.Discussions),

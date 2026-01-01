@@ -124,7 +124,7 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		gin.SetMode(gin.TestMode)
 		router = gin.New()
 		buf = &bytes.Buffer{}
-		slog.SetDefault(slog.New(slog.NewJSONHandler(buf, nil)))
+		slog.SetDefault(slog.New(slog.NewJSONHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
 
 		store := &fakeCredStore{
 			creds: []model.IntegrationCredential{

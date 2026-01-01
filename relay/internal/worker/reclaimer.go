@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"basegraph.app/relay/common/logger"
 	"basegraph.app/relay/internal/queue"
 	"github.com/redis/go-redis/v9"
 )
@@ -25,20 +26,19 @@ type RedisReclaimerConfig struct {
 type RedisReclaimer struct {
 	client    *redis.Client
 	cfg       RedisReclaimerConfig
-	processor MessageProcessor
+	consumer  *queue.RedisConsumer
+	processor queue.MessageProcessor
 
 	stopCh    chan struct{}
 	stoppedCh chan struct{}
 }
 
-// MessageProcessor processes a reclaimed message.
-type MessageProcessor func(ctx context.Context, msg queue.Message) error
-
 // NewRedisReclaimer creates a new RedisReclaimer.
-func NewRedisReclaimer(client *redis.Client, cfg RedisReclaimerConfig, processor MessageProcessor) *RedisReclaimer {
+func NewRedisReclaimer(client *redis.Client, cfg RedisReclaimerConfig, consumer *queue.RedisConsumer, processor queue.MessageProcessor) *RedisReclaimer {
 	return &RedisReclaimer{
 		client:    client,
 		cfg:       cfg,
+		consumer:  consumer,
 		processor: processor,
 		stopCh:    make(chan struct{}),
 		stoppedCh: make(chan struct{}),
@@ -47,6 +47,10 @@ func NewRedisReclaimer(client *redis.Client, cfg RedisReclaimerConfig, processor
 
 // Run starts the reclaimer loop. Blocks until Stop() is called.
 func (r *RedisReclaimer) Run(ctx context.Context) {
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		Component: "relay.worker.reclaimer",
+	})
+
 	defer close(r.stoppedCh)
 
 	ticker := time.NewTicker(r.cfg.Interval)
@@ -54,7 +58,9 @@ func (r *RedisReclaimer) Run(ctx context.Context) {
 
 	slog.InfoContext(ctx, "reclaimer started",
 		"interval", r.cfg.Interval,
-		"min_idle", r.cfg.MinIdle)
+		"min_idle", r.cfg.MinIdle,
+		"stream", r.cfg.Stream,
+		"group", r.cfg.Group)
 
 	for {
 		select {
@@ -65,7 +71,7 @@ func (r *RedisReclaimer) Run(ctx context.Context) {
 			return
 		case <-ticker.C:
 			if err := r.reclaimOnce(ctx); err != nil {
-				slog.ErrorContext(ctx, "reclaim error", "error", err)
+				slog.ErrorContext(ctx, "reclaim cycle error", "error", err)
 			}
 		}
 	}
@@ -79,7 +85,8 @@ func (r *RedisReclaimer) Stop() {
 
 // reclaimOnce performs one reclaim cycle.
 func (r *RedisReclaimer) reclaimOnce(ctx context.Context) error {
-	// Step 1: Find pending messages older than MinIdle
+	slog.DebugContext(ctx, "starting reclaim cycle")
+
 	pending, err := r.client.XPendingExt(ctx, &redis.XPendingExtArgs{
 		Stream: r.cfg.Stream,
 		Group:  r.cfg.Group,
@@ -93,19 +100,19 @@ func (r *RedisReclaimer) reclaimOnce(ctx context.Context) error {
 	}
 
 	if len(pending) == 0 {
+		slog.DebugContext(ctx, "no stale messages found")
 		return nil
 	}
 
 	slog.InfoContext(ctx, "found stale pending messages", "count", len(pending))
 
-	// Step 2: Claim each message
 	for _, p := range pending {
 		if err := r.reclaimMessage(ctx, p); err != nil {
 			slog.ErrorContext(ctx, "failed to reclaim message",
 				"error", err,
 				"message_id", p.ID,
-				"consumer", p.Consumer,
-				"idle", p.Idle)
+				"original_consumer", p.Consumer,
+				"idle_time", p.Idle)
 			// Continue with other messages
 		}
 	}
@@ -115,13 +122,17 @@ func (r *RedisReclaimer) reclaimOnce(ctx context.Context) error {
 
 // reclaimMessage claims and processes a single stale message.
 func (r *RedisReclaimer) reclaimMessage(ctx context.Context, pending redis.XPendingExt) error {
+	// Enrich context with message ID for logging
+	msgID := pending.ID
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		MessageID: &msgID,
+	})
+
 	slog.InfoContext(ctx, "reclaiming stale message",
-		"message_id", pending.ID,
 		"original_consumer", pending.Consumer,
 		"idle_time", pending.Idle,
 		"retry_count", pending.RetryCount)
 
-	// Step 1: XCLAIM the message
 	messages, err := r.client.XClaim(ctx, &redis.XClaimArgs{
 		Stream:   r.cfg.Stream,
 		Group:    r.cfg.Group,
@@ -134,29 +145,35 @@ func (r *RedisReclaimer) reclaimMessage(ctx context.Context, pending redis.XPend
 	}
 
 	if len(messages) == 0 {
-		// Message was already claimed by someone else
-		slog.DebugContext(ctx, "message already reclaimed by another worker",
-			"message_id", pending.ID)
+		slog.DebugContext(ctx, "message already reclaimed by another worker")
 		return nil
 	}
 
 	msg := messages[0]
 
-	// Step 2: Parse the message
 	parsed, err := queue.ParseMessage(msg)
 	if err != nil {
-		// Can't parse - ACK it to prevent infinite loop
-		slog.ErrorContext(ctx, "failed to parse reclaimed message, acknowledging",
-			"error", err,
-			"message_id", msg.ID)
-		_ = r.client.XAck(ctx, r.cfg.Stream, r.cfg.Group, msg.ID).Err()
+		slog.ErrorContext(ctx, "failed to parse reclaimed message, acknowledging to prevent loop",
+			"error", err)
+		_ = r.consumer.Ack(ctx, queue.Message{ID: msg.ID, Raw: msg})
 		return nil
 	}
 
-	// Step 3: Process the message (reuses worker logic)
+	// Enrich context with parsed message fields
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		IssueID:    &parsed.IssueID,
+		EventLogID: &parsed.EventLogID,
+	})
+
+	slog.DebugContext(ctx, "message claimed successfully")
+
+	start := time.Now()
 	if err := r.processor(ctx, parsed); err != nil {
 		return fmt.Errorf("processing reclaimed message: %w", err)
 	}
+
+	slog.InfoContext(ctx, "reclaimed message processed successfully",
+		"duration_ms", time.Since(start).Milliseconds())
 
 	return nil
 }

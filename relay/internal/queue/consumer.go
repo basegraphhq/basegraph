@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"basegraph.app/relay/common/logger"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -21,6 +22,7 @@ type ConsumerConfig struct {
 	MaxAttempts  int           // Maximum retry attempts before moving to DLQ
 	RequeueDelay time.Duration // Delay before retrying failed messages
 }
+
 type Message struct {
 	ID         string
 	EventLogID int64
@@ -30,6 +32,9 @@ type Message struct {
 	TraceID    string
 	Raw        redis.XMessage
 }
+
+// MessageProcessor processes a queue message.
+type MessageProcessor func(ctx context.Context, msg Message) error
 
 type RedisConsumer struct {
 	client *redis.Client
@@ -60,6 +65,10 @@ func (c *RedisConsumer) ensureGroup(ctx context.Context) error {
 }
 
 func (c *RedisConsumer) Read(ctx context.Context) ([]Message, error) {
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		Component: "relay.queue.consumer",
+	})
+
 	streams, err := c.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    c.cfg.Group,
 		Consumer: c.cfg.Consumer,
@@ -82,26 +91,43 @@ func (c *RedisConsumer) Read(ctx context.Context) ([]Message, error) {
 		for _, msg := range stream.Messages {
 			parsed, parseErr := ParseMessage(msg)
 			if parseErr != nil {
-				slog.ErrorContext(ctx, "failed to parse message", "error", parseErr, "message_id", msg.ID)
+				slog.ErrorContext(ctx, "failed to parse message",
+					"error", parseErr,
+					"raw_message_id", msg.ID,
+					"stream", c.cfg.Stream)
 				_ = c.Ack(ctx, Message{ID: msg.ID, Raw: msg})
 				continue
 			}
 			messages = append(messages, parsed)
 		}
 	}
+
+	if len(messages) > 0 {
+		slog.DebugContext(ctx, "read messages from stream",
+			"count", len(messages),
+			"stream", c.cfg.Stream,
+			"consumer", c.cfg.Consumer)
+	}
+
 	return messages, nil
 }
 
 func (c *RedisConsumer) Ack(ctx context.Context, msg Message) error {
-	return c.client.XAck(ctx, c.cfg.Stream, c.cfg.Group, msg.ID).Err()
+	if err := c.client.XAck(ctx, c.cfg.Stream, c.cfg.Group, msg.ID).Err(); err != nil {
+		return fmt.Errorf("xack (stream=%s): %w", c.cfg.Stream, err)
+	}
+
+	slog.DebugContext(ctx, "message acknowledged", "stream", c.cfg.Stream)
+	return nil
 }
 
 func (c *RedisConsumer) Requeue(ctx context.Context, msg Message, errMsg string) error {
+	nextAttempt := msg.Attempt + 1
+
 	if err := c.Ack(ctx, msg); err != nil {
-		return fmt.Errorf("acking failed message: %w", err)
+		return fmt.Errorf("acking failed message for requeue: %w", err)
 	}
 
-	nextAttempt := msg.Attempt + 1
 	values := map[string]any{
 		"event_log_id": msg.EventLogID,
 		"issue_id":     msg.IssueID,
@@ -119,10 +145,17 @@ func (c *RedisConsumer) Requeue(ctx context.Context, msg Message, errMsg string)
 		time.Sleep(c.cfg.RequeueDelay)
 	}
 
-	return c.client.XAdd(ctx, &redis.XAddArgs{
+	if err := c.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: c.cfg.Stream,
 		Values: values,
-	}).Err()
+	}).Err(); err != nil {
+		return fmt.Errorf("xadd requeue: %w", err)
+	}
+
+	slog.InfoContext(ctx, "message requeued for retry",
+		"next_attempt", nextAttempt,
+		"reason", errMsg)
+	return nil
 }
 
 func (c *RedisConsumer) SendDLQ(ctx context.Context, msg Message, errMsg string) error {
@@ -141,10 +174,17 @@ func (c *RedisConsumer) SendDLQ(ctx context.Context, msg Message, errMsg string)
 		values["trace_id"] = msg.TraceID
 	}
 
-	return c.client.XAdd(ctx, &redis.XAddArgs{
+	if err := c.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: c.cfg.DLQStream,
 		Values: values,
-	}).Err()
+	}).Err(); err != nil {
+		return fmt.Errorf("xadd dlq (stream=%s): %w", c.cfg.DLQStream, err)
+	}
+
+	slog.ErrorContext(ctx, "message sent to DLQ",
+		"final_error", errMsg,
+		"dlq_stream", c.cfg.DLQStream)
+	return nil
 }
 
 func ParseMessage(msg redis.XMessage) (Message, error) {

@@ -28,7 +28,7 @@ type Discussion struct {
 	Type           DiscussionType    `json:"type"`
 	Author         string            `json:"author"`
 	Body           string            `json:"body"`
-	Category       GapCategory       `json:"category,omitempty"`
+	Category       string            `json:"category,omitempty"`
 	Severity       GapSeverity       `json:"severity,omitempty"`
 	Status         DiscussionStatus  `json:"status"`
 	AskedAt        time.Time         `json:"asked_at"`

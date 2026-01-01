@@ -43,7 +43,7 @@ type CodeSource struct {
 	Kind     string `json:"kind,omitempty"`  // function, struct, interface, etc.
 }
 
-// CodeFinding represents the Retriever's understanding of code context.
+// CodeFinding represents the ExploreAgent's understanding of code context.
 // Intentionally minimal: prose synthesis + evidence sources.
 // The consumer (Gap Detector) is an LLM that can read natural language.
 type CodeFinding struct {

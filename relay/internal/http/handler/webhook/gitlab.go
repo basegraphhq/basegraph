@@ -11,7 +11,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
+	"go.opentelemetry.io/otel/trace"
 
+	"basegraph.app/relay/common/logger"
 	"basegraph.app/relay/internal/mapper"
 	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/service"
@@ -34,12 +36,22 @@ func NewGitLabWebhookHandler(credentialService service.IntegrationCredentialServ
 func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 	ctx := c.Request.Context()
 
+	// Enrich context with component for all logs in this handler
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		Component: "relay.http.webhook.gitlab",
+	})
+
 	integrationIDStr := c.Param("integration_id")
 	integrationID, err := strconv.ParseInt(integrationIDStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid integration id"})
 		return
 	}
+
+	// Add integration_id to context for subsequent logs
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		IntegrationID: &integrationID,
+	})
 
 	secretHeader := c.GetHeader("X-Gitlab-Token")
 	if secretHeader == "" {
@@ -65,7 +77,7 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 		return
 	}
 
-	slog.InfoContext(ctx, "received gitlab webhook", "body", bodyMap)
+	slog.DebugContext(ctx, "received gitlab webhook", "body", bodyMap)
 
 	var payload gitlabWebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
@@ -79,7 +91,6 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 		var wikiEvent gitlab.WikiPageEvent
 		if err := json.Unmarshal(body, &wikiEvent); err == nil {
 			slog.InfoContext(ctx, "gitlab wiki webhook received",
-				"integration_id", integrationID,
 				"object_kind", payload.ObjectKind,
 				"action", wikiEvent.ObjectAttributes.Action,
 				"title", wikiEvent.ObjectAttributes.Title,
@@ -105,7 +116,6 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 	if err != nil {
 		slog.WarnContext(ctx, "unknown gitlab event type, ignoring",
 			"error", err,
-			"integration_id", integrationID,
 			"object_kind", payload.ObjectKind,
 		)
 		c.JSON(http.StatusOK, gin.H{"status": "ok", "message": "event type not supported"})
@@ -116,7 +126,6 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to process gitlab event",
 			"error", err,
-			"integration_id", integrationID,
 			"canonical_event_type", canonicalEventType,
 		)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process event"})
@@ -125,7 +134,6 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 
 	if !result.Engaged {
 		slog.InfoContext(ctx, "gitlab webhook received but not engaged",
-			"integration_id", integrationID,
 			"canonical_event_type", canonicalEventType,
 			"object_kind", payload.ObjectKind,
 		)
@@ -134,7 +142,6 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 	}
 
 	slog.InfoContext(ctx, "gitlab webhook processed",
-		"integration_id", integrationID,
 		"canonical_event_type", canonicalEventType,
 		"object_kind", payload.ObjectKind,
 		"object_id", payload.ObjectAttributes.ID,
@@ -167,6 +174,13 @@ func (h *GitLabWebhookHandler) processEvent(ctx context.Context, integrationID i
 		issueBody = payload.Issue.Description
 	}
 
+	// Extract trace ID from OTel span (set by otelgin middleware) for propagation to worker
+	var traceID *string
+	if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
+		tid := span.SpanContext().TraceID().String()
+		traceID = &tid
+	}
+
 	params := service.EventIngestParams{
 		IntegrationID:       integrationID,
 		ExternalIssueID:     strconv.FormatInt(externalIssueID, 10),
@@ -179,6 +193,7 @@ func (h *GitLabWebhookHandler) processEvent(ctx context.Context, integrationID i
 		TriggeredByUsername: payload.User.Username,
 		EventType:           string(canonicalEventType),
 		Payload:             body,
+		TraceID:             traceID,
 	}
 
 	return h.eventIngest.Ingest(ctx, params)

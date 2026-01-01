@@ -27,7 +27,7 @@ type Client interface {
 	IngestEdges(ctx context.Context, collection string, edges []Edge) error
 	TruncateCollections(ctx context.Context) error
 
-	// Read operations (for retriever)
+	// Read operations (for explore agent)
 	GetCallers(ctx context.Context, qname string, depth int) ([]GraphNode, error)
 	GetCallees(ctx context.Context, qname string, depth int) ([]GraphNode, error)
 	GetChildren(ctx context.Context, qname string) ([]GraphNode, error)
