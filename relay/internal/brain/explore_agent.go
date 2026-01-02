@@ -16,11 +16,11 @@ import (
 )
 
 const (
-	exploreTimeout    = 5 * time.Minute
-	doomLoopThreshold = 3     // Stop if same tool called 3 times with identical args
-	maxParallelTools  = 4     // Limit concurrent tool executions
-	maxIterations     = 6     // Force synthesis after this many iterations
-	maxContextTokens  = 30000 // Token limit - keep exploration focused
+	exploreTimeout    = 9 * time.Minute
+	doomLoopThreshold = 3      // Stop if same tool called 3 times with identical args
+	maxParallelTools  = 4      // Limit concurrent tool executions
+	maxIterations     = 50     // Force synthesis after this many iterations
+	maxContextTokens  = 100000 // Token limit - keep exploration focused
 )
 
 // ExploreAgent is a sub-agent that explores the codebase.
