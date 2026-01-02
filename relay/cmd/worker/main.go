@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"runtime/debug"
+	"sync"
 	"syscall"
 	"time"
 
@@ -56,7 +57,6 @@ func main() {
 		slog.ErrorContext(ctx, "failed to connect to database", "error", err)
 		os.Exit(1)
 	}
-	defer database.Close()
 	slog.InfoContext(ctx, "database connected")
 
 	redisOpts, err := redis.ParseURL(cfg.Pipeline.RedisURL)
@@ -70,7 +70,6 @@ func main() {
 		slog.ErrorContext(ctx, "failed to connect to redis", "error", err)
 		os.Exit(1)
 	}
-	defer redisClient.Close()
 	slog.InfoContext(ctx, "redis connected", "stream", cfg.Pipeline.RedisStream)
 
 	consumer, err := queue.NewRedisConsumer(redisClient, queue.ConsumerConfig{
@@ -181,8 +180,11 @@ func main() {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
+	var wg sync.WaitGroup
+	wg.Add(1)
+
 	go reclaimer.Run(ctx)
-	go runLoop(ctx, consumer, processMessage)
+	go runLoop(ctx, &wg, consumer, processMessage)
 
 	slog.InfoContext(ctx, "worker running")
 
@@ -190,13 +192,47 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 
-	slog.InfoContext(ctx, "shutting down...")
+	slog.InfoContext(ctx, "shutdown signal received, initiating graceful shutdown...")
+
+	// Cancel context to signal all goroutines to stop
 	cancel()
-	reclaimer.Stop()
+
+	// Wait for in-flight work to complete with timeout
+	shutdownComplete := make(chan struct{})
+	go func() {
+		reclaimer.Stop()
+		wg.Wait()
+		close(shutdownComplete)
+	}()
+
+	shutdownTimeout := 30 * time.Second
+	select {
+	case <-shutdownComplete:
+		slog.InfoContext(ctx, "graceful shutdown completed")
+	case <-time.After(shutdownTimeout):
+		slog.WarnContext(ctx, "shutdown timeout exceeded, forcing exit", "timeout", shutdownTimeout)
+	}
+
+	// Close connections explicitly (defers will also run, but explicit close provides better logging)
+	slog.InfoContext(ctx, "closing database connection")
+	database.Close()
+
+	slog.InfoContext(ctx, "closing redis connection")
+	if err := redisClient.Close(); err != nil {
+		slog.ErrorContext(ctx, "redis close error", "error", err)
+	}
+
+	slog.InfoContext(ctx, "closing arangodb connection")
+	if err := arangoClient.Close(); err != nil {
+		slog.ErrorContext(ctx, "arangodb close error", "error", err)
+	}
+
 	slog.InfoContext(ctx, "shutdown complete")
 }
 
-func runLoop(ctx context.Context, consumer *queue.RedisConsumer, process queue.MessageProcessor) {
+func runLoop(ctx context.Context, wg *sync.WaitGroup, consumer *queue.RedisConsumer, process queue.MessageProcessor) {
+	defer wg.Done()
+
 	ctx = logger.WithLogFields(ctx, logger.LogFields{
 		Component: "relay.worker.loop",
 	})
@@ -220,6 +256,12 @@ func runLoop(ctx context.Context, consumer *queue.RedisConsumer, process queue.M
 			}
 
 			for _, msg := range messages {
+				// Check for shutdown before processing each message
+				if ctx.Err() != nil {
+					slog.InfoContext(ctx, "shutdown requested, stopping message processing")
+					return
+				}
+
 				// Create message-specific context with trace propagation
 				msgCtx, endSpan := createMessageContext(ctx, msg)
 
