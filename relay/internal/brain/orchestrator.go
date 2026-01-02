@@ -52,13 +52,14 @@ type OrchestratorConfig struct {
 }
 
 type Orchestrator struct {
-	cfg            OrchestratorConfig
-	planner        *Planner
-	contextBuilder *contextBuilder
-	issues         store.IssueStore
-	gaps           store.GapStore
-	eventLogs      store.EventLogStore
-	issueTrackers  map[model.Provider]issue_tracker.IssueTrackerService
+	cfg             OrchestratorConfig
+	planner         *Planner
+	contextBuilder  *contextBuilder
+	actionValidator ActionValidator
+	issues          store.IssueStore
+	gaps            store.GapStore
+	eventLogs       store.EventLogStore
+	issueTrackers   map[model.Provider]issue_tracker.IssueTrackerService
 }
 
 func NewOrchestrator(
@@ -77,19 +78,21 @@ func NewOrchestrator(
 	explore := NewExploreAgent(agentClient, tools, cfg.ModulePath)
 	planner := NewPlanner(agentClient, explore)
 	ctxBuilder := NewContextBuilder(integrations, configs, learnings)
+	validator := NewActionValidator(gaps)
 
 	slog.InfoContext(context.Background(), "orchestrator initialized",
 		"repo_root", cfg.RepoRoot,
 		"module_path", cfg.ModulePath)
 
 	return &Orchestrator{
-		cfg:            cfg,
-		planner:        planner,
-		contextBuilder: ctxBuilder,
-		issues:         issues,
-		gaps:           gaps,
-		eventLogs:      eventLogs,
-		issueTrackers:  issueTrackers,
+		cfg:             cfg,
+		planner:         planner,
+		contextBuilder:  ctxBuilder,
+		actionValidator: validator,
+		issues:          issues,
+		gaps:            gaps,
+		eventLogs:       eventLogs,
+		issueTrackers:   issueTrackers,
 	}
 }
 
@@ -169,6 +172,16 @@ func (o *Orchestrator) HandleEngagement(ctx context.Context, input EngagementInp
 		"reasoning", logger.Truncate(output.Reasoning, 200))
 
 	if len(output.Actions) > 0 {
+		// Validate actions before execution to catch LLM output errors early
+		validationInput := SubmitActionsInput{
+			Actions:   output.Actions,
+			Reasoning: output.Reasoning,
+		}
+		if err := o.actionValidator.Validate(ctx, *issue, validationInput); err != nil {
+			slog.ErrorContext(ctx, "action validation failed", "error", err)
+			return NewFatalError(fmt.Errorf("validating actions: %w", err))
+		}
+
 		tracker, ok := o.issueTrackers[issue.Provider]
 		if !ok {
 			return NewFatalError(fmt.Errorf("no issue tracker for provider: %s", issue.Provider))
