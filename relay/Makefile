@@ -1,4 +1,8 @@
-.PHONY: build build-server build-worker run-server run-worker test test-unit test-bdd test-integration clean sqlc-generate migrate-up migrate-down format lint install-tools reindex-codegraph reset reset-redis reset-db
+.PHONY: build build-server build-worker run-server run-worker test test-unit test-bdd test-integration clean sqlc-generate migrate-up migrate-down format lint install-tools reindex-codegraph reset reset-redis reset-db tidy
+
+tidy:
+	go mod tidy
+	go mod vendor
 
 # Build binaries
 build: build-server build-worker
