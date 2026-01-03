@@ -20,6 +20,7 @@ type contextBuilder struct {
 	integrations store.IntegrationStore
 	configs      store.IntegrationConfigStore
 	learnings    store.LearningStore
+	gaps         store.GapStore
 }
 
 // NewContextBuilder creates a ContextBuilder with required store dependencies.
@@ -27,11 +28,13 @@ func NewContextBuilder(
 	integrations store.IntegrationStore,
 	configs store.IntegrationConfigStore,
 	learnings store.LearningStore,
+	gaps store.GapStore,
 ) *contextBuilder {
 	return &contextBuilder{
 		integrations: integrations,
 		configs:      configs,
 		learnings:    learnings,
+		gaps:         gaps,
 	}
 }
 
@@ -51,6 +54,12 @@ func (b *contextBuilder) BuildPlannerMessages(ctx context.Context, issue model.I
 		return nil, fmt.Errorf("fetching learnings: %w", err)
 	}
 
+	// Fetch open gaps for this issue
+	gaps, err := b.fetchOpenGaps(ctx, issue.ID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching open gaps: %w", err)
+	}
+
 	messages := make([]llm.Message, 0, 3+len(issue.Discussions))
 
 	// Message 1: System prompt with self-identity
@@ -59,10 +68,10 @@ func (b *contextBuilder) BuildPlannerMessages(ctx context.Context, issue model.I
 		Content: b.buildSystemPrompt(relayUsername),
 	})
 
-	// Message 2: Context dump (issue metadata, participants, learnings, findings)
+	// Message 2: Context dump (issue metadata, participants, learnings, gaps, findings)
 	messages = append(messages, llm.Message{
 		Role:    "user",
-		Content: b.buildContextDump(issue, learnings, triggerThreadID),
+		Content: b.buildContextDump(issue, learnings, gaps, triggerThreadID),
 	})
 
 	// Messages 3+: Discussion history as conversation
@@ -116,6 +125,15 @@ func (b *contextBuilder) fetchLearnings(ctx context.Context, integrationID int64
 	return learnings, nil
 }
 
+// fetchOpenGaps retrieves open gaps for the issue.
+func (b *contextBuilder) fetchOpenGaps(ctx context.Context, issueID int64) ([]model.Gap, error) {
+	gaps, err := b.gaps.ListOpenByIssue(ctx, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching open gaps: %w", err)
+	}
+	return gaps, nil
+}
+
 // buildSystemPrompt creates the system message with Relay's identity.
 func (b *contextBuilder) buildSystemPrompt(relayUsername string) string {
 	return fmt.Sprintf(`%s
@@ -125,8 +143,8 @@ func (b *contextBuilder) buildSystemPrompt(relayUsername string) string {
 Your comments appear as @%s. When you see messages from @%s in the discussion history, those are YOUR previous messages.`, plannerSystemPrompt, relayUsername, relayUsername)
 }
 
-// buildContextDump creates the context message with issue metadata, learnings, and findings.
-func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.Learning, triggerThreadID string) string {
+// buildContextDump creates the context message with issue metadata, learnings, gaps, and findings.
+func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.Learning, gaps []model.Gap, triggerThreadID string) string {
 	var sb strings.Builder
 
 	// Issue section
@@ -168,6 +186,11 @@ func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.L
 		sb.WriteString("\n")
 	}
 
+	// Open gaps section
+	if gapsSection := formatGapsSection(gaps); gapsSection != "" {
+		sb.WriteString(gapsSection)
+	}
+
 	// Code findings section
 	if len(issue.CodeFindings) > 0 {
 		sb.WriteString("# Code Findings\n\n")
@@ -190,6 +213,49 @@ func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.L
 		sb.WriteString("# Reply Context\n\n")
 		sb.WriteString(fmt.Sprintf("This engagement was triggered by a message in thread `%s`. ", triggerThreadID))
 		sb.WriteString("Always use `reply_to_id: \"" + triggerThreadID + "\"` to keep the conversation in the same thread.\n\n")
+	}
+
+	return sb.String()
+}
+
+// formatGapsSection creates markdown for open gaps grouped by severity.
+func formatGapsSection(gaps []model.Gap) string {
+	if len(gaps) == 0 {
+		return ""
+	}
+
+	// Group gaps by severity (already ordered by severity from store)
+	bySeverity := make(map[model.GapSeverity][]model.Gap)
+	for _, g := range gaps {
+		bySeverity[g.Severity] = append(bySeverity[g.Severity], g)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# Open Gaps\n\n")
+
+	// Process in severity order: blocking > high > medium > low
+	severityOrder := []model.GapSeverity{
+		model.GapSeverityBlocking,
+		model.GapSeverityHigh,
+		model.GapSeverityMedium,
+		model.GapSeverityLow,
+	}
+
+	for _, sev := range severityOrder {
+		gapsForSev := bySeverity[sev]
+		if len(gapsForSev) == 0 {
+			continue
+		}
+
+		sb.WriteString(fmt.Sprintf("## %s\n\n", strings.ToUpper(string(sev))))
+
+		for i, g := range gapsForSev {
+			sb.WriteString(fmt.Sprintf("%d. [for @%s] %s\n", i+1, g.Respondent, g.Question))
+			if g.Evidence != "" {
+				sb.WriteString(fmt.Sprintf("   Evidence: %s\n", g.Evidence))
+			}
+		}
+		sb.WriteString("\n")
 	}
 
 	return sb.String()

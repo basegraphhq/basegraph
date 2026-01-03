@@ -53,7 +53,7 @@ func newOpenAIClient(cfg Config) (AgentClient, error) {
 func (c *openaiClient) ChatWithTools(ctx context.Context, req AgentRequest) (*AgentResponse, error) {
 	maxTokens := req.MaxTokens
 	if maxTokens == 0 {
-		maxTokens = 8192
+		maxTokens = 16000
 	}
 
 	messages := c.convertMessages(req.Messages)

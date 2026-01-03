@@ -77,7 +77,7 @@ func NewOrchestrator(
 	tools := NewExploreTools(cfg.RepoRoot, arangoDB)
 	explore := NewExploreAgent(agentClient, tools, cfg.ModulePath)
 	planner := NewPlanner(agentClient, explore)
-	ctxBuilder := NewContextBuilder(integrations, configs, learnings)
+	ctxBuilder := NewContextBuilder(integrations, configs, learnings, gaps)
 	validator := NewActionValidator(gaps)
 
 	slog.InfoContext(context.Background(), "orchestrator initialized",
