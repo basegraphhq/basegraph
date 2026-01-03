@@ -13,8 +13,9 @@ import (
 )
 
 type openaiClient struct {
-	client openai.Client
-	model  string
+	client          openai.Client
+	model           string
+	reasoningEffort shared.ReasoningEffort
 }
 
 // newOpenAIClient creates an AgentClient using the OpenAI API.
@@ -31,9 +32,21 @@ func newOpenAIClient(cfg Config) (AgentClient, error) {
 		model = "gpt-4o"
 	}
 
+	// Map our ReasoningEffort to OpenAI's
+	var reasoningEffort shared.ReasoningEffort
+	switch cfg.ReasoningEffort {
+	case ReasoningEffortLow:
+		reasoningEffort = shared.ReasoningEffortLow
+	case ReasoningEffortMedium:
+		reasoningEffort = shared.ReasoningEffortMedium
+	case ReasoningEffortHigh:
+		reasoningEffort = shared.ReasoningEffortHigh
+	}
+
 	return &openaiClient{
-		client: openai.NewClient(opts...),
-		model:  model,
+		client:          openai.NewClient(opts...),
+		model:           model,
+		reasoningEffort: reasoningEffort,
 	}, nil
 }
 
@@ -60,6 +73,11 @@ func (c *openaiClient) ChatWithTools(ctx context.Context, req AgentRequest) (*Ag
 		params.Temperature = openai.Float(*req.Temperature)
 	}
 
+	// Enable reasoning for supported models (gpt-5.1, o1, o3, etc.)
+	if c.reasoningEffort != "" {
+		params.ReasoningEffort = c.reasoningEffort
+	}
+
 	start := time.Now()
 	resp, err := c.client.Chat.Completions.New(ctx, params)
 	if err != nil {
@@ -71,6 +89,7 @@ func (c *openaiClient) ChatWithTools(ctx context.Context, req AgentRequest) (*Ag
 		"duration_ms", time.Since(start).Milliseconds(),
 		"prompt_tokens", resp.Usage.PromptTokens,
 		"completion_tokens", resp.Usage.CompletionTokens,
+		"reasoning_tokens", resp.Usage.CompletionTokensDetails.ReasoningTokens,
 		"finish_reason", resp.Choices[0].FinishReason)
 
 	if len(resp.Choices) == 0 {
@@ -83,6 +102,7 @@ func (c *openaiClient) ChatWithTools(ctx context.Context, req AgentRequest) (*Ag
 		FinishReason:     string(choice.FinishReason),
 		PromptTokens:     int(resp.Usage.PromptTokens),
 		CompletionTokens: int(resp.Usage.CompletionTokens),
+		ReasoningTokens:  int(resp.Usage.CompletionTokensDetails.ReasoningTokens),
 	}
 
 	for _, tc := range choice.Message.ToolCalls {

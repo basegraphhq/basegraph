@@ -16,12 +16,14 @@ import (
 )
 
 const (
-	defaultGrepLimit  = 50  // Max grep matches
-	maxGrepLimit      = 100 // Hard limit
-	defaultReadLines  = 200 // Default lines to read
-	maxReadLines      = 500 // Max lines per read
+	defaultGrepLimit  = 30  // Max grep matches - keep focused
+	maxGrepLimit      = 50  // Hard limit
+	defaultReadLines  = 100 // Default lines to read
+	maxReadLines      = 200 // Max lines per read
+	maxLineLength     = 500 // Truncate long lines
+	maxGlobResults    = 50  // Max files from glob
 	defaultGraphDepth = 1
-	maxGraphDepth     = 3
+	maxGraphDepth     = 2
 )
 
 // GrepParams for the Grep tool.
@@ -169,8 +171,16 @@ func (t *ExploreTools) executeGrep(ctx context.Context, arguments string) (strin
 	out.WriteString(fmt.Sprintf("Found %d matches for '%s':\n\n", len(lines), params.Pattern))
 
 	for _, line := range lines {
+		// Truncate long lines to prevent context bloat
+		if len(line) > maxLineLength {
+			line = line[:maxLineLength] + "..."
+		}
 		out.WriteString(line)
 		out.WriteString("\n")
+	}
+
+	if len(lines) >= limit {
+		out.WriteString(fmt.Sprintf("\n(Results limited to %d. Use a more specific pattern or include filter.)\n", limit))
 	}
 
 	slog.DebugContext(ctx, "grep executed",
@@ -216,13 +226,26 @@ func (t *ExploreTools) executeGlob(ctx context.Context, arguments string) (strin
 			return fmt.Sprintf("No files found matching '%s'", params.Pattern), nil
 		}
 
+		truncated := len(lines) > maxGlobResults
+		if truncated {
+			lines = lines[:maxGlobResults]
+		}
+
 		var out strings.Builder
 		out.WriteString(fmt.Sprintf("Found %d files matching '%s':\n\n", len(lines), params.Pattern))
 		for _, line := range lines {
 			out.WriteString(line)
 			out.WriteString("\n")
 		}
+		if truncated {
+			out.WriteString(fmt.Sprintf("\n(Results limited to %d. Use a more specific pattern.)\n", maxGlobResults))
+		}
 		return out.String(), nil
+	}
+
+	truncated := len(matches) > maxGlobResults
+	if truncated {
+		matches = matches[:maxGlobResults]
 	}
 
 	var out strings.Builder
@@ -233,6 +256,10 @@ func (t *ExploreTools) executeGlob(ctx context.Context, arguments string) (strin
 		rel, _ := filepath.Rel(t.repoRoot, match)
 		out.WriteString(rel)
 		out.WriteString("\n")
+	}
+
+	if truncated {
+		out.WriteString(fmt.Sprintf("\n(Results limited to %d. Use a more specific pattern.)\n", maxGlobResults))
 	}
 
 	slog.DebugContext(ctx, "glob executed",
@@ -300,7 +327,12 @@ func (t *ExploreTools) executeRead(ctx context.Context, arguments string) (strin
 			break
 		}
 
-		out.WriteString(fmt.Sprintf("%4d | %s\n", lineNum, scanner.Text()))
+		line := scanner.Text()
+		// Truncate long lines to prevent context bloat
+		if len(line) > maxLineLength {
+			line = line[:maxLineLength] + "..."
+		}
+		out.WriteString(fmt.Sprintf("%4d | %s\n", lineNum, line))
 		linesRead++
 	}
 
