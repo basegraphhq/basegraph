@@ -63,7 +63,7 @@ Relay behaves like a human teammate. Not too formal, not robotic—just normal d
 | Component | Status | Purpose |
 |-----------|--------|---------|
 | **Planner** | 🔄 Needs update | The brain: retrieves context, spots gaps, asks questions, processes replies |
-| **Retriever** | ✅ Implemented | Sub-agent that explores codebase using tools (grep, glob, read, graph) |
+| **Retriever** | ✅ Implemented | Sub-agent that explores codebase using tools (tree, grep, glob, read, graph) |
 | **SpecGenerator** | 🔜 Stub | Generates Claude Code-style implementation plans (one-shot synthesis) |
 
 SpecGenerator remains separate from Planner because plan generation is a distinct synthesis task with structured output.
@@ -432,7 +432,7 @@ SpecGenerator produces implementation plan (posted as new thread)
 ### Retriever (Sub-agent)
 
 - **Triggered by**: Planner spawns retrievers for specific queries
-- **Tools**: grep, glob, read, graph (ArangoDB queries)
+- **Tools**: tree, grep, glob, read, graph (ArangoDB queries)
 - **Parallel execution**: Up to 6 retrievers, working independently
 - **Lifetime**: Ephemeral—fresh context per query
 

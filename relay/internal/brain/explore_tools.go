@@ -24,6 +24,9 @@ const (
 	maxGlobResults    = 50  // Max files from glob
 	defaultGraphDepth = 1
 	maxGraphDepth     = 3 // Increased from 2 - deeper call chain analysis
+	defaultTreeDepth  = 2
+	maxTreeDepth      = 4
+	maxTreeEntries    = 200 // Prevent token explosion on large repos
 )
 
 // GrepParams for the Grep tool.
@@ -50,6 +53,12 @@ type GraphParams struct {
 	Operation string `json:"operation" jsonschema:"required,enum=callers,enum=callees,enum=implementations,enum=methods,enum=usages,enum=inheritors,description=Graph operation: callers, callees, implementations, methods, usages, inheritors"`
 	Target    string `json:"target" jsonschema:"required,description=Qualified name of the entity to query (e.g. 'basegraph.app/relay/internal/brain.Retriever')"`
 	Depth     int    `json:"depth,omitempty" jsonschema:"description=Traversal depth for callers/callees (default 1, max 3)"`
+}
+
+// TreeParams for the Tree tool.
+type TreeParams struct {
+	Path  string `json:"path,omitempty" jsonschema:"description=Directory to list (default: repo root)"`
+	Depth int    `json:"depth,omitempty" jsonschema:"description=Max depth (default 2, max 4)"`
 }
 
 // ExploreTools provides Grep, Glob, Read, and Graph tools for the ExploreAgent sub-agent.
@@ -170,6 +179,29 @@ WHEN TO USE GRAPH vs GREP:
 Graph queries are faster and more accurate for structural questions.`,
 			Parameters: llm.GenerateSchemaFrom(GraphParams{}),
 		},
+		{
+			Name: "tree",
+			Description: `Show directory structure.
+
+WHEN TO USE:
+- First step when exploring unfamiliar area
+- Before grep/glob to understand where to look
+- When you need to find the right directory
+
+PARAMETERS:
+* path: Directory to list (default: repo root)
+* depth: How deep to go (default 2, max 4)
+
+RETURNS: Tree view of directories and files.
+Directories shown with trailing /, sorted before files.
+Limited to 200 entries. Use path param to focus on specific areas.
+
+EXAMPLE: After tree(path="internal"), you know to grep in "internal/brain/" not "**/*brain*"
+
+EFFICIENCY: Use this BEFORE glob/grep to understand project structure.
+Saves tokens by helping you target searches.`,
+			Parameters: llm.GenerateSchemaFrom(TreeParams{}),
+		},
 	}
 
 	return t
@@ -191,6 +223,8 @@ func (t *ExploreTools) Execute(ctx context.Context, name, arguments string) (str
 		return t.executeRead(ctx, arguments)
 	case "graph":
 		return t.executeGraph(ctx, arguments)
+	case "tree":
+		return t.executeTree(ctx, arguments)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
@@ -499,6 +533,185 @@ func (t *ExploreTools) executeGraph(ctx context.Context, arguments string) (stri
 		"results", len(nodes))
 
 	return out.String(), nil
+}
+
+func (t *ExploreTools) executeTree(ctx context.Context, arguments string) (string, error) {
+	params, err := llm.ParseToolArguments[TreeParams](arguments)
+	if err != nil {
+		return "", fmt.Errorf("parse tree params: %w", err)
+	}
+
+	depth := params.Depth
+	if depth <= 0 {
+		depth = defaultTreeDepth
+	}
+	if depth > maxTreeDepth {
+		depth = maxTreeDepth
+	}
+
+	// Security check: reject absolute paths immediately
+	if params.Path != "" && filepath.IsAbs(params.Path) {
+		return "Error: path outside repository", nil
+	}
+
+	// Resolve path
+	rootPath := t.repoRoot
+	if params.Path != "" {
+		rootPath = filepath.Join(t.repoRoot, params.Path)
+	}
+
+	// Security check: ensure path is within repo root
+	absPath, err := filepath.Abs(rootPath)
+	if err != nil {
+		return fmt.Sprintf("Invalid path: %s", err), nil
+	}
+	absRoot, _ := filepath.Abs(t.repoRoot)
+	// Use filepath.Rel to properly check containment (handles /repo vs /repo-evil)
+	relPath, err := filepath.Rel(absRoot, absPath)
+	if err != nil || strings.HasPrefix(relPath, "..") {
+		return "Error: path outside repository", nil
+	}
+
+	// Check if path exists and is a directory
+	info, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Sprintf("Directory not found: %s", params.Path), nil
+		}
+		return fmt.Sprintf("Cannot access path: %s", err), nil
+	}
+	if !info.IsDir() {
+		return fmt.Sprintf("Not a directory: %s", params.Path), nil
+	}
+
+	// Build tree
+	entries, truncated := t.buildTree(absPath, depth)
+
+	// Determine display path
+	displayPath := params.Path
+	if displayPath == "" {
+		displayPath = "."
+	}
+
+	if len(entries) == 0 {
+		return fmt.Sprintf("Directory is empty: %s", displayPath), nil
+	}
+
+	var out strings.Builder
+	out.WriteString(fmt.Sprintf("%s/\n", displayPath))
+
+	for _, entry := range entries {
+		out.WriteString(entry)
+		out.WriteString("\n")
+	}
+
+	if truncated {
+		out.WriteString(fmt.Sprintf("\n(Truncated at %d entries. Use path param to focus on a subdirectory.)\n", maxTreeEntries))
+	}
+
+	slog.DebugContext(ctx, "tree executed",
+		"path", params.Path,
+		"depth", depth,
+		"entries", len(entries))
+
+	return out.String(), nil
+}
+
+// buildTree recursively builds a tree view of the directory structure.
+// Returns the formatted entries and whether the result was truncated.
+func (t *ExploreTools) buildTree(dirPath string, maxDepth int) ([]string, bool) {
+	var entries []string
+	truncated := false
+
+	var walk func(path string, depth int, prefix string)
+	walk = func(path string, depth int, prefix string) {
+		if depth > maxDepth || len(entries) >= maxTreeEntries {
+			if len(entries) >= maxTreeEntries {
+				truncated = true
+			}
+			return
+		}
+
+		items, err := os.ReadDir(path)
+		if err != nil {
+			return
+		}
+
+		// Separate dirs and files, filter excluded directories
+		var dirs, files []os.DirEntry
+		for _, item := range items {
+			if item.IsDir() {
+				if !isExcludedDir(item.Name()) {
+					dirs = append(dirs, item)
+				}
+			} else {
+				files = append(files, item)
+			}
+		}
+
+		// Process directories first (sorted), then files (sorted)
+		for i, dir := range dirs {
+			if len(entries) >= maxTreeEntries {
+				truncated = true
+				return
+			}
+
+			isLast := i == len(dirs)-1 && len(files) == 0
+			connector := "├── "
+			if isLast {
+				connector = "└── "
+			}
+
+			entries = append(entries, prefix+connector+dir.Name()+"/")
+
+			// Recurse into subdirectory
+			newPrefix := prefix + "│   "
+			if isLast {
+				newPrefix = prefix + "    "
+			}
+			walk(filepath.Join(path, dir.Name()), depth+1, newPrefix)
+		}
+
+		for i, file := range files {
+			if len(entries) >= maxTreeEntries {
+				truncated = true
+				return
+			}
+
+			isLast := i == len(files)-1
+			connector := "├── "
+			if isLast {
+				connector = "└── "
+			}
+
+			entries = append(entries, prefix+connector+file.Name())
+		}
+	}
+
+	walk(dirPath, 1, "")
+	return entries, truncated
+}
+
+// excludedDirs contains directories to skip in tree output.
+var excludedDirs = map[string]bool{
+	".git":         true,
+	"node_modules": true,
+	"vendor":       true,
+	"__pycache__":  true,
+	".next":        true,
+	"dist":         true,
+	"build":        true,
+	".idea":        true,
+	".vscode":      true,
+	".cache":       true,
+	"coverage":     true,
+	".turbo":       true,
+	"target":       true, // Rust
+}
+
+// isExcludedDir returns true for directories that should be excluded from tree output.
+func isExcludedDir(name string) bool {
+	return excludedDirs[name]
 }
 
 func capitalize(s string) string {

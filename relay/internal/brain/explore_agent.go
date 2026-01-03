@@ -524,10 +524,7 @@ func (e *ExploreAgent) systemPrompt() string {
 
 ## Tools
 
-**grep(pattern, include?)** - Search file contents with regex
-**glob(pattern)** - Find files by path pattern
-**read(file, start_line?, num_lines?)** - Read file contents
-**graph(operation, target)** - Query code relationships
+Use the right tool for the job. Each tool has detailed usage guidance in its description.
 
 ## Graph Qualified Names
 
