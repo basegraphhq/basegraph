@@ -27,6 +27,7 @@ Functions, methods, and async functions.
   "name": "create",
   "kind": "function",
   "doc": "Create a new user.",
+  "signature": "(self, name: str, email: str) -> User",
   "filepath": "services/user.py",
   "namespace": "myproject.services.user",
   "language": "python",
@@ -211,6 +212,79 @@ Function/class is decorated (Python-specific).
   ]
 }
 ```
+
+---
+
+## Indexes
+
+Performance indexes for symbol discovery operations:
+
+- `idx_filepath` on `functions`, `types`, `members` - for `symbols(file)` queries
+- `idx_name` on `functions`, `types`, `members` - for `search(name)` queries
+
+---
+
+## Symbol Discovery Operations
+
+### Get symbols in a file
+Returns all functions, types, and members defined in a file, sorted by line position.
+
+```aql
+FOR doc IN UNION(
+  (FOR f IN functions FILTER f.filepath == @filepath RETURN f),
+  (FOR t IN types FILTER t.filepath == @filepath RETURN t),
+  (FOR m IN members FILTER m.filepath == @filepath RETURN m)
+)
+SORT doc.pos ASC
+RETURN {
+  qname: doc.qname,
+  name: doc.name,
+  kind: doc.is_method ? "method" : doc.kind,
+  signature: doc.signature,
+  pos: doc.pos
+}
+```
+
+**Use case:** Agent knows `internal/brain/planner.go` from grep, needs qnames for relationship queries.
+
+### Search symbols by name pattern
+Finds symbols matching a glob pattern (`*Issue*`, `Plan*`) with optional filters.
+
+```aql
+LET all_results = (
+  FOR doc IN UNION(
+    (FOR f IN functions RETURN f),
+    (FOR t IN types RETURN t),
+    (FOR m IN members RETURN m)
+  )
+  FILTER LIKE(doc.name, @pattern, true)
+  RETURN doc
+)
+LET total = LENGTH(all_results)
+LET limited = (
+  FOR doc IN all_results
+  SORT doc.filepath, doc.pos
+  LIMIT 50
+  RETURN {
+    qname: doc.qname,
+    name: doc.name,
+    kind: doc.is_method ? "method" : doc.kind,
+    signature: doc.signature,
+    filepath: doc.filepath,
+    pos: doc.pos
+  }
+)
+RETURN { results: limited, total: total }
+```
+
+**Use case:** Find all types named "Issue" or all functions starting with "Plan".
+
+**Filters:**
+- `kind`: `function`, `method`, `struct`, `interface`
+- `file`: Filter by filepath (supports suffix matching for relative paths)
+- `namespace`: Filter by module/package path
+
+**Kind mapping:** Methods are stored as `kind="function"` with `is_method=true`, but returned as `kind="method"` for clarity.
 
 ---
 
