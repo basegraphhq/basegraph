@@ -19,11 +19,11 @@ const (
 	defaultGrepLimit  = 30  // Max grep matches - keep focused
 	maxGrepLimit      = 50  // Hard limit
 	defaultReadLines  = 100 // Default lines to read
-	maxReadLines      = 200 // Max lines per read
+	maxReadLines      = 300 // Increased from 200 - let model read more when needed
 	maxLineLength     = 500 // Truncate long lines
 	maxGlobResults    = 50  // Max files from glob
 	defaultGraphDepth = 1
-	maxGraphDepth     = 2
+	maxGraphDepth     = 3 // Increased from 2 - deeper call chain analysis
 )
 
 // GrepParams for the Grep tool.
@@ -42,7 +42,7 @@ type GlobParams struct {
 type ReadParams struct {
 	File      string `json:"file" jsonschema:"required,description=File path to read"`
 	StartLine int    `json:"start_line,omitempty" jsonschema:"description=Line to start from (1-indexed, default 1)"`
-	NumLines  int    `json:"num_lines,omitempty" jsonschema:"description=Number of lines to read (default 200, max 500)"`
+	NumLines  int    `json:"num_lines,omitempty" jsonschema:"description=Number of lines to read (default 100, max 300)"`
 }
 
 // GraphParams for the Graph tool.
@@ -61,32 +61,114 @@ type ExploreTools struct {
 
 // NewExploreTools creates tools for code exploration.
 // repoRoot is the root directory of the repository to search.
+// modulePath is the Go module path for qualified name examples in tool descriptions.
 func NewExploreTools(repoRoot string, arango arangodb.Client) *ExploreTools {
 	t := &ExploreTools{
 		repoRoot: repoRoot,
 		arango:   arango,
 	}
 
+	// Enhanced tool descriptions following Anthropic's guidance:
+	// "We put a lot of effort into the descriptions and specs for these tools...
+	// We believe that much more attention should go into designing tool interfaces
+	// for models, in the same way that attention goes into designing tool interfaces for humans."
+
 	t.definitions = []llm.Tool{
 		{
-			Name:        "grep",
-			Description: "Search file contents using regex. Returns file:line matches with context.",
-			Parameters:  llm.GenerateSchemaFrom(GrepParams{}),
+			Name: "grep",
+			Description: `Search file contents using regex pattern.
+
+WHEN TO USE:
+- Finding where something is defined or used
+- Locating specific strings, function names, error messages
+- Discovering patterns across the codebase
+
+USAGE TIPS:
+* Be specific - if you get >30 results, your pattern is too broad
+* Use 'include' to filter: include="*.go" for Go, include="*.ts" for TypeScript
+* Regex supported: "func.*Handler", "error.*timeout", etc.
+* Case-sensitive by default
+
+RETURNS: file:line matches sorted by modification time (most recent first)
+Each line truncated at 500 chars. Shows match context.
+
+COMMON PATTERNS:
+- Find function: "func\s+FunctionName"
+- Find struct: "type\s+StructName\s+struct"
+- Find interface impl: "func\s+\([^)]+\)\s+MethodName\("
+- Find imports: "import.*packagename"`,
+			Parameters: llm.GenerateSchemaFrom(GrepParams{}),
 		},
 		{
-			Name:        "glob",
-			Description: "Find files by path pattern. Use to discover file structure.",
-			Parameters:  llm.GenerateSchemaFrom(GlobParams{}),
+			Name: "glob",
+			Description: `Find files by path pattern.
+
+WHEN TO USE:
+- Discovering file structure
+- Finding all files of a type
+- Locating files by naming convention
+
+PATTERN SYNTAX:
+* "**/*.go" - all Go files recursively
+* "internal/**/*.go" - Go files under internal/
+* "**/test_*.py" - test files
+* "cmd/*/main.go" - main files in cmd subdirs
+
+RETURNS: File paths sorted by modification time (most recent first)
+Limited to 50 results. Use more specific patterns if truncated.`,
+			Parameters: llm.GenerateSchemaFrom(GlobParams{}),
 		},
 		{
-			Name:        "read",
-			Description: "Read file contents. Use after grep/glob to see full code.",
-			Parameters:  llm.GenerateSchemaFrom(ReadParams{}),
+			Name: "read",
+			Description: `Read file contents with line numbers.
+
+WHEN TO USE:
+- After grep/glob found a relevant file
+- Understanding implementation details
+- Reading specific functions or sections
+
+PARAMETERS:
+* file: Path to file (required)
+* start_line: Line to start from (1-indexed, default 1)
+* num_lines: Lines to read (default 100, max 300)
+
+EFFICIENCY TIP: Use start_line and num_lines to read only what you need.
+If grep found a match at line 150, read lines 140-180, not the whole file.
+
+RETURNS: Lines with 4-digit line numbers. Long lines truncated at 500 chars.`,
+			Parameters: llm.GenerateSchemaFrom(ReadParams{}),
 		},
 		{
-			Name:        "graph",
-			Description: "Query code relationships (callers, callees, implementations, methods, usages, inheritors). Use to find who calls a function, what implements an interface, or trace call chains. Requires a qualified name (qname) - see system prompt for format.",
-			Parameters:  llm.GenerateSchemaFrom(GraphParams{}),
+			Name: "graph",
+			Description: `Query code structure relationships from the semantic graph.
+
+THIS IS POWERFUL - use it to understand code relationships without grepping.
+
+OPERATIONS:
+* callers(target, depth): Who calls this function? (depth 1-3)
+* callees(target, depth): What does this function call? (depth 1-3)
+* implementations(target): What types implement this interface?
+* methods(target): What methods does this type have?
+* usages(target): Where is this type/function referenced?
+* inheritors(target): What interfaces embed this interface?
+
+QUALIFIED NAME FORMAT:
+Pattern: {module}/{package}.{Type}.{Method}
+
+EXAMPLES:
+* Function: basegraph.app/relay/internal/brain.Planner.Plan
+* Method: basegraph.app/relay/internal/brain.ExploreAgent.Explore
+* Type: basegraph.app/relay/internal/brain.Planner
+* Interface: basegraph.app/relay/common/llm.AgentClient
+
+WHEN TO USE GRAPH vs GREP:
+* "What calls this function?" → graph(callers, ...)
+* "What implements this interface?" → graph(implementations, ...)
+* "Where is this string literal?" → grep
+* "What files match this pattern?" → glob
+
+Graph queries are faster and more accurate for structural questions.`,
+			Parameters: llm.GenerateSchemaFrom(GraphParams{}),
 		},
 	}
 

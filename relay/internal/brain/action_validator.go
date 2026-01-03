@@ -44,6 +44,11 @@ func (v *actionValidator) Validate(ctx context.Context, issue model.Issue, input
 		return ErrEmptyActions
 	}
 
+	// Track gap IDs that will be resolved by earlier actions in this batch.
+	// This allows ready_for_plan to pass validation when blocking gaps
+	// are resolved in the same batch.
+	pendingResolutions := make(map[string]struct{})
+
 	for i, action := range input.Actions {
 		var err error
 		switch action.Type {
@@ -53,8 +58,15 @@ func (v *actionValidator) Validate(ctx context.Context, issue model.Issue, input
 			err = v.validateUpdateFindings(action)
 		case ActionTypeUpdateGaps:
 			err = v.validateUpdateGaps(ctx, issue, action)
+			if err == nil {
+				// Track resolved gaps for later ready_for_plan validation
+				data, _ := ParseActionData[UpdateGapsAction](action)
+				for _, id := range data.Resolve {
+					pendingResolutions[id] = struct{}{}
+				}
+			}
 		case ActionTypeReadyForPlan:
-			err = v.validateReadyForPlan(ctx, issue, action)
+			err = v.validateReadyForPlan(ctx, issue, action, pendingResolutions)
 		default:
 			err = fmt.Errorf("%w: %s", ErrUnknownActionType, action.Type)
 		}
@@ -152,18 +164,32 @@ func (v *actionValidator) validateUpdateGaps(ctx context.Context, issue model.Is
 	return nil
 }
 
-func (v *actionValidator) validateReadyForPlan(ctx context.Context, issue model.Issue, action Action) error {
+func (v *actionValidator) validateReadyForPlan(ctx context.Context, issue model.Issue, action Action, pendingResolutions map[string]struct{}) error {
 	data, err := ParseActionData[ReadyForSpecAction](action)
 	if err != nil {
 		return err
 	}
 
-	blockingCount, err := v.gaps.CountOpenBlocking(ctx, issue.ID)
+	// Get all open gaps and filter for blocking severity
+	openGaps, err := v.gaps.ListOpenByIssue(ctx, issue.ID)
 	if err != nil {
 		return fmt.Errorf("checking blocking gaps: %w", err)
 	}
-	if blockingCount > 0 {
-		return fmt.Errorf("%w: %d blocking", ErrOpenBlockingGaps, blockingCount)
+
+	// Count blocking gaps that won't be resolved by earlier actions in this batch
+	remainingBlocking := 0
+	for _, gap := range openGaps {
+		if gap.Severity != model.GapSeverityBlocking {
+			continue
+		}
+		idStr := strconv.FormatInt(gap.ID, 10)
+		if _, willBeResolved := pendingResolutions[idStr]; !willBeResolved {
+			remainingBlocking++
+		}
+	}
+
+	if remainingBlocking > 0 {
+		return fmt.Errorf("%w: %d blocking", ErrOpenBlockingGaps, remainingBlocking)
 	}
 
 	hasContext := len(data.ResolvedGaps) > 0 || len(data.RelevantFindings) > 0

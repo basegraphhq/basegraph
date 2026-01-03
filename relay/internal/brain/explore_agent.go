@@ -16,12 +16,75 @@ import (
 )
 
 const (
-	exploreTimeout    = 9 * time.Minute
-	doomLoopThreshold = 3      // Stop if same tool called 3 times with identical args
-	maxParallelTools  = 4      // Limit concurrent tool executions
-	maxIterations     = 50     // Force synthesis after this many iterations
-	maxContextTokens  = 100000 // Token limit - keep exploration focused
+	exploreTimeout    = 12 * time.Minute // Increased for thorough explorations
+	doomLoopThreshold = 3                // Stop if same tool called 3 times with identical args
+	maxParallelTools  = 4                // Limit concurrent tool executions
 )
+
+// Thoroughness levels control how deep the explore agent searches.
+type Thoroughness string
+
+const (
+	ThoroughnessQuick  Thoroughness = "quick"    // Fast lookup, ~15 iterations, ~20k tokens
+	ThoughnessMedium   Thoroughness = "medium"   // Balanced exploration, ~40 iterations, ~60k tokens
+	ThoughnessThorough Thoroughness = "thorough" // Comprehensive search, ~100 iterations, ~120k tokens
+)
+
+// ThoroughnessConfig defines limits and behavior for each thoroughness level.
+// Following Anthropic's guidance: give model autonomy, use soft limits to encourage
+// synthesis rather than hard cutoffs that reduce quality.
+type ThoroughnessConfig struct {
+	MaxIterations   int // Hard ceiling on iterations
+	SoftTokenTarget int // Encourage synthesis around this point (80% triggers gentle nudge)
+	HardTokenLimit  int // Safety ceiling (forces synthesis)
+}
+
+func thoroughnessConfig(t Thoroughness) ThoroughnessConfig {
+	switch t {
+	case ThoroughnessQuick:
+		return ThoroughnessConfig{
+			MaxIterations:   15,
+			SoftTokenTarget: 20000,
+			HardTokenLimit:  40000,
+		}
+	case ThoughnessMedium:
+		return ThoroughnessConfig{
+			MaxIterations:   40,
+			SoftTokenTarget: 60000,
+			HardTokenLimit:  100000,
+		}
+	case ThoughnessThorough:
+		return ThoroughnessConfig{
+			MaxIterations:   100,
+			SoftTokenTarget: 120000,
+			HardTokenLimit:  150000,
+		}
+	default:
+		return thoroughnessConfig(ThoughnessMedium)
+	}
+}
+
+// ExploreMetrics captures structured data about an exploration session for analysis.
+type ExploreMetrics struct {
+	SessionID         string         `json:"session_id"`
+	Query             string         `json:"query"`
+	Thoroughness      string         `json:"thoroughness"`
+	StartTime         time.Time      `json:"start_time"`
+	EndTime           time.Time      `json:"end_time"`
+	DurationMs        int64          `json:"duration_ms"`
+	Iterations        int            `json:"iterations"`
+	TotalTokens       int            `json:"total_tokens"`
+	PromptTokens      int            `json:"prompt_tokens"`
+	CompletionTokens  int            `json:"completion_tokens"`
+	ToolCalls         map[string]int `json:"tool_calls"`
+	Confidence        string         `json:"confidence"`
+	HitSoftLimit      bool           `json:"hit_soft_limit"`
+	HitHardLimit      bool           `json:"hit_hard_limit"`
+	HitIterLimit      bool           `json:"hit_iteration_limit"`
+	DoomLoopDetected  bool           `json:"doom_loop_detected"`
+	FinalReportLen    int            `json:"final_report_length"`
+	TerminationReason string         `json:"termination_reason"`
+}
 
 // ExploreAgent is a sub-agent that explores the codebase.
 // Each Explore() call gets a fresh context window (disposable).
@@ -57,10 +120,19 @@ type toolResult struct {
 
 // Explore explores the codebase to answer a question.
 // Returns a prose report with code snippets for another LLM to read.
-// The report is compressed context - the ExploreAgent may read 50k tokens of code
-// but returns a curated 2-3k token summary.
-func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error) {
+// Thoroughness controls search depth: quick (first match), medium (few locations), thorough (comprehensive).
+func (e *ExploreAgent) Explore(ctx context.Context, query string, thoroughness Thoroughness) (string, error) {
+	config := thoroughnessConfig(thoroughness)
 	start := time.Now()
+
+	// Initialize metrics for structured logging
+	metrics := ExploreMetrics{
+		SessionID:    time.Now().Format("20060102-150405.000"),
+		Query:        query,
+		Thoroughness: string(thoroughness),
+		StartTime:    start,
+		ToolCalls:    make(map[string]int),
+	}
 
 	// Enrich context with explorer component
 	ctx = logger.WithLogFields(ctx, logger.LogFields{
@@ -76,92 +148,109 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error
 	}
 
 	// Start a new session for this explore query and prepare debug logging.
-	sessionID := time.Now().Format("2006-01-02 15:04:05")
 	var debugLog strings.Builder
-	debugLog.WriteString(fmt.Sprintf("=== ExploreAgent session started at %s ===\n", sessionID))
-	debugLog.WriteString(fmt.Sprintf("User query: %s\n\n", query))
+	debugLog.WriteString(fmt.Sprintf("=== ExploreAgent session started at %s ===\n", metrics.SessionID))
+	debugLog.WriteString(fmt.Sprintf("Thoroughness: %s (max_iter=%d, soft_target=%d, hard_limit=%d)\n",
+		thoroughness, config.MaxIterations, config.SoftTokenTarget, config.HardTokenLimit))
+	debugLog.WriteString(fmt.Sprintf("Query: %s\n\n", query))
 
 	slog.DebugContext(ctx, "explore agent starting",
-		"query", logger.Truncate(query, 100))
+		"query", logger.Truncate(query, 100),
+		"thoroughness", string(thoroughness))
 
 	// Track token usage and iterations
 	totalPromptTokens := 0
 	totalCompletionTokens := 0
 	iterations := 0
+	softNudgeSent := false
+	selfAssessmentDone := false
+	var pendingReport string // Holds the report while waiting for self-assessment
 
 	defer func() {
+		metrics.EndTime = time.Now()
+		metrics.DurationMs = time.Since(start).Milliseconds()
+		metrics.Iterations = iterations
+		metrics.TotalTokens = totalPromptTokens + totalCompletionTokens
+		metrics.PromptTokens = totalPromptTokens
+		metrics.CompletionTokens = totalCompletionTokens
+		metrics.FinalReportLen = debugLog.Len()
+
 		slog.InfoContext(ctx, "explore agent completed",
 			"query", logger.Truncate(query, 50),
-			"total_duration_ms", time.Since(start).Milliseconds(),
+			"thoroughness", string(thoroughness),
+			"total_duration_ms", metrics.DurationMs,
 			"iterations", iterations,
 			"total_prompt_tokens", totalPromptTokens,
 			"total_completion_tokens", totalCompletionTokens,
-			"total_tokens", totalPromptTokens+totalCompletionTokens,
-			"report_length", len(debugLog.String()))
+			"total_tokens", metrics.TotalTokens,
+			"confidence", metrics.Confidence,
+			"termination_reason", metrics.TerminationReason)
+
+		e.writeDebugLog(metrics.SessionID, "explore", debugLog.String())
+		e.writeMetricsLog(metrics)
 	}()
 
 	// Track recent tool calls for doom loop detection
 	var recentCalls []toolCallRecord
+
 	for {
 		iterations++
 
 		// Check iteration limit
-		if iterations > maxIterations {
+		if iterations > config.MaxIterations {
 			slog.InfoContext(ctx, "explore agent hit iteration limit, synthesizing findings",
 				"iterations", iterations)
 			debugLog.WriteString(fmt.Sprintf("\n=== ITERATION LIMIT REACHED (%d iterations) - synthesizing findings ===\n", iterations))
 
-			messages = append(messages, llm.Message{
-				Role:    "user",
-				Content: "Maximum exploration steps reached. Write your final report now based on what you've found.",
-			})
+			metrics.HitIterLimit = true
+			metrics.TerminationReason = "iteration_limit"
 
-			synthResp, err := e.llm.ChatWithTools(ctx, llm.AgentRequest{
-				Messages: messages,
-				Tools:    nil,
-			})
+			report, err := e.forceSynthesis(ctx, messages, "Maximum exploration steps reached. Write your final report now based on what you've found.")
 			if err != nil {
-				e.writeDebugLog(sessionID, "explore", debugLog.String())
-				return "", fmt.Errorf("explore agent synthesis after iteration limit: %w", err)
+				return "", err
 			}
 
-			totalPromptTokens += synthResp.PromptTokens
-			totalCompletionTokens += synthResp.CompletionTokens
-
-			debugLog.WriteString(fmt.Sprintf("[SYNTHESIS]\n%s\n", synthResp.Content))
-			e.writeDebugLog(sessionID, "explore", debugLog.String())
-			return synthResp.Content, nil
+			metrics.FinalReportLen = len(report)
+			debugLog.WriteString(fmt.Sprintf("[SYNTHESIS]\n%s\n", report))
+			return report, nil
 		}
 
-		// Check token limit before making another LLM call
-		if totalPromptTokens+totalCompletionTokens >= maxContextTokens {
-			slog.InfoContext(ctx, "explore agent hit token limit, synthesizing findings",
-				"iterations", iterations,
-				"total_tokens", totalPromptTokens+totalCompletionTokens)
-			debugLog.WriteString(fmt.Sprintf("\n=== TOKEN LIMIT REACHED (%d tokens) - synthesizing findings ===\n",
-				totalPromptTokens+totalCompletionTokens))
+		totalTokens := totalPromptTokens + totalCompletionTokens
 
-			// Ask the model to synthesize findings without tools
+		// Soft nudge at 80% of target (not forced - just a gentle prompt)
+		if !softNudgeSent && totalTokens > config.SoftTokenTarget*80/100 {
+			softNudgeSent = true
+			metrics.HitSoftLimit = true
+			debugLog.WriteString(fmt.Sprintf("\n=== SOFT LIMIT REACHED (%d tokens, 80%% of %d) - adding synthesis nudge ===\n",
+				totalTokens, config.SoftTokenTarget))
+
 			messages = append(messages, llm.Message{
-				Role:    "user",
-				Content: "You've gathered substantial information. Please write your final report now based on everything you've found.",
-			})
+				Role: "user",
+				Content: `You've gathered substantial context. Consider:
+- Do you have enough evidence to answer confidently?
+- Is there a specific gap that one more search would fill?
 
-			synthResp, err := e.llm.ChatWithTools(ctx, llm.AgentRequest{
-				Messages: messages,
-				Tools:    nil, // No tools = force text response
+If confident, write your report. If not, continue with targeted searches.`,
 			})
+		}
+
+		// Hard limit (safety ceiling)
+		if totalTokens >= config.HardTokenLimit {
+			slog.InfoContext(ctx, "explore agent hit hard token limit, synthesizing findings",
+				"iterations", iterations,
+				"total_tokens", totalTokens)
+			debugLog.WriteString(fmt.Sprintf("\n=== HARD TOKEN LIMIT REACHED (%d tokens) - forcing synthesis ===\n", totalTokens))
+
+			metrics.HitHardLimit = true
+			metrics.TerminationReason = "hard_limit"
+
+			report, err := e.forceSynthesis(ctx, messages, "Token limit reached. Write your final report now based on everything you've found.")
 			if err != nil {
-				e.writeDebugLog(sessionID, "explore", debugLog.String())
-				return "", fmt.Errorf("explore agent synthesis after token limit: %w", err)
+				return "", err
 			}
 
-			totalPromptTokens += synthResp.PromptTokens
-			totalCompletionTokens += synthResp.CompletionTokens
-
-			debugLog.WriteString(fmt.Sprintf("[SYNTHESIS]\n%s\n", synthResp.Content))
-			e.writeDebugLog(sessionID, "explore", debugLog.String())
-			return synthResp.Content, nil
+			debugLog.WriteString(fmt.Sprintf("[SYNTHESIS]\n%s\n", report))
+			return report, nil
 		}
 
 		resp, err := e.llm.ChatWithTools(ctx, llm.AgentRequest{
@@ -169,7 +258,7 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error
 			Tools:    e.tools.Definitions(),
 		})
 		if err != nil {
-			e.writeDebugLog(sessionID, "explore", debugLog.String())
+			metrics.TerminationReason = "error"
 			return "", fmt.Errorf("explore agent chat iteration %d: %w", iterations, err)
 		}
 
@@ -178,14 +267,43 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error
 		totalCompletionTokens += resp.CompletionTokens
 
 		// Log assistant response
-		debugLog.WriteString(fmt.Sprintf("--- ITERATION %d ---\n", iterations))
+		debugLog.WriteString(fmt.Sprintf("--- ITERATION %d (tokens: %d) ---\n", iterations, totalPromptTokens+totalCompletionTokens))
 		debugLog.WriteString(fmt.Sprintf("[ASSISTANT]\n%s\n\n", resp.Content))
 
-		// No tool calls = model is done, return the prose report
+		// No tool calls = model wants to conclude
 		if len(resp.ToolCalls) == 0 {
-			debugLog.WriteString("=== EXPLORE AGENT COMPLETED ===\n")
-			e.writeDebugLog(sessionID, "explore", debugLog.String())
-			return resp.Content, nil
+			// Self-assessment before accepting final answer
+			if !selfAssessmentDone {
+				selfAssessmentDone = true
+				pendingReport = resp.Content // Save the report
+				debugLog.WriteString("\n=== SELF-ASSESSMENT REQUESTED ===\n")
+
+				messages = append(messages, llm.Message{
+					Role:    "assistant",
+					Content: resp.Content,
+				})
+				messages = append(messages, llm.Message{
+					Role:    "user",
+					Content: "Before finalizing: Rate your confidence in this answer (high/medium/low) and note any caveats or areas of uncertainty.",
+				})
+				continue
+			}
+
+			// Extract confidence from the self-assessment response
+			metrics.Confidence = extractConfidence(resp.Content)
+			metrics.TerminationReason = "natural"
+
+			// Combine the original report with the confidence assessment
+			finalReport := pendingReport + "\n\n---\n\n**Confidence Assessment:** " + resp.Content
+			metrics.FinalReportLen = len(finalReport)
+
+			debugLog.WriteString(fmt.Sprintf("=== EXPLORE AGENT COMPLETED (confidence: %s) ===\n", metrics.Confidence))
+			return finalReport, nil
+		}
+
+		// Track tool calls for metrics
+		for _, tc := range resp.ToolCalls {
+			metrics.ToolCalls[tc.Name]++
 		}
 
 		// Check for doom loop (same tool called repeatedly with same args)
@@ -208,27 +326,18 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error
 
 				debugLog.WriteString(fmt.Sprintf("\n=== DOOM LOOP DETECTED (tool '%s' called %d times with same args) ===\n",
 					tc.Name, doomLoopThreshold))
-				e.writeDebugLog(sessionID, "explore", debugLog.String())
 
-				// Force synthesis by removing tools
-				messages = append(messages, llm.Message{
-					Role:    "user",
-					Content: "You seem to be searching for the same thing repeatedly. Please write your final report now based on what you've found so far. If you couldn't find what you were looking for, explain what you found instead.",
-				})
+				metrics.DoomLoopDetected = true
+				metrics.TerminationReason = "doom_loop"
 
-				synthResp, err := e.llm.ChatWithTools(ctx, llm.AgentRequest{
-					Messages: messages,
-					Tools:    nil, // No tools = force text response
-				})
+				report, err := e.forceSynthesis(ctx, messages,
+					"You seem to be searching for the same thing repeatedly. Please write your final report now based on what you've found so far. If you couldn't find what you were looking for, explain what you found instead.")
 				if err != nil {
-					return "", fmt.Errorf("explore agent forced synthesis: %w", err)
+					return "", err
 				}
 
-				// Track tokens from forced synthesis
-				totalPromptTokens += synthResp.PromptTokens
-				totalCompletionTokens += synthResp.CompletionTokens
-
-				return synthResp.Content, nil
+				debugLog.WriteString(fmt.Sprintf("[SYNTHESIS]\n%s\n", report))
+				return report, nil
 			}
 		} else {
 			// Multiple tool calls in one turn, reset doom loop detection
@@ -263,6 +372,44 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error
 			})
 		}
 	}
+}
+
+// forceSynthesis forces the model to write a final report without tools.
+func (e *ExploreAgent) forceSynthesis(ctx context.Context, messages []llm.Message, prompt string) (string, error) {
+	messages = append(messages, llm.Message{
+		Role:    "user",
+		Content: prompt,
+	})
+
+	resp, err := e.llm.ChatWithTools(ctx, llm.AgentRequest{
+		Messages: messages,
+		Tools:    nil, // No tools = force text response
+	})
+	if err != nil {
+		return "", fmt.Errorf("explore agent forced synthesis: %w", err)
+	}
+
+	return resp.Content, nil
+}
+
+// extractConfidence parses confidence level from model's self-assessment.
+func extractConfidence(content string) string {
+	lower := strings.ToLower(content)
+	switch {
+	case strings.Contains(lower, "high confidence") || strings.Contains(lower, "confidence: high") || strings.Contains(lower, "confidence is high"):
+		return "high"
+	case strings.Contains(lower, "low confidence") || strings.Contains(lower, "confidence: low") || strings.Contains(lower, "confidence is low"):
+		return "low"
+	case strings.Contains(lower, "medium confidence") || strings.Contains(lower, "confidence: medium") || strings.Contains(lower, "confidence is medium") || strings.Contains(lower, "moderate confidence"):
+		return "medium"
+	default:
+		return "unknown"
+	}
+}
+
+// estimateTokens provides a rough token count estimate (4 chars per token).
+func estimateTokens(s string) int {
+	return len(s) / 4
 }
 
 // executeToolsParallel runs multiple tool calls concurrently with bounded parallelism.
@@ -331,95 +478,78 @@ func allIdentical(calls []toolCallRecord) bool {
 }
 
 func (e *ExploreAgent) writeDebugLog(sessionID, agentType, content string) {
-	ctx := context.Background()
 	if e.debugDir == "" {
 		return
 	}
 
 	if err := os.MkdirAll(e.debugDir, 0o755); err != nil {
-		slog.WarnContext(ctx, "failed to create debug dir", "dir", e.debugDir, "error", err)
+		slog.Warn("failed to create debug dir", "dir", e.debugDir, "error", err)
 		return
 	}
 
 	filename := filepath.Join(e.debugDir, fmt.Sprintf("%s_%s.txt", agentType, sessionID))
 	if err := os.WriteFile(filename, []byte(content), 0o644); err != nil {
-		slog.WarnContext(ctx, "failed to write debug log", "file", filename, "error", err)
-	} else {
-		slog.InfoContext(ctx, "debug log written", "file", filename)
+		slog.Warn("failed to write debug log", "file", filename, "error", err)
 	}
 }
 
-// systemPrompt returns the system prompt with the module path for qname construction.
+// writeMetricsLog writes structured JSON metrics for analysis.
+func (e *ExploreAgent) writeMetricsLog(metrics ExploreMetrics) {
+	if e.debugDir == "" {
+		return
+	}
+
+	if err := os.MkdirAll(e.debugDir, 0o755); err != nil {
+		slog.Warn("failed to create debug dir", "dir", e.debugDir, "error", err)
+		return
+	}
+
+	metricsFile := filepath.Join(e.debugDir, fmt.Sprintf("explore_metrics_%s.json", metrics.SessionID))
+	data, err := json.MarshalIndent(metrics, "", "  ")
+	if err != nil {
+		slog.Warn("failed to marshal metrics", "error", err)
+		return
+	}
+
+	if err := os.WriteFile(metricsFile, data, 0o644); err != nil {
+		slog.Warn("failed to write metrics", "file", metricsFile, "error", err)
+	}
+}
+
+// systemPrompt returns the system prompt for the explore agent.
+// Following Anthropic's guidance: suggestive guidelines, not prescriptive rules.
+// Encourages thorough thinking and self-assessment.
 func (e *ExploreAgent) systemPrompt() string {
-	return fmt.Sprintf(`You are a focused code search specialist. Find specific answers quickly.
+	return fmt.Sprintf(`You are exploring a codebase to answer a question. Your goal is to find accurate, complete information.
 
-# Core Rules
+## Tools
 
-1. **Be targeted** - Don't explore broadly. Find what you need and stop.
-2. **Read selectively** - Don't read entire files. Use start_line/num_lines to read relevant sections only.
-3. **One search strategy** - Pick the most direct approach. Don't try multiple grep patterns for the same thing.
-4. **Stop when you have enough** - If you found the answer, write your report. Don't keep exploring "just in case".
+**grep(pattern, include?)** - Search file contents with regex
+**glob(pattern)** - Find files by path pattern
+**read(file, start_line?, num_lines?)** - Read file contents
+**graph(operation, target)** - Query code relationships
 
-# Tool Usage
+## Graph Qualified Names
 
-- **grep**: Use specific patterns. If you get 30+ results, your pattern is too broad.
-- **read**: Read 50-100 lines max. If you need more context, make a second targeted read.
-- **glob**: Use specific paths like "internal/brain/*.go", not "**/*.go".
-- **graph**: Great for finding callers/callees. Use it instead of grepping for function names.
+Module path: %s
+Format: {module}/{package}.{Type}.{Method}
+Example: %s/internal/brain.ExploreAgent.Explore
 
-# Anti-patterns (DON'T DO THESE)
+## Approach
 
-- Reading the same file multiple times with overlapping ranges
-- Grepping for the same concept with different patterns
-- Reading an entire 500-line file when you only need one function
-- Exploring "related" code that wasn't asked about
+1. Start broad, then narrow down
+2. Use graph for structural questions (who calls X, what implements Y)
+3. Use grep for text search (error messages, string literals, patterns)
+4. Read only the specific lines you need
+5. Verify your understanding before concluding
 
-# Tools
+## Quality Standards
 
-## grep(pattern, include?, limit?)
-Fast content search tool that works with any codebase size. Searches file contents using regular expressions. Supports full regex syntax (eg. "log.*Error", "function\s+\w+", etc.). Filter files by pattern with the include parameter (eg. "*.go", "*.{ts,tsx}"). Returns file paths and line numbers with at least one match sorted by modification time. Use this tool when you need to find files containing specific patterns.
+- Cite evidence: include file:line references for claims
+- Be confident: only conclude when you have clear evidence
+- Be thorough: for complex questions, check multiple angles
+- Acknowledge uncertainty: if something is unclear, say so
 
-## glob(pattern)
-Fast file pattern matching tool that works with any codebase size. Supports glob patterns like "**/*.go" or "internal/**/*.go". Returns matching file paths sorted by modification time. Use this tool when you need to find files by name patterns.
-
-## read(file, start_line?, num_lines?)
-Reads a file from the local filesystem. By default, it reads up to 200 lines starting from the beginning of the file. You can optionally specify a line offset and limit (especially handy for long files). Results are returned with line numbers.
-
-## graph(operation, target, depth?)
-Query code relationships from the indexed code graph. This is powerful for understanding call chains, interface implementations, and code dependencies.
-
-Operations:
-- callers: Who calls this function/method?
-- callees: What does this function/method call?
-- implementations: What types implement this interface?
-- methods: What methods does this type have?
-- usages: Where is this type/function used?
-- inheritors: What types embed this type?
-
-Target must be a qualified name (qname):
-Format: {module_path}/{package_path}.{Type}.{Method} or {module_path}/{package_path}.{Function}
-
-<qname-info>
-This repository's Go module path is: %s
-
-Examples:
-- Function: %s/internal/brain.NewExploreAgent
-- Method: %s/internal/brain.ExploreAgent.Explore
-- Type: %s/internal/brain.ExploreAgent
-- Interface: %s/internal/store.Store
-</qname-info>
-
-<example>
-How to construct a qname from grep results:
-1. grep finds: internal/brain/explore_agent.go:35: func (e *ExploreAgent) Explore(...)
-2. The file path internal/brain/ → package path is internal/brain
-3. The receiver (e *ExploreAgent) → type is ExploreAgent
-4. The function name → method is Explore
-5. qname = %s/internal/brain.ExploreAgent.Explore
-</example>
-
-Complete the search request efficiently and report your findings clearly.`,
-		e.modulePath,
-		e.modulePath, e.modulePath, e.modulePath, e.modulePath,
-		e.modulePath)
+When you have enough information to answer confidently, write a clear report.
+Your thinking should be thorough.`, e.modulePath, e.modulePath)
 }

@@ -131,6 +131,52 @@ func (m *mockLearningStore) ListByWorkspaceAndType(ctx context.Context, workspac
 	return nil, nil
 }
 
+type mockContextBuilderGapStore struct {
+	gaps []model.Gap
+	err  error
+}
+
+func (m *mockContextBuilderGapStore) Create(ctx context.Context, gap model.Gap) (model.Gap, error) {
+	return model.Gap{}, nil
+}
+
+func (m *mockContextBuilderGapStore) GetByID(ctx context.Context, id int64) (model.Gap, error) {
+	return model.Gap{}, nil
+}
+
+func (m *mockContextBuilderGapStore) ListByIssue(ctx context.Context, issueID int64) ([]model.Gap, error) {
+	return nil, nil
+}
+
+func (m *mockContextBuilderGapStore) ListOpenByIssue(ctx context.Context, issueID int64) ([]model.Gap, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	var result []model.Gap
+	for _, g := range m.gaps {
+		if g.IssueID == issueID && g.Status == model.GapStatusOpen {
+			result = append(result, g)
+		}
+	}
+	return result, nil
+}
+
+func (m *mockContextBuilderGapStore) Resolve(ctx context.Context, id int64) (model.Gap, error) {
+	return model.Gap{}, nil
+}
+
+func (m *mockContextBuilderGapStore) Skip(ctx context.Context, id int64) (model.Gap, error) {
+	return model.Gap{}, nil
+}
+
+func (m *mockContextBuilderGapStore) SetLearning(ctx context.Context, id int64, learningID int64) (model.Gap, error) {
+	return model.Gap{}, nil
+}
+
+func (m *mockContextBuilderGapStore) CountOpenBlocking(ctx context.Context, issueID int64) (int64, error) {
+	return 0, nil
+}
+
 var _ = Describe("ContextBuilder", func() {
 	var (
 		builder interface {
@@ -139,6 +185,7 @@ var _ = Describe("ContextBuilder", func() {
 		mockInteg     *mockIntegrationStore
 		mockConfig    *mockIntegrationConfigStore
 		mockLearnings *mockLearningStore
+		mockGaps      *mockContextBuilderGapStore
 		ctx           context.Context
 		baseTime      time.Time
 		workspaceID   int64
@@ -190,7 +237,11 @@ var _ = Describe("ContextBuilder", func() {
 			},
 		}
 
-		builder = brain.NewContextBuilder(mockInteg, mockConfig, mockLearnings)
+		mockGaps = &mockContextBuilderGapStore{
+			gaps: nil, // Default: no gaps
+		}
+
+		builder = brain.NewContextBuilder(mockInteg, mockConfig, mockLearnings, mockGaps)
 	})
 
 	Describe("BuildPlannerMessages", func() {
@@ -289,6 +340,96 @@ var _ = Describe("ContextBuilder", func() {
 				Expect(contextDump.Content).To(ContainSubstring("Code Findings"))
 				Expect(contextDump.Content).To(ContainSubstring("internal/payment/service.go:145"))
 				Expect(contextDump.Content).To(ContainSubstring("PaymentService processes refunds synchronously"))
+			})
+		})
+
+		Context("with open gaps", func() {
+			It("includes gaps grouped by severity in context dump", func() {
+				issueID := int64(1)
+				mockGaps.gaps = []model.Gap{
+					{ID: 1, IssueID: issueID, Status: model.GapStatusOpen, Severity: model.GapSeverityBlocking, Respondent: model.GapRespondentReporter, Question: "What is the expected behavior?"},
+					{ID: 2, IssueID: issueID, Status: model.GapStatusOpen, Severity: model.GapSeverityHigh, Respondent: model.GapRespondentAssignee, Question: "What is the SLA?"},
+					{ID: 3, IssueID: issueID, Status: model.GapStatusOpen, Severity: model.GapSeverityBlocking, Respondent: model.GapRespondentAssignee, Question: "Should we support partial refunds?"},
+				}
+
+				title := "Test issue"
+				issue := model.Issue{
+					ID:            issueID,
+					IntegrationID: integrationID,
+					Title:         &title,
+				}
+
+				messages, err := builder.BuildPlannerMessages(ctx, issue, "")
+
+				Expect(err).NotTo(HaveOccurred())
+				contextDump := messages[1]
+				Expect(contextDump.Content).To(ContainSubstring("# Open Gaps"))
+				Expect(contextDump.Content).To(ContainSubstring("## BLOCKING"))
+				Expect(contextDump.Content).To(ContainSubstring("[for @reporter] What is the expected behavior?"))
+				Expect(contextDump.Content).To(ContainSubstring("[for @assignee] Should we support partial refunds?"))
+				Expect(contextDump.Content).To(ContainSubstring("## HIGH"))
+				Expect(contextDump.Content).To(ContainSubstring("[for @assignee] What is the SLA?"))
+			})
+
+			It("excludes gaps section when no open gaps exist", func() {
+				mockGaps.gaps = nil
+
+				title := "Test issue"
+				issue := model.Issue{
+					ID:            1,
+					IntegrationID: integrationID,
+					Title:         &title,
+				}
+
+				messages, err := builder.BuildPlannerMessages(ctx, issue, "")
+
+				Expect(err).NotTo(HaveOccurred())
+				contextDump := messages[1]
+				Expect(contextDump.Content).NotTo(ContainSubstring("# Open Gaps"))
+			})
+
+			It("includes evidence when present", func() {
+				issueID := int64(1)
+				mockGaps.gaps = []model.Gap{
+					{
+						ID:         1,
+						IssueID:    issueID,
+						Status:     model.GapStatusOpen,
+						Severity:   model.GapSeverityBlocking,
+						Respondent: model.GapRespondentReporter,
+						Question:   "What is the expected behavior?",
+						Evidence:   "Found in requirements.md: mentions graceful handling but undefined",
+					},
+				}
+
+				title := "Test issue"
+				issue := model.Issue{
+					ID:            issueID,
+					IntegrationID: integrationID,
+					Title:         &title,
+				}
+
+				messages, err := builder.BuildPlannerMessages(ctx, issue, "")
+
+				Expect(err).NotTo(HaveOccurred())
+				contextDump := messages[1]
+				Expect(contextDump.Content).To(ContainSubstring("Evidence: Found in requirements.md"))
+			})
+
+			It("returns error when gap store fails", func() {
+				mockGaps.err = store.ErrNotFound
+
+				title := "Test"
+				issue := model.Issue{
+					ID:            1,
+					IntegrationID: integrationID,
+					Title:         &title,
+				}
+
+				_, err := builder.BuildPlannerMessages(ctx, issue, "")
+
+				Expect(err).To(HaveOccurred())
+				Expect(err.Error()).To(ContainSubstring("open gaps"))
 			})
 		})
 
