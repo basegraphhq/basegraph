@@ -9,8 +9,98 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"basegraph.app/relay/common/arangodb"
 	"basegraph.app/relay/internal/brain"
 )
+
+// mockArangoClient implements arangodb.Client for testing
+type mockArangoClient struct {
+	getFileSymbolsFn func(ctx context.Context, filepath string) ([]arangodb.FileSymbol, error)
+	searchSymbolsFn  func(ctx context.Context, opts arangodb.SearchOptions) ([]arangodb.SearchResult, int, error)
+	getCallersFn     func(ctx context.Context, qname string, depth int) ([]arangodb.GraphNode, error)
+	getCalleesFn     func(ctx context.Context, qname string, depth int) ([]arangodb.GraphNode, error)
+	getMethodsFn     func(ctx context.Context, qname string) ([]arangodb.GraphNode, error)
+	getImplementsFn  func(ctx context.Context, qname string) ([]arangodb.GraphNode, error)
+	getUsagesFn      func(ctx context.Context, qname string) ([]arangodb.GraphNode, error)
+	getInheritorsFn  func(ctx context.Context, qname string) ([]arangodb.GraphNode, error)
+}
+
+func (m *mockArangoClient) EnsureDatabase(ctx context.Context) error    { return nil }
+func (m *mockArangoClient) EnsureCollections(ctx context.Context) error { return nil }
+func (m *mockArangoClient) EnsureGraph(ctx context.Context) error       { return nil }
+func (m *mockArangoClient) IngestNodes(ctx context.Context, collection string, nodes []arangodb.Node) error {
+	return nil
+}
+
+func (m *mockArangoClient) IngestEdges(ctx context.Context, collection string, edges []arangodb.Edge) error {
+	return nil
+}
+func (m *mockArangoClient) TruncateCollections(ctx context.Context) error { return nil }
+func (m *mockArangoClient) Close() error                                  { return nil }
+
+func (m *mockArangoClient) GetCallers(ctx context.Context, qname string, depth int) ([]arangodb.GraphNode, error) {
+	if m.getCallersFn != nil {
+		return m.getCallersFn(ctx, qname, depth)
+	}
+	return nil, nil
+}
+
+func (m *mockArangoClient) GetCallees(ctx context.Context, qname string, depth int) ([]arangodb.GraphNode, error) {
+	if m.getCalleesFn != nil {
+		return m.getCalleesFn(ctx, qname, depth)
+	}
+	return nil, nil
+}
+
+func (m *mockArangoClient) GetChildren(ctx context.Context, qname string) ([]arangodb.GraphNode, error) {
+	return nil, nil
+}
+
+func (m *mockArangoClient) GetImplementations(ctx context.Context, qname string) ([]arangodb.GraphNode, error) {
+	if m.getImplementsFn != nil {
+		return m.getImplementsFn(ctx, qname)
+	}
+	return nil, nil
+}
+
+func (m *mockArangoClient) GetMethods(ctx context.Context, qname string) ([]arangodb.GraphNode, error) {
+	if m.getMethodsFn != nil {
+		return m.getMethodsFn(ctx, qname)
+	}
+	return nil, nil
+}
+
+func (m *mockArangoClient) GetUsages(ctx context.Context, qname string) ([]arangodb.GraphNode, error) {
+	if m.getUsagesFn != nil {
+		return m.getUsagesFn(ctx, qname)
+	}
+	return nil, nil
+}
+
+func (m *mockArangoClient) GetInheritors(ctx context.Context, qname string) ([]arangodb.GraphNode, error) {
+	if m.getInheritorsFn != nil {
+		return m.getInheritorsFn(ctx, qname)
+	}
+	return nil, nil
+}
+
+func (m *mockArangoClient) TraverseFrom(ctx context.Context, qnames []string, opts arangodb.TraversalOptions) ([]arangodb.GraphNode, []arangodb.GraphEdge, error) {
+	return nil, nil, nil
+}
+
+func (m *mockArangoClient) GetFileSymbols(ctx context.Context, filepath string) ([]arangodb.FileSymbol, error) {
+	if m.getFileSymbolsFn != nil {
+		return m.getFileSymbolsFn(ctx, filepath)
+	}
+	return nil, nil
+}
+
+func (m *mockArangoClient) SearchSymbols(ctx context.Context, opts arangodb.SearchOptions) ([]arangodb.SearchResult, int, error) {
+	if m.searchSymbolsFn != nil {
+		return m.searchSymbolsFn(ctx, opts)
+	}
+	return nil, 0, nil
+}
 
 var _ = Describe("ExploreTools", func() {
 	var (
@@ -306,6 +396,255 @@ var _ = Describe("ExploreTools", func() {
 				Expect(result).To(ContainSubstring("e/"))
 				// f/ is at depth 5, should NOT be visible
 				Expect(result).NotTo(ContainSubstring("f/"))
+			})
+		})
+	})
+
+	Describe("Graph Tool", func() {
+		var mockArango *mockArangoClient
+
+		BeforeEach(func() {
+			mockArango = &mockArangoClient{}
+			tools = brain.NewExploreTools(tempDir, mockArango)
+		})
+
+		Describe("symbols operation", func() {
+			It("returns symbols for a Go file", func() {
+				mockArango.getFileSymbolsFn = func(ctx context.Context, filepath string) ([]arangodb.FileSymbol, error) {
+					return []arangodb.FileSymbol{
+						{QName: "pkg.Planner", Name: "Planner", Kind: "struct", Pos: 25, End: 40},
+						{QName: "pkg.Planner.Plan", Name: "Plan", Kind: "method", Signature: "(p *Planner) Plan(ctx context.Context) error", Pos: 52, End: 80},
+						{QName: "pkg.NewPlanner", Name: "NewPlanner", Kind: "function", Signature: "NewPlanner(cfg Config) *Planner", Pos: 37, End: 50},
+					}, nil
+				}
+
+				args, _ := json.Marshal(map[string]any{
+					"operation": "symbols",
+					"file":      "internal/brain/planner.go",
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Symbols in internal/brain/planner.go [indexed]"))
+				Expect(result).To(ContainSubstring("Planner (struct)"))
+				Expect(result).To(ContainSubstring("(p *Planner) Plan(ctx context.Context) error (method)"))
+				Expect(result).To(ContainSubstring("NewPlanner(cfg Config) *Planner (function)"))
+				Expect(result).To(ContainSubstring("qname: pkg.Planner"))
+			})
+
+			It("returns error for non-indexed file types", func() {
+				args, _ := json.Marshal(map[string]any{
+					"operation": "symbols",
+					"file":      "src/component.tsx",
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Symbols not available for .tsx files"))
+				Expect(result).To(ContainSubstring("Use grep to find definitions"))
+			})
+
+			It("returns helpful message when no symbols found", func() {
+				mockArango.getFileSymbolsFn = func(ctx context.Context, filepath string) ([]arangodb.FileSymbol, error) {
+					return []arangodb.FileSymbol{}, nil
+				}
+
+				args, _ := json.Marshal(map[string]any{
+					"operation": "symbols",
+					"file":      "internal/empty.go",
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("No symbols found"))
+				Expect(result).To(ContainSubstring("may not be indexed yet"))
+			})
+
+			It("requires file parameter", func() {
+				args, _ := json.Marshal(map[string]any{
+					"operation": "symbols",
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("'file' parameter is required"))
+			})
+		})
+
+		Describe("search operation", func() {
+			It("finds symbols by name pattern", func() {
+				mockArango.searchSymbolsFn = func(ctx context.Context, opts arangodb.SearchOptions) ([]arangodb.SearchResult, int, error) {
+					Expect(opts.Name).To(Equal("*Issue*"))
+					return []arangodb.SearchResult{
+						{QName: "pkg/model.Issue", Name: "Issue", Kind: "struct", Filepath: "internal/model/issue.go", Pos: 15},
+						{QName: "pkg/store.IssueStore", Name: "IssueStore", Kind: "struct", Filepath: "internal/store/issue.go", Pos: 22},
+					}, 2, nil
+				}
+
+				args, _ := json.Marshal(map[string]any{
+					"operation": "search",
+					"name":      "*Issue*",
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring(`Search results for name="*Issue*"`))
+				Expect(result).To(ContainSubstring("(2 of 2)"))
+				Expect(result).To(ContainSubstring("Issue (struct)"))
+				Expect(result).To(ContainSubstring("IssueStore (struct)"))
+				Expect(result).To(ContainSubstring("qname: pkg/model.Issue"))
+			})
+
+			It("filters by kind", func() {
+				mockArango.searchSymbolsFn = func(ctx context.Context, opts arangodb.SearchOptions) ([]arangodb.SearchResult, int, error) {
+					Expect(opts.Name).To(Equal("Plan*"))
+					Expect(opts.Kind).To(Equal("method"))
+					return []arangodb.SearchResult{
+						{QName: "pkg.Planner.Plan", Name: "Plan", Kind: "method", Signature: "(p *Planner) Plan(ctx context.Context) error", Filepath: "internal/brain/planner.go", Pos: 52},
+					}, 1, nil
+				}
+
+				args, _ := json.Marshal(map[string]any{
+					"operation": "search",
+					"name":      "Plan*",
+					"kind":      "method",
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring(`kind="method"`))
+				Expect(result).To(ContainSubstring("(p *Planner) Plan(ctx context.Context) error (method)"))
+			})
+
+			It("shows truncation message when results exceed limit", func() {
+				mockArango.searchSymbolsFn = func(ctx context.Context, opts arangodb.SearchOptions) ([]arangodb.SearchResult, int, error) {
+					results := make([]arangodb.SearchResult, 50)
+					for i := range results {
+						results[i] = arangodb.SearchResult{QName: "pkg.Func", Name: "Func", Kind: "function", Filepath: "file.go", Pos: i}
+					}
+					return results, 150, nil // 150 total, only 50 returned
+				}
+
+				args, _ := json.Marshal(map[string]any{
+					"operation": "search",
+					"name":      "*",
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("(50 of 150)"))
+				Expect(result).To(ContainSubstring("Showing 50 of 150 results"))
+			})
+
+			It("requires name parameter", func() {
+				args, _ := json.Marshal(map[string]any{
+					"operation": "search",
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("'name' parameter is required"))
+			})
+
+			It("returns helpful message when no results found", func() {
+				mockArango.searchSymbolsFn = func(ctx context.Context, opts arangodb.SearchOptions) ([]arangodb.SearchResult, int, error) {
+					return []arangodb.SearchResult{}, 0, nil
+				}
+
+				args, _ := json.Marshal(map[string]any{
+					"operation": "search",
+					"name":      "NonExistent*",
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("No symbols found matching"))
+				Expect(result).To(ContainSubstring("Try a broader pattern"))
+			})
+		})
+
+		Describe("relationship operations", func() {
+			It("requires qname for callers operation", func() {
+				args, _ := json.Marshal(map[string]any{
+					"operation": "callers",
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("'qname' parameter is required"))
+				Expect(result).To(ContainSubstring("Use graph(symbols, file=...)"))
+			})
+
+			It("returns callers with depth", func() {
+				mockArango.getCallersFn = func(ctx context.Context, qname string, depth int) ([]arangodb.GraphNode, error) {
+					Expect(qname).To(Equal("pkg.Planner.Plan"))
+					Expect(depth).To(Equal(2))
+					return []arangodb.GraphNode{
+						{QName: "pkg.Handler.Handle", Name: "Handle", Kind: "method", Filepath: "internal/http/handler.go"},
+						{QName: "pkg.Worker.Run", Name: "Run", Kind: "method", Filepath: "internal/worker/worker.go"},
+					}, nil
+				}
+
+				args, _ := json.Marshal(map[string]any{
+					"operation": "callers",
+					"qname":     "pkg.Planner.Plan",
+					"depth":     2,
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Callers of pkg.Planner.Plan (depth 2)"))
+				Expect(result).To(ContainSubstring("Handle (method)"))
+				Expect(result).To(ContainSubstring("Run (method)"))
+			})
+
+			It("returns methods of a type", func() {
+				mockArango.getMethodsFn = func(ctx context.Context, qname string) ([]arangodb.GraphNode, error) {
+					Expect(qname).To(Equal("pkg.Planner"))
+					return []arangodb.GraphNode{
+						{QName: "pkg.Planner.Plan", Name: "Plan", Kind: "method", Filepath: "internal/brain/planner.go"},
+						{QName: "pkg.Planner.Execute", Name: "Execute", Kind: "method", Filepath: "internal/brain/planner.go"},
+					}, nil
+				}
+
+				args, _ := json.Marshal(map[string]any{
+					"operation": "methods",
+					"qname":     "pkg.Planner",
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Methods of pkg.Planner"))
+				Expect(result).To(ContainSubstring("Plan (method)"))
+				Expect(result).To(ContainSubstring("Execute (method)"))
+			})
+
+			It("returns helpful message when no results", func() {
+				mockArango.getCallersFn = func(ctx context.Context, qname string, depth int) ([]arangodb.GraphNode, error) {
+					return []arangodb.GraphNode{}, nil
+				}
+
+				args, _ := json.Marshal(map[string]any{
+					"operation": "callers",
+					"qname":     "pkg.Unused",
+				})
+
+				result, err := tools.Execute(ctx, "graph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Callers of pkg.Unused: No results found"))
 			})
 		})
 	})

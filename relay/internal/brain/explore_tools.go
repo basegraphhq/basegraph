@@ -50,9 +50,19 @@ type ReadParams struct {
 
 // GraphParams for the Graph tool.
 type GraphParams struct {
-	Operation string `json:"operation" jsonschema:"required,enum=callers,enum=callees,enum=implementations,enum=methods,enum=usages,enum=inheritors,description=Graph operation: callers, callees, implementations, methods, usages, inheritors"`
-	Target    string `json:"target" jsonschema:"required,description=Qualified name of the entity to query (e.g. 'basegraph.app/relay/internal/brain.Retriever')"`
-	Depth     int    `json:"depth,omitempty" jsonschema:"description=Traversal depth for callers/callees (default 1, max 3)"`
+	Operation string `json:"operation" jsonschema:"required,enum=symbols,enum=search,enum=callers,enum=callees,enum=implementations,enum=methods,enum=usages,enum=inheritors,description=Graph operation"`
+
+	// For symbols operation
+	File string `json:"file,omitempty" jsonschema:"description=File path for symbols operation (e.g. 'internal/brain/planner.go')"`
+
+	// For search operation
+	Name      string `json:"name,omitempty" jsonschema:"description=Symbol name pattern with glob syntax (e.g. 'Plan*', '*Issue*', '*Store')"`
+	Kind      string `json:"kind,omitempty" jsonschema:"description=Filter by symbol kind: function, method, struct, interface"`
+	Namespace string `json:"namespace,omitempty" jsonschema:"description=Filter by module/package path"`
+
+	// For relationship operations (callers, callees, methods, implementations, usages, inheritors)
+	QName string `json:"qname,omitempty" jsonschema:"description=Qualified name for relationship queries (e.g. 'basegraph.app/relay/internal/brain.Planner.Plan')"`
+	Depth int    `json:"depth,omitempty" jsonschema:"description=Traversal depth for callers/callees (default 1, max 3)"`
 }
 
 // TreeParams for the Tree tool.
@@ -149,34 +159,41 @@ RETURNS: Lines with 4-digit line numbers. Long lines truncated at 500 chars.`,
 		},
 		{
 			Name: "graph",
-			Description: `Query code structure relationships from the semantic graph.
+			Description: `Query code structure from the semantic graph. More accurate than grep for structural questions.
 
-THIS IS POWERFUL - use it to understand code relationships without grepping.
+DISCOVERY OPERATIONS (start here to find qnames):
 
-OPERATIONS:
-* callers(target, depth): Who calls this function? (depth 1-3)
-* callees(target, depth): What does this function call? (depth 1-3)
-* implementations(target): What types implement this interface?
-* methods(target): What methods does this type have?
-* usages(target): Where is this type/function referenced?
-* inheritors(target): What interfaces embed this interface?
+symbols(file): List all symbols in a file with their qualified names.
+  Example: graph(operation="symbols", file="internal/brain/planner.go")
+  Returns: All functions, types, methods in the file with signatures and qnames.
+  Use this first when exploring a file.
 
-QUALIFIED NAME FORMAT:
-Pattern: {module}/{package}.{Type}.{Method}
+search(name, kind?, file?, namespace?): Find symbols by name pattern.
+  Example: graph(operation="search", name="*Issue*")
+  Example: graph(operation="search", name="Plan*", kind="method")
+  Example: graph(operation="search", name="*Store", namespace="basegraph.app/relay/internal/store")
+  Pattern: Glob syntax - *Issue*, Plan*, *Handler
+  Returns: Matching symbols with qnames. Use qnames for relationship queries.
 
-EXAMPLES:
-* Function: basegraph.app/relay/internal/brain.Planner.Plan
-* Method: basegraph.app/relay/internal/brain.ExploreAgent.Explore
-* Type: basegraph.app/relay/internal/brain.Planner
-* Interface: basegraph.app/relay/common/llm.AgentClient
+RELATIONSHIP OPERATIONS (require qname from discovery):
+
+callers(qname, depth?): Who calls this function? (depth 1-3)
+callees(qname, depth?): What does this function call? (depth 1-3)
+methods(qname): What methods does this type have?
+implementations(qname): What types implement this interface?
+usages(qname): Where is this type used as parameter/return?
+inheritors(qname): What interfaces embed this interface?
+
+WORKFLOW:
+1. Use symbols(file) or search(name) to discover qnames
+2. Use callers/methods/etc with qnames for relationships
+3. Use read(file, start_line) to see specific code
 
 WHEN TO USE GRAPH vs GREP:
-* "What calls this function?" → graph(callers, ...)
-* "What implements this interface?" → graph(implementations, ...)
-* "Where is this string literal?" → grep
-* "What files match this pattern?" → glob
-
-Graph queries are faster and more accurate for structural questions.`,
+* "What's in this file?" → graph(symbols, file=...)
+* "Find types named Issue" → graph(search, name="*Issue*", kind="struct")
+* "What calls this function?" → graph(callers, qname=...)
+* "Find this exact string" → grep (graph searches names, not content)`,
 			Parameters: llm.GenerateSchemaFrom(GraphParams{}),
 		},
 		{
@@ -472,6 +489,127 @@ func (t *ExploreTools) executeGraph(ctx context.Context, arguments string) (stri
 		return "", fmt.Errorf("parse graph params: %w", err)
 	}
 
+	switch params.Operation {
+	case "symbols":
+		return t.executeGraphSymbols(ctx, params)
+	case "search":
+		return t.executeGraphSearch(ctx, params)
+	default:
+		return t.executeGraphRelationship(ctx, params)
+	}
+}
+
+// executeGraphSymbols handles the symbols operation - lists all symbols in a file.
+func (t *ExploreTools) executeGraphSymbols(ctx context.Context, params GraphParams) (string, error) {
+	if params.File == "" {
+		return "Error: 'file' parameter is required for symbols operation", nil
+	}
+
+	// Check if the file extension is from an indexed language
+	ext := strings.ToLower(filepath.Ext(params.File))
+	if !isGraphIndexedExtension(ext) {
+		return fmt.Sprintf("Symbols not available for %s files (not indexed).\nUse grep to find definitions, or read the file directly.", ext), nil
+	}
+
+	symbols, err := t.arango.GetFileSymbols(ctx, params.File)
+	if err != nil {
+		return fmt.Sprintf("Graph error: %s", err), nil
+	}
+
+	if len(symbols) == 0 {
+		return fmt.Sprintf("No symbols found in %s.\nFile may not be indexed yet, or contains no declarations.", params.File), nil
+	}
+
+	var out strings.Builder
+	out.WriteString(fmt.Sprintf("Symbols in %s [indexed]:\n\n", params.File))
+
+	for _, s := range symbols {
+		// Line number and signature or name
+		if s.Signature != "" {
+			out.WriteString(fmt.Sprintf("%4d | %s (%s)\n", s.Pos, s.Signature, s.Kind))
+		} else {
+			out.WriteString(fmt.Sprintf("%4d | %s (%s)\n", s.Pos, s.Name, s.Kind))
+		}
+		out.WriteString(fmt.Sprintf("       qname: %s\n", s.QName))
+		out.WriteString("\n")
+	}
+
+	out.WriteString("Use graph(callers/callees/methods, qname=<qname>) for relationships.\n")
+
+	slog.DebugContext(ctx, "graph symbols executed",
+		"file", params.File,
+		"count", len(symbols))
+
+	return out.String(), nil
+}
+
+// executeGraphSearch handles the search operation - finds symbols by name pattern.
+func (t *ExploreTools) executeGraphSearch(ctx context.Context, params GraphParams) (string, error) {
+	if params.Name == "" {
+		return "Error: 'name' parameter is required for search operation (use glob pattern like 'Plan*' or '*Issue*')", nil
+	}
+
+	opts := arangodb.SearchOptions{
+		Name:      params.Name,
+		Kind:      params.Kind,
+		File:      params.File,
+		Namespace: params.Namespace,
+	}
+
+	results, total, err := t.arango.SearchSymbols(ctx, opts)
+	if err != nil {
+		return fmt.Sprintf("Graph error: %s", err), nil
+	}
+
+	if len(results) == 0 {
+		return fmt.Sprintf("No symbols found matching '%s'.\nTry a broader pattern or check the name.", params.Name), nil
+	}
+
+	var out strings.Builder
+	out.WriteString(fmt.Sprintf("Search results for name=\"%s\"", params.Name))
+	if params.Kind != "" {
+		out.WriteString(fmt.Sprintf(", kind=\"%s\"", params.Kind))
+	}
+	if params.File != "" {
+		out.WriteString(fmt.Sprintf(", file=\"%s\"", params.File))
+	}
+	if params.Namespace != "" {
+		out.WriteString(fmt.Sprintf(", namespace=\"%s\"", params.Namespace))
+	}
+	out.WriteString(fmt.Sprintf(" (%d of %d):\n\n", len(results), total))
+
+	for _, r := range results {
+		// Name with signature if available
+		if r.Signature != "" {
+			out.WriteString(fmt.Sprintf("- %s (%s) [%s:%d]\n", r.Signature, r.Kind, r.Filepath, r.Pos))
+		} else {
+			out.WriteString(fmt.Sprintf("- %s (%s) [%s:%d]\n", r.Name, r.Kind, r.Filepath, r.Pos))
+		}
+		out.WriteString(fmt.Sprintf("  qname: %s\n", r.QName))
+		out.WriteString("\n")
+	}
+
+	if total > len(results) {
+		out.WriteString(fmt.Sprintf("(Showing %d of %d results. Add filters: kind, file, namespace)\n", len(results), total))
+	}
+
+	out.WriteString("\nUse graph(callers/methods/implementations, qname=<qname>) for relationships.\n")
+
+	slog.DebugContext(ctx, "graph search executed",
+		"name", params.Name,
+		"kind", params.Kind,
+		"results", len(results),
+		"total", total)
+
+	return out.String(), nil
+}
+
+// executeGraphRelationship handles relationship operations (callers, callees, etc).
+func (t *ExploreTools) executeGraphRelationship(ctx context.Context, params GraphParams) (string, error) {
+	if params.QName == "" {
+		return fmt.Sprintf("Error: 'qname' parameter is required for %s operation.\nUse graph(symbols, file=...) or graph(search, name=...) to find qnames first.", params.Operation), nil
+	}
+
 	depth := params.Depth
 	if depth <= 0 {
 		depth = defaultGraphDepth
@@ -485,19 +623,19 @@ func (t *ExploreTools) executeGraph(ctx context.Context, arguments string) (stri
 
 	switch params.Operation {
 	case "callers":
-		nodes, opErr = t.arango.GetCallers(ctx, params.Target, depth)
+		nodes, opErr = t.arango.GetCallers(ctx, params.QName, depth)
 	case "callees":
-		nodes, opErr = t.arango.GetCallees(ctx, params.Target, depth)
+		nodes, opErr = t.arango.GetCallees(ctx, params.QName, depth)
 	case "implementations":
-		nodes, opErr = t.arango.GetImplementations(ctx, params.Target)
+		nodes, opErr = t.arango.GetImplementations(ctx, params.QName)
 	case "methods":
-		nodes, opErr = t.arango.GetMethods(ctx, params.Target)
+		nodes, opErr = t.arango.GetMethods(ctx, params.QName)
 	case "usages":
-		nodes, opErr = t.arango.GetUsages(ctx, params.Target)
+		nodes, opErr = t.arango.GetUsages(ctx, params.QName)
 	case "inheritors":
-		nodes, opErr = t.arango.GetInheritors(ctx, params.Target)
+		nodes, opErr = t.arango.GetInheritors(ctx, params.QName)
 	default:
-		return fmt.Sprintf("Unknown graph operation: %s. Valid: callers, callees, implementations, methods, usages, inheritors", params.Operation), nil
+		return fmt.Sprintf("Unknown graph operation: %s. Valid: symbols, search, callers, callees, implementations, methods, usages, inheritors", params.Operation), nil
 	}
 
 	if opErr != nil {
@@ -505,11 +643,11 @@ func (t *ExploreTools) executeGraph(ctx context.Context, arguments string) (stri
 	}
 
 	if len(nodes) == 0 {
-		return fmt.Sprintf("%s of %s: No results found.\n", capitalize(params.Operation), params.Target), nil
+		return fmt.Sprintf("%s of %s: No results found.\n", capitalize(params.Operation), params.QName), nil
 	}
 
 	var out strings.Builder
-	out.WriteString(fmt.Sprintf("%s of %s", capitalize(params.Operation), params.Target))
+	out.WriteString(fmt.Sprintf("%s of %s", capitalize(params.Operation), params.QName))
 	if params.Operation == "callers" || params.Operation == "callees" {
 		out.WriteString(fmt.Sprintf(" (depth %d)", depth))
 	}
@@ -526,13 +664,25 @@ func (t *ExploreTools) executeGraph(ctx context.Context, arguments string) (stri
 
 	out.WriteString("Use read(file) to see the code for any of these.\n")
 
-	slog.DebugContext(ctx, "graph executed",
+	slog.DebugContext(ctx, "graph relationship executed",
 		"operation", params.Operation,
-		"target", params.Target,
+		"qname", params.QName,
 		"depth", depth,
 		"results", len(nodes))
 
 	return out.String(), nil
+}
+
+// graphIndexedExtensions lists file extensions that have codegraph support.
+// TODO: Add more languages as codegraph support expands (ts, js, java, cpp, php, rust, ruby)
+var graphIndexedExtensions = map[string]bool{
+	".go": true,
+	".py": true,
+}
+
+// isGraphIndexedExtension returns true if the file extension has codegraph support.
+func isGraphIndexedExtension(ext string) bool {
+	return graphIndexedExtensions[ext]
 }
 
 func (t *ExploreTools) executeTree(ctx context.Context, arguments string) (string, error) {

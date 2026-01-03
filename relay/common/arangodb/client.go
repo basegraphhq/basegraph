@@ -37,6 +37,10 @@ type Client interface {
 	GetInheritors(ctx context.Context, qname string) ([]GraphNode, error)
 	TraverseFrom(ctx context.Context, qnames []string, opts TraversalOptions) ([]GraphNode, []GraphEdge, error)
 
+	// Symbol discovery operations
+	GetFileSymbols(ctx context.Context, filepath string) ([]FileSymbol, error)
+	SearchSymbols(ctx context.Context, opts SearchOptions) ([]SearchResult, int, error) // returns results, total count, error
+
 	// Utility
 	Close() error
 }
@@ -140,6 +144,49 @@ func (c *client) EnsureCollections(ctx context.Context) error {
 	for _, name := range edgeCollections {
 		if err := c.ensureCollection(ctx, name, true); err != nil {
 			return err
+		}
+	}
+
+	// Ensure indexes for symbol discovery queries
+	if err := c.ensureIndexes(ctx); err != nil {
+		return fmt.Errorf("ensure indexes: %w", err)
+	}
+
+	return nil
+}
+
+// ensureIndexes creates indexes for efficient symbol discovery queries.
+func (c *client) ensureIndexes(ctx context.Context) error {
+	// Index on 'filepath' for GetFileSymbols query
+	// Index on 'name' for SearchSymbols query
+	indexedCollections := []string{"functions", "types", "members"}
+
+	for _, colName := range indexedCollections {
+		col, err := c.db.GetCollection(ctx, colName, nil)
+		if err != nil {
+			return fmt.Errorf("get collection %s: %w", colName, err)
+		}
+
+		// Filepath index - for symbols(file) operation
+		_, isNew, err := col.EnsurePersistentIndex(ctx, []string{"filepath"}, &arangodb.CreatePersistentIndexOptions{
+			Name: "idx_filepath",
+		})
+		if err != nil {
+			return fmt.Errorf("ensure filepath index on %s: %w", colName, err)
+		}
+		if isNew {
+			slog.InfoContext(ctx, "arangodb index created", "collection", colName, "index", "idx_filepath")
+		}
+
+		// Name index - for search(name) operation
+		_, isNew, err = col.EnsurePersistentIndex(ctx, []string{"name"}, &arangodb.CreatePersistentIndexOptions{
+			Name: "idx_name",
+		})
+		if err != nil {
+			return fmt.Errorf("ensure name index on %s: %w", colName, err)
+		}
+		if isNew {
+			slog.InfoContext(ctx, "arangodb index created", "collection", colName, "index", "idx_name")
 		}
 	}
 
@@ -280,6 +327,9 @@ func (c *client) IngestNodes(ctx context.Context, collection string, nodes []Nod
 		}
 		if node.TypeQName != "" {
 			doc["type_qname"] = node.TypeQName
+		}
+		if node.Signature != "" {
+			doc["signature"] = node.Signature
 		}
 		docs[i] = doc
 	}
@@ -631,4 +681,219 @@ func nodeCollectionForKind(kind string) string {
 
 func extractQNameFromID(id string) string {
 	return id
+}
+
+// GetFileSymbols returns all symbols defined in a file, sorted by position.
+func (c *client) GetFileSymbols(ctx context.Context, filepath string) ([]FileSymbol, error) {
+	if c.db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	start := time.Now()
+
+	// Query all collections for symbols in this file
+	// Note: is_method=true means it's a method, so we return "method" as kind for display
+	// Use suffix matching to handle relative vs absolute paths
+	query := `
+		FOR doc IN UNION(
+			(FOR f IN functions FILTER f.filepath == @filepath OR f.filepath LIKE @pathPattern RETURN f),
+			(FOR t IN types FILTER t.filepath == @filepath OR t.filepath LIKE @pathPattern RETURN t),
+			(FOR m IN members FILTER m.filepath == @filepath OR m.filepath LIKE @pathPattern RETURN m)
+		)
+		SORT doc.pos ASC
+		RETURN { 
+			qname: doc.qname, 
+			name: doc.name, 
+			kind: doc.is_method ? "method" : doc.kind, 
+			signature: doc.signature,
+			pos: doc.pos, 
+			end: doc.end 
+		}
+	`
+
+	// Create suffix pattern for matching: "%" + "/path/to/file.go"
+	pathPattern := "%" + filepath
+	if strings.HasPrefix(filepath, "/") {
+		// Already absolute, just use exact match (pathPattern won't match anything extra)
+		pathPattern = filepath
+	}
+
+	cursor, err := c.db.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: map[string]any{
+			"filepath":    filepath,
+			"pathPattern": pathPattern,
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("execute query: %w", err)
+	}
+	defer cursor.Close()
+
+	var results []FileSymbol
+	for cursor.HasMore() {
+		var doc struct {
+			QName     string `json:"qname"`
+			Name      string `json:"name"`
+			Kind      string `json:"kind"`
+			Signature string `json:"signature"`
+			Pos       int    `json:"pos"`
+			End       int    `json:"end"`
+		}
+		_, err := cursor.ReadDocument(ctx, &doc)
+		if err != nil {
+			return nil, fmt.Errorf("read document: %w", err)
+		}
+		results = append(results, FileSymbol{
+			QName:     doc.QName,
+			Name:      doc.Name,
+			Kind:      doc.Kind,
+			Signature: doc.Signature,
+			Pos:       doc.Pos,
+			End:       doc.End,
+		})
+	}
+
+	slog.DebugContext(ctx, "arangodb file symbols retrieved",
+		"filepath", filepath,
+		"count", len(results),
+		"duration_ms", time.Since(start).Milliseconds())
+
+	return results, nil
+}
+
+// SearchSymbols finds symbols by name pattern with optional filters.
+// Returns matching symbols, total count, and error.
+func (c *client) SearchSymbols(ctx context.Context, opts SearchOptions) ([]SearchResult, int, error) {
+	if c.db == nil {
+		return nil, 0, fmt.Errorf("database not initialized")
+	}
+
+	start := time.Now()
+
+	// Convert glob pattern to AQL LIKE pattern: * -> %
+	pattern := globToLike(opts.Name)
+
+	// Build dynamic filter clauses
+	var filters []string
+	bindVars := map[string]any{
+		"pattern": pattern,
+	}
+
+	// Always filter by name pattern
+	filters = append(filters, "LIKE(doc.name, @pattern, true)")
+
+	// Handle kind filter - "method" is stored as kind="function" with is_method=true
+	if opts.Kind != "" {
+		switch opts.Kind {
+		case "method":
+			filters = append(filters, "(doc.kind == 'function' AND doc.is_method == true)")
+		case "function":
+			filters = append(filters, "(doc.kind == 'function' AND (doc.is_method == null OR doc.is_method == false))")
+		default:
+			filters = append(filters, "doc.kind == @kind")
+			bindVars["kind"] = opts.Kind
+		}
+	}
+	if opts.File != "" {
+		// Use suffix matching to handle relative vs absolute paths
+		if strings.HasPrefix(opts.File, "/") {
+			// Absolute path - exact match
+			filters = append(filters, "doc.filepath == @file")
+			bindVars["file"] = opts.File
+		} else {
+			// Relative path - match suffix
+			filters = append(filters, "(doc.filepath == @file OR doc.filepath LIKE @filePattern)")
+			bindVars["file"] = opts.File
+			bindVars["filePattern"] = "%" + opts.File
+		}
+	}
+	if opts.Namespace != "" {
+		filters = append(filters, "doc.namespace == @namespace")
+		bindVars["namespace"] = opts.Namespace
+	}
+
+	filterClause := strings.Join(filters, " AND ")
+
+	// Query with limit, but also get total count
+	// Note: is_method=true means it's a method, so we return "method" as kind for display
+	query := fmt.Sprintf(`
+		LET all_results = (
+			FOR doc IN UNION(
+				(FOR f IN functions RETURN f),
+				(FOR t IN types RETURN t),
+				(FOR m IN members RETURN m)
+			)
+			FILTER %s
+			RETURN doc
+		)
+		LET total = LENGTH(all_results)
+		LET limited = (
+			FOR doc IN all_results
+			SORT doc.filepath, doc.pos
+			LIMIT 50
+			RETURN { 
+				qname: doc.qname, 
+				name: doc.name, 
+				kind: doc.is_method ? "method" : doc.kind, 
+				signature: doc.signature,
+				filepath: doc.filepath,
+				pos: doc.pos 
+			}
+		)
+		RETURN { results: limited, total: total }
+	`, filterClause)
+
+	cursor, err := c.db.Query(ctx, query, &arangodb.QueryOptions{
+		BindVars: bindVars,
+	})
+	if err != nil {
+		return nil, 0, fmt.Errorf("execute query: %w", err)
+	}
+	defer cursor.Close()
+
+	var response struct {
+		Results []struct {
+			QName     string `json:"qname"`
+			Name      string `json:"name"`
+			Kind      string `json:"kind"`
+			Signature string `json:"signature"`
+			Filepath  string `json:"filepath"`
+			Pos       int    `json:"pos"`
+		} `json:"results"`
+		Total int `json:"total"`
+	}
+
+	if cursor.HasMore() {
+		_, err := cursor.ReadDocument(ctx, &response)
+		if err != nil {
+			return nil, 0, fmt.Errorf("read document: %w", err)
+		}
+	}
+
+	results := make([]SearchResult, len(response.Results))
+	for i, doc := range response.Results {
+		results[i] = SearchResult{
+			QName:     doc.QName,
+			Name:      doc.Name,
+			Kind:      doc.Kind,
+			Signature: doc.Signature,
+			Filepath:  doc.Filepath,
+			Pos:       doc.Pos,
+		}
+	}
+
+	slog.DebugContext(ctx, "arangodb symbol search completed",
+		"pattern", opts.Name,
+		"kind", opts.Kind,
+		"results", len(results),
+		"total", response.Total,
+		"duration_ms", time.Since(start).Milliseconds())
+
+	return results, response.Total, nil
+}
+
+// globToLike converts glob patterns to SQL LIKE patterns.
+// * -> % (match any characters)
+func globToLike(pattern string) string {
+	return strings.ReplaceAll(pattern, "*", "%")
 }

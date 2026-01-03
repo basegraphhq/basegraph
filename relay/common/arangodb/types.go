@@ -20,6 +20,7 @@ type Node struct {
 	End       int
 	IsMethod  bool   // Go: true for receiver functions
 	TypeQName string // For members: the type of the field/variable
+	Signature string // For functions: human-readable signature
 }
 
 type Edge struct {
@@ -47,4 +48,32 @@ type TraversalOptions struct {
 	EdgeTypes []string
 	Direction Direction
 	MaxDepth  int
+}
+
+// FileSymbol represents a symbol found in a file (for symbols operation).
+type FileSymbol struct {
+	QName     string
+	Name      string
+	Kind      string
+	Signature string
+	Pos       int
+	End       int
+}
+
+// SearchOptions configures symbol search parameters.
+type SearchOptions struct {
+	Name      string // Glob pattern: "Plan*", "*Issue*"
+	Kind      string // Filter by kind: function, method, struct, interface
+	File      string // Filter by filepath
+	Namespace string // Filter by module path
+}
+
+// SearchResult represents a symbol found by search.
+type SearchResult struct {
+	QName     string
+	Name      string
+	Kind      string
+	Signature string
+	Filepath  string
+	Pos       int
 }
