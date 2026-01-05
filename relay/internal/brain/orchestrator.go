@@ -173,10 +173,7 @@ func (o *Orchestrator) HandleEngagement(ctx context.Context, input EngagementInp
 
 	if len(output.Actions) > 0 {
 		// Validate actions before execution to catch LLM output errors early
-		validationInput := SubmitActionsInput{
-			Actions:   output.Actions,
-			Reasoning: output.Reasoning,
-		}
+		validationInput := SubmitActionsInput(output)
 		if err := o.actionValidator.Validate(ctx, *issue, validationInput); err != nil {
 			slog.ErrorContext(ctx, "action validation failed", "error", err)
 			return NewFatalError(fmt.Errorf("validating actions: %w", err))

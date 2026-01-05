@@ -25,9 +25,9 @@ const (
 type Thoroughness string
 
 const (
-	ThoroughnessQuick  Thoroughness = "quick"    // Fast lookup, ~15 iterations, ~20k tokens
-	ThoughnessMedium   Thoroughness = "medium"   // Balanced exploration, ~40 iterations, ~60k tokens
-	ThoughnessThorough Thoroughness = "thorough" // Comprehensive search, ~100 iterations, ~120k tokens
+	ThoroughnessQuick  Thoroughness = "quick"    // Fast lookup, ~15 iterations, ~40k tokens
+	ThoughnessMedium   Thoroughness = "medium"   // Balanced exploration, ~25 iterations, ~100k tokens
+	ThoughnessThorough Thoroughness = "thorough" // Comprehensive search, ~100 iterations, ~200k tokens
 )
 
 // ThoroughnessConfig defines limits and behavior for each thoroughness level.
@@ -43,21 +43,21 @@ func thoroughnessConfig(t Thoroughness) ThoroughnessConfig {
 	switch t {
 	case ThoroughnessQuick:
 		return ThoroughnessConfig{
-			MaxIterations:   15,
-			SoftTokenTarget: 20000,
-			HardTokenLimit:  40000,
+			MaxIterations:   10,
+			SoftTokenTarget: 15000,
+			HardTokenLimit:  25000,
 		}
 	case ThoughnessMedium:
 		return ThoroughnessConfig{
-			MaxIterations:   40,
-			SoftTokenTarget: 60000,
-			HardTokenLimit:  100000,
+			MaxIterations:   20,
+			SoftTokenTarget: 25000,
+			HardTokenLimit:  40000,
 		}
 	case ThoughnessThorough:
 		return ThoroughnessConfig{
-			MaxIterations:   100,
-			SoftTokenTarget: 120000,
-			HardTokenLimit:  150000,
+			MaxIterations:   50,
+			SoftTokenTarget: 60000,
+			HardTokenLimit:  100000,
 		}
 	default:
 		return thoroughnessConfig(ThoughnessMedium)
@@ -66,24 +66,23 @@ func thoroughnessConfig(t Thoroughness) ThoroughnessConfig {
 
 // ExploreMetrics captures structured data about an exploration session for analysis.
 type ExploreMetrics struct {
-	SessionID         string         `json:"session_id"`
-	Query             string         `json:"query"`
-	Thoroughness      string         `json:"thoroughness"`
-	StartTime         time.Time      `json:"start_time"`
-	EndTime           time.Time      `json:"end_time"`
-	DurationMs        int64          `json:"duration_ms"`
-	Iterations        int            `json:"iterations"`
-	TotalTokens       int            `json:"total_tokens"`
-	PromptTokens      int            `json:"prompt_tokens"`
-	CompletionTokens  int            `json:"completion_tokens"`
-	ToolCalls         map[string]int `json:"tool_calls"`
-	Confidence        string         `json:"confidence"`
-	HitSoftLimit      bool           `json:"hit_soft_limit"`
-	HitHardLimit      bool           `json:"hit_hard_limit"`
-	HitIterLimit      bool           `json:"hit_iteration_limit"`
-	DoomLoopDetected  bool           `json:"doom_loop_detected"`
-	FinalReportLen    int            `json:"final_report_length"`
-	TerminationReason string         `json:"termination_reason"`
+	SessionID             string         `json:"session_id"`
+	Query                 string         `json:"query"`
+	Thoroughness          string         `json:"thoroughness"`
+	StartTime             time.Time      `json:"start_time"`
+	EndTime               time.Time      `json:"end_time"`
+	DurationMs            int64          `json:"duration_ms"`
+	Iterations            int            `json:"iterations"`
+	ContextWindowTokens   int            `json:"context_window_tokens"`   // Final context window size
+	TotalCompletionTokens int            `json:"total_completion_tokens"` // Sum of all completion tokens
+	ToolCalls             map[string]int `json:"tool_calls"`
+	Confidence            string         `json:"confidence"`
+	HitSoftLimit          bool           `json:"hit_soft_limit"`
+	HitHardLimit          bool           `json:"hit_hard_limit"`
+	HitIterLimit          bool           `json:"hit_iteration_limit"`
+	DoomLoopDetected      bool           `json:"doom_loop_detected"`
+	FinalReportLen        int            `json:"final_report_length"`
+	TerminationReason     string         `json:"termination_reason"`
 }
 
 // ExploreAgent is a sub-agent that explores the codebase.
@@ -159,7 +158,9 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string, thoroughness T
 		"thoroughness", string(thoroughness))
 
 	// Track token usage and iterations
-	totalPromptTokens := 0
+	// - contextWindowTokens: current context window size (for limit checks)
+	// - totalCompletionTokens: sum of all completion tokens generated
+	contextWindowTokens := 0
 	totalCompletionTokens := 0
 	iterations := 0
 	softNudgeSent := false
@@ -170,19 +171,17 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string, thoroughness T
 		metrics.EndTime = time.Now()
 		metrics.DurationMs = time.Since(start).Milliseconds()
 		metrics.Iterations = iterations
-		metrics.TotalTokens = totalPromptTokens + totalCompletionTokens
-		metrics.PromptTokens = totalPromptTokens
-		metrics.CompletionTokens = totalCompletionTokens
+		metrics.ContextWindowTokens = contextWindowTokens
+		metrics.TotalCompletionTokens = totalCompletionTokens
 		metrics.FinalReportLen = debugLog.Len()
 
 		slog.InfoContext(ctx, "explore agent completed",
 			"query", logger.Truncate(query, 50),
 			"thoroughness", string(thoroughness),
-			"total_duration_ms", metrics.DurationMs,
+			"duration_ms", metrics.DurationMs,
 			"iterations", iterations,
-			"total_prompt_tokens", totalPromptTokens,
+			"context_window_tokens", contextWindowTokens,
 			"total_completion_tokens", totalCompletionTokens,
-			"total_tokens", metrics.TotalTokens,
 			"confidence", metrics.Confidence,
 			"termination_reason", metrics.TerminationReason)
 
@@ -215,31 +214,53 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string, thoroughness T
 			return report, nil
 		}
 
-		totalTokens := totalPromptTokens + totalCompletionTokens
+		// Check limits based on current context window size
+		// On first iteration, contextWindowTokens is 0 so we skip limit checks
 
 		// Soft nudge at 80% of target (not forced - just a gentle prompt)
-		if !softNudgeSent && totalTokens > config.SoftTokenTarget*80/100 {
+		if !softNudgeSent && contextWindowTokens > config.SoftTokenTarget*80/100 {
 			softNudgeSent = true
 			metrics.HitSoftLimit = true
-			debugLog.WriteString(fmt.Sprintf("\n=== SOFT LIMIT REACHED (%d tokens, 80%% of %d) - adding synthesis nudge ===\n",
-				totalTokens, config.SoftTokenTarget))
+			debugLog.WriteString(fmt.Sprintf("\n=== SOFT LIMIT REACHED (context=%d tokens, 80%% of %d) - adding synthesis nudge ===\n",
+				contextWindowTokens, config.SoftTokenTarget))
 
 			messages = append(messages, llm.Message{
 				Role: "user",
-				Content: `You've gathered substantial context. Consider:
-- Do you have enough evidence to answer confidently?
-- Is there a specific gap that one more search would fill?
+				Content: `⚠️ CONTEXT BUDGET 80% USED
 
-If confident, write your report. If not, continue with targeted searches.`,
+You've used most of your exploration budget. Before any more tool calls:
+
+1. Review what you've already found above
+2. If you can answer the question with current evidence → WRITE YOUR REPORT NOW
+3. Only continue if there's ONE specific gap that ONE more search would fill
+
+Stop exploring. Start synthesizing.`,
 			})
 		}
 
-		// Hard limit (safety ceiling)
-		if totalTokens >= config.HardTokenLimit {
+		// Hard limit check moved to AFTER resp.PromptTokens is known (see below)
+
+		resp, err := e.llm.ChatWithTools(ctx, llm.AgentRequest{
+			Messages: messages,
+			Tools:    e.tools.Definitions(),
+		})
+		if err != nil {
+			metrics.TerminationReason = "error"
+			return "", fmt.Errorf("explore agent chat iteration %d: %w", iterations, err)
+		}
+
+		// Track token usage
+		// - resp.PromptTokens is the context window size for THIS call
+		// - resp.CompletionTokens is tokens generated in THIS call
+		contextWindowTokens = resp.PromptTokens
+		totalCompletionTokens += resp.CompletionTokens
+
+		// Check hard token limit AFTER response (ensures we catch this iteration's tokens)
+		if contextWindowTokens >= config.HardTokenLimit {
 			slog.InfoContext(ctx, "explore agent hit hard token limit, synthesizing findings",
 				"iterations", iterations,
-				"total_tokens", totalTokens)
-			debugLog.WriteString(fmt.Sprintf("\n=== HARD TOKEN LIMIT REACHED (%d tokens) - forcing synthesis ===\n", totalTokens))
+				"context_window_tokens", contextWindowTokens)
+			debugLog.WriteString(fmt.Sprintf("\n=== HARD TOKEN LIMIT REACHED (context=%d tokens) - forcing synthesis ===\n", contextWindowTokens))
 
 			metrics.HitHardLimit = true
 			metrics.TerminationReason = "hard_limit"
@@ -253,21 +274,18 @@ If confident, write your report. If not, continue with targeted searches.`,
 			return report, nil
 		}
 
-		resp, err := e.llm.ChatWithTools(ctx, llm.AgentRequest{
-			Messages: messages,
-			Tools:    e.tools.Definitions(),
-		})
-		if err != nil {
-			metrics.TerminationReason = "error"
-			return "", fmt.Errorf("explore agent chat iteration %d: %w", iterations, err)
-		}
-
-		// Track token usage
-		totalPromptTokens += resp.PromptTokens
-		totalCompletionTokens += resp.CompletionTokens
+		// Log per-call token usage and current context window
+		slog.DebugContext(ctx, "explore agent iteration completed",
+			"iteration", iterations,
+			"call_prompt_tokens", resp.PromptTokens,
+			"call_completion_tokens", resp.CompletionTokens,
+			"context_window_tokens", contextWindowTokens,
+			"total_completion_tokens", totalCompletionTokens,
+			"tool_calls", len(resp.ToolCalls))
 
 		// Log assistant response
-		debugLog.WriteString(fmt.Sprintf("--- ITERATION %d (tokens: %d) ---\n", iterations, totalPromptTokens+totalCompletionTokens))
+		debugLog.WriteString(fmt.Sprintf("--- ITERATION %d (context=%d, completion=%d) ---\n",
+			iterations, resp.PromptTokens, resp.CompletionTokens))
 		debugLog.WriteString(fmt.Sprintf("[ASSISTANT]\n%s\n\n", resp.Content))
 
 		// No tool calls = model wants to conclude
@@ -407,11 +425,6 @@ func extractConfidence(content string) string {
 	}
 }
 
-// estimateTokens provides a rough token count estimate (4 chars per token).
-func estimateTokens(s string) int {
-	return len(s) / 4
-}
-
 // executeToolsParallel runs multiple tool calls concurrently with bounded parallelism.
 // Individual tool failures are captured as error messages in the result, not propagated.
 func (e *ExploreAgent) executeToolsParallel(ctx context.Context, toolCalls []llm.ToolCall) []toolResult {
@@ -517,36 +530,98 @@ func (e *ExploreAgent) writeMetricsLog(metrics ExploreMetrics) {
 }
 
 // systemPrompt returns the system prompt for the explore agent.
-// Following Anthropic's guidance: suggestive guidelines, not prescriptive rules.
-// Encourages thorough thinking and self-assessment.
+// Optimized for deterministic code graph queries with bash as fallback.
 func (e *ExploreAgent) systemPrompt() string {
-	return fmt.Sprintf(`You are exploring a codebase to answer a question. Your goal is to find accurate, complete information.
+	return fmt.Sprintf(`Explore this codebase to answer a question. Return a concise report with evidence.
 
-## Tools
+## Two Tools: codegraph (PRIMARY) and bash (FALLBACK)
 
-Use the right tool for the job. Each tool has detailed usage guidance in its description.
+### codegraph - Use THIS FIRST for code exploration
+Compiler-level accuracy. Deterministic. Returns structured XML with qnames and signatures.
 
-## Graph Qualified Names
+ALWAYS use codegraph for:
+  • File overview:      codegraph(operation="symbols", file="path.go")
+  • Just structs:       codegraph(operation="symbols", file="path.go", kind="struct")
+  • Finding symbols:    codegraph(operation="find", symbol="*Pattern*")
+  • Call graph:         codegraph(operation="callers", symbol="FuncName")
+  • Type hierarchy:     codegraph(operation="implementations", symbol="Interface")
+  • Type methods:       codegraph(operation="methods", symbol="TypeName")
+  • Type usage:         codegraph(operation="usages", symbol="TypeName")
+  • What func calls:    codegraph(operation="callees", symbol="FuncName")
 
-Module path: %s
-Format: {module}/{package}.{Type}.{Method}
-Example: %s/internal/brain.ExploreAgent.Explore
+Example workflow:
+  1. codegraph(operation="symbols", file="internal/brain/planner.go", kind="function")
+     → See all functions with signatures (filter reduces noise)
+  2. codegraph(operation="callers", symbol="Plan")
+     → See who calls Plan() - bash cannot do this!
+  3. bash(sed -n '45,90p' internal/brain/planner.go)
+     → Read the specific Plan() implementation
 
-## Approach
+Supported: Go, Python. Returns XML with qnames, signatures, line numbers.
 
-1. Start broad, then narrow down
-2. Use graph for structural questions (who calls X, what implements Y)
-3. Use grep for text search (error messages, string literals, patterns)
-4. Read only the specific lines you need
-5. Verify your understanding before concluding
+### bash - Use ONLY when codegraph cannot help
+For git history, reading specific line ranges, quick text searches.
 
-## Quality Standards
+  sed -n '100,150p' file.go      # Read lines 100-150
+  git log --oneline -10          # Recent commits
+  git blame file.go              # Line history
+  rg -n "TODO" | head -20        # Text search
 
-- Cite evidence: include file:line references for claims
-- Be confident: only conclude when you have clear evidence
-- Be thorough: for complex questions, check multiple angles
-- Acknowledge uncertainty: if something is unclear, say so
+DO NOT use bash for:
+  ✗ head -200 file.go            → Use codegraph(symbols) instead!
+  ✗ rg -n "SymbolName"           → Use codegraph(find) instead!
+  ✗ Understanding call graphs    → ONLY codegraph can do this!
 
-When you have enough information to answer confidently, write a clear report.
-Your thinking should be thorough.`, e.modulePath, e.modulePath)
+## Decision Tree
+
+Question: "What's in this file?"
+  → codegraph(symbols, file="...") - gives structured overview
+  → codegraph(symbols, file="...", kind="struct") - only structs/types
+
+Question: "Who calls function X?"
+  → codegraph(callers, symbol="X") - only tool that can answer this
+
+Question: "Where is type Y defined?"
+  → codegraph(find, symbol="Y") - AST-precise, not text match
+
+Question: "Read lines 50-100 of file.go"
+  → bash(sed -n '50,100p' file.go) - specific code reading
+
+Question: "Find TODO comments"
+  → bash(rg -n "TODO" | head -20) - text search
+
+Question: "Recent changes to file.go"
+  → bash(git log --oneline file.go) - git history
+
+## Module: %s
+
+## Resource Constraints (IMPORTANT)
+
+Each tool call adds tokens to context. Be efficient:
+- File reads (sed): ~30 tokens per line. Reading 100 lines = ~3000 tokens.
+- Search results (rg): ~50 tokens per match.
+- You have LIMITED iterations. Make each one count.
+
+## Efficiency Rules
+
+- NEVER search for the same pattern twice. You already have those results above.
+- NEVER read the same file region twice. Reference your earlier findings.
+- If codegraph found a symbol at file:line, read ONLY that region (±20 lines).
+- Use sed ranges of 50-80 lines max, not 200. Chain reads if needed.
+
+## When to Stop
+
+Write your report immediately when:
+- You found the answer with evidence (file:line references)
+- You've checked 2-3 approaches with no new info
+- You're about to search for something you already searched
+
+Don't keep searching "to be thorough." Quality over quantity.
+
+## Output Format
+
+Concise report with:
+- Direct answer to the question
+- Key locations with file:line references
+- Code snippets where helpful (use bash to read after codegraph gives locations)`, e.modulePath)
 }

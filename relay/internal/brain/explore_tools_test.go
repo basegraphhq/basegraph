@@ -9,98 +9,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"basegraph.app/relay/common/arangodb"
 	"basegraph.app/relay/internal/brain"
 )
-
-// mockArangoClient implements arangodb.Client for testing
-type mockArangoClient struct {
-	getFileSymbolsFn func(ctx context.Context, filepath string) ([]arangodb.FileSymbol, error)
-	searchSymbolsFn  func(ctx context.Context, opts arangodb.SearchOptions) ([]arangodb.SearchResult, int, error)
-	getCallersFn     func(ctx context.Context, qname string, depth int) ([]arangodb.GraphNode, error)
-	getCalleesFn     func(ctx context.Context, qname string, depth int) ([]arangodb.GraphNode, error)
-	getMethodsFn     func(ctx context.Context, qname string) ([]arangodb.GraphNode, error)
-	getImplementsFn  func(ctx context.Context, qname string) ([]arangodb.GraphNode, error)
-	getUsagesFn      func(ctx context.Context, qname string) ([]arangodb.GraphNode, error)
-	getInheritorsFn  func(ctx context.Context, qname string) ([]arangodb.GraphNode, error)
-}
-
-func (m *mockArangoClient) EnsureDatabase(ctx context.Context) error    { return nil }
-func (m *mockArangoClient) EnsureCollections(ctx context.Context) error { return nil }
-func (m *mockArangoClient) EnsureGraph(ctx context.Context) error       { return nil }
-func (m *mockArangoClient) IngestNodes(ctx context.Context, collection string, nodes []arangodb.Node) error {
-	return nil
-}
-
-func (m *mockArangoClient) IngestEdges(ctx context.Context, collection string, edges []arangodb.Edge) error {
-	return nil
-}
-func (m *mockArangoClient) TruncateCollections(ctx context.Context) error { return nil }
-func (m *mockArangoClient) Close() error                                  { return nil }
-
-func (m *mockArangoClient) GetCallers(ctx context.Context, qname string, depth int) ([]arangodb.GraphNode, error) {
-	if m.getCallersFn != nil {
-		return m.getCallersFn(ctx, qname, depth)
-	}
-	return nil, nil
-}
-
-func (m *mockArangoClient) GetCallees(ctx context.Context, qname string, depth int) ([]arangodb.GraphNode, error) {
-	if m.getCalleesFn != nil {
-		return m.getCalleesFn(ctx, qname, depth)
-	}
-	return nil, nil
-}
-
-func (m *mockArangoClient) GetChildren(ctx context.Context, qname string) ([]arangodb.GraphNode, error) {
-	return nil, nil
-}
-
-func (m *mockArangoClient) GetImplementations(ctx context.Context, qname string) ([]arangodb.GraphNode, error) {
-	if m.getImplementsFn != nil {
-		return m.getImplementsFn(ctx, qname)
-	}
-	return nil, nil
-}
-
-func (m *mockArangoClient) GetMethods(ctx context.Context, qname string) ([]arangodb.GraphNode, error) {
-	if m.getMethodsFn != nil {
-		return m.getMethodsFn(ctx, qname)
-	}
-	return nil, nil
-}
-
-func (m *mockArangoClient) GetUsages(ctx context.Context, qname string) ([]arangodb.GraphNode, error) {
-	if m.getUsagesFn != nil {
-		return m.getUsagesFn(ctx, qname)
-	}
-	return nil, nil
-}
-
-func (m *mockArangoClient) GetInheritors(ctx context.Context, qname string) ([]arangodb.GraphNode, error) {
-	if m.getInheritorsFn != nil {
-		return m.getInheritorsFn(ctx, qname)
-	}
-	return nil, nil
-}
-
-func (m *mockArangoClient) TraverseFrom(ctx context.Context, qnames []string, opts arangodb.TraversalOptions) ([]arangodb.GraphNode, []arangodb.GraphEdge, error) {
-	return nil, nil, nil
-}
-
-func (m *mockArangoClient) GetFileSymbols(ctx context.Context, filepath string) ([]arangodb.FileSymbol, error) {
-	if m.getFileSymbolsFn != nil {
-		return m.getFileSymbolsFn(ctx, filepath)
-	}
-	return nil, nil
-}
-
-func (m *mockArangoClient) SearchSymbols(ctx context.Context, opts arangodb.SearchOptions) ([]arangodb.SearchResult, int, error) {
-	if m.searchSymbolsFn != nil {
-		return m.searchSymbolsFn(ctx, opts)
-	}
-	return nil, 0, nil
-}
 
 var _ = Describe("ExploreTools", func() {
 	var (
@@ -133,7 +43,7 @@ var _ = Describe("ExploreTools", func() {
 		Expect(os.WriteFile(filepath.Join(tempDir, ".git", "config"), []byte("[core]"), 0o644)).To(Succeed())
 		Expect(os.WriteFile(filepath.Join(tempDir, "README.md"), []byte("# Test"), 0o644)).To(Succeed())
 
-		// Create tools with nil arango client (not needed for tree tests)
+		// Create tools with nil arango client (not needed for bash tests)
 		tools = brain.NewExploreTools(tempDir, nil)
 	})
 
@@ -143,519 +53,707 @@ var _ = Describe("ExploreTools", func() {
 		}
 	})
 
-	Describe("Tree Tool", func() {
-		Describe("Security", func() {
-			It("rejects absolute paths outside repo root", func() {
+	Describe("Bash Tool", func() {
+		Describe("Allowed Commands", func() {
+			It("executes cat command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "/etc/passwd",
+					"command": "cat src/main.go",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("path outside repository"))
+				Expect(result).To(ContainSubstring("package main"))
 			})
 
-			It("rejects path traversal with ..", func() {
+			It("executes head command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "../../../etc",
+					"command": "head -1 src/main.go",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("path outside repository"))
+				Expect(result).To(ContainSubstring("package main"))
 			})
 
-			It("rejects path traversal with encoded ..", func() {
+			It("executes tail command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "src/../../..",
+					"command": "tail -1 src/main.go",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("path outside repository"))
+				Expect(result).To(ContainSubstring("package main"))
 			})
 
-			It("rejects path that looks like subdirectory but escapes", func() {
-				// Create a sibling directory to test /repo vs /repo-evil scenario
-				siblingDir := tempDir + "-evil"
-				Expect(os.MkdirAll(siblingDir, 0o755)).To(Succeed())
-				Expect(os.WriteFile(filepath.Join(siblingDir, "secret.txt"), []byte("secret"), 0o644)).To(Succeed())
-				defer os.RemoveAll(siblingDir)
-
-				// Try to access sibling via path traversal
+			It("executes ls command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "../" + filepath.Base(siblingDir),
+					"command": "ls src",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("path outside repository"))
-			})
-
-			It("rejects symlink escape attempts", func() {
-				// Create a symlink pointing outside the repo
-				symlinkPath := filepath.Join(tempDir, "escape-link")
-				err := os.Symlink("/etc", symlinkPath)
-				if err != nil {
-					Skip("Cannot create symlinks on this system")
-				}
-
-				args, _ := json.Marshal(map[string]any{
-					"path": "escape-link",
-				})
-
-				_, execErr := tools.Execute(ctx, "tree", string(args))
-
-				// Should either reject or show the symlink as a file, not traverse it
-				Expect(execErr).NotTo(HaveOccurred())
-				// The symlink itself is in the repo, but we shouldn't traverse into /etc
-				// Current implementation: os.Stat follows symlinks, so /etc would be listed
-				// This test documents current behavior - symlink traversal is a known limitation
-				// For now, we accept that symlinks are followed (like standard `tree` command)
-			})
-		})
-
-		Describe("Functionality", func() {
-			It("lists directory structure at default depth", func() {
-				args, _ := json.Marshal(map[string]any{})
-
-				result, err := tools.Execute(ctx, "tree", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("src/"))
 				Expect(result).To(ContainSubstring("main.go"))
+				Expect(result).To(ContainSubstring("util"))
+			})
+
+			It("executes ls without arguments", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "ls",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("src"))
 				Expect(result).To(ContainSubstring("README.md"))
 			})
 
-			It("respects path parameter", func() {
+			It("executes tree command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "src",
+					"command": "tree -L 1",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("src/"))
+				// tree command should be allowed
+				Expect(result).NotTo(ContainSubstring("Command blocked"))
+			})
+
+			It("executes wc command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "wc -c src/main.go",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				// "package main" is 12 bytes
+				Expect(result).To(ContainSubstring("12"))
+			})
+
+			It("executes sed command for line range", func() {
+				// Create a multi-line file
+				Expect(os.WriteFile(filepath.Join(tempDir, "multi.txt"), []byte("line1\nline2\nline3\nline4\nline5\n"), 0o644)).To(Succeed())
+
+				args, _ := json.Marshal(map[string]any{
+					"command": "sed -n '2,4p' multi.txt",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("line2"))
+				Expect(result).To(ContainSubstring("line3"))
+				Expect(result).To(ContainSubstring("line4"))
+				Expect(result).NotTo(ContainSubstring("line1"))
+				Expect(result).NotTo(ContainSubstring("line5"))
+			})
+
+			It("executes find command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "find . -name '*.go'",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
 				Expect(result).To(ContainSubstring("main.go"))
-				Expect(result).To(ContainSubstring("util/"))
+				Expect(result).To(ContainSubstring("helper.go"))
 			})
 
-			It("excludes .git directory", func() {
-				args, _ := json.Marshal(map[string]any{})
-
-				result, err := tools.Execute(ctx, "tree", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).NotTo(ContainSubstring(".git"))
-				Expect(result).NotTo(ContainSubstring("config"))
-			})
-
-			It("excludes node_modules directory", func() {
-				// Create node_modules
-				Expect(os.MkdirAll(filepath.Join(tempDir, "node_modules", "lodash"), 0o755)).To(Succeed())
-				Expect(os.WriteFile(filepath.Join(tempDir, "node_modules", "lodash", "index.js"), []byte(""), 0o644)).To(Succeed())
-
-				args, _ := json.Marshal(map[string]any{})
-
-				result, err := tools.Execute(ctx, "tree", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).NotTo(ContainSubstring("node_modules"))
-				Expect(result).NotTo(ContainSubstring("lodash"))
-			})
-
-			It("respects depth parameter", func() {
+			It("executes file command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"depth": 1,
+					"command": "file src/main.go",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("src/"))
-				// At depth 1, we should NOT see files inside src/
-				Expect(result).NotTo(ContainSubstring("main.go"))
+				Expect(result).To(Or(
+					ContainSubstring("ASCII text"),
+					ContainSubstring("text"),
+				))
 			})
 
-			It("caps depth at maximum", func() {
+			It("executes git log command", func() {
+				// This may fail if not a git repo, but should be allowed
 				args, _ := json.Marshal(map[string]any{
-					"depth": 100, // Way over max
+					"command": "git log --oneline -1 2>/dev/null || echo 'not a git repo'",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				// Should still work, just capped at max depth (4)
-				Expect(result).To(ContainSubstring("src/"))
+				// Either shows commit or "not a git repo" - both are valid
+				Expect(result).NotTo(BeEmpty())
 			})
 
-			It("returns error for non-existent path", func() {
+			It("executes git status command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "nonexistent",
+					"command": "git status 2>/dev/null || echo 'not a git repo'",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Directory not found"))
+				Expect(result).NotTo(BeEmpty())
 			})
 
-			It("returns error when path is a file", func() {
+			It("executes git diff command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "README.md",
+					"command": "git diff 2>/dev/null || echo 'not a git repo'",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				_, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Not a directory"))
+				// Empty diff or error message - both are valid
 			})
 
-			It("shows directories before files", func() {
+			It("executes git blame command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "src",
+					"command": "git blame src/main.go 2>/dev/null || echo 'not a git repo'",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				// util/ (directory) should appear before main.go (file)
-				utilIdx := len(result) - len(result[findSubstring(result, "util/"):])
-				mainIdx := len(result) - len(result[findSubstring(result, "main.go"):])
-				Expect(utilIdx).To(BeNumerically("<", mainIdx))
+				Expect(result).NotTo(BeEmpty())
 			})
 
-			It("handles empty directory", func() {
-				emptyDir := filepath.Join(tempDir, "empty")
-				Expect(os.MkdirAll(emptyDir, 0o755)).To(Succeed())
-
+			It("executes stat command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "empty",
+					"command": "stat src/main.go",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Directory is empty"))
+				Expect(result).To(ContainSubstring("main.go"))
+			})
+		})
+
+		Describe("Blocked Commands", func() {
+			It("blocks rm command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "rm src/main.go",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+				Expect(result).To(ContainSubstring("write operation"))
+			})
+
+			It("blocks mv command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "mv src/main.go src/new.go",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks cp command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "cp src/main.go src/copy.go",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks mkdir command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "mkdir newdir",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks touch command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "touch newfile.txt",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks chmod command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "chmod 755 src/main.go",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks echo command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "echo 'malicious' > file.txt",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks printf command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "printf 'data' > file.txt",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks git push command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "git push origin main",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks git commit command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "git commit -m 'test'",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks git checkout command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "git checkout main",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks git reset command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "git reset --hard HEAD",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks git rebase command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "git rebase main",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks git merge command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "git merge feature",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks git pull command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "git pull origin main",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks git stash command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "git stash",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks git clean command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "git clean -fd",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks output redirection with >", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "cat src/main.go > copy.go",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+				Expect(result).To(ContainSubstring("redirection"))
+			})
+
+			It("blocks output redirection with >>", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "cat src/main.go >> copy.go",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+				Expect(result).To(ContainSubstring("redirection"))
+			})
+
+			It("blocks unlisted commands", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "curl https://example.com",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+				Expect(result).To(ContainSubstring("not in allowed list"))
+			})
+		})
+
+		Describe("Path Security", func() {
+			It("blocks absolute paths outside repo root", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "cat /etc/passwd",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+				Expect(result).To(ContainSubstring("path outside repository"))
+			})
+
+			It("blocks access to parent directories via absolute path", func() {
+				parentPath := filepath.Dir(tempDir)
+				args, _ := json.Marshal(map[string]any{
+					"command": "cat " + parentPath + "/somefile",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+				Expect(result).To(ContainSubstring("path outside repository"))
+			})
+
+			It("allows relative paths within repo", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "cat src/main.go",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("package main"))
+			})
+
+			It("allows nested relative paths within repo", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "cat src/util/helper.go",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("package util"))
+			})
+		})
+
+		Describe("Grep Handling", func() {
+			It("returns 'No matches found' for grep with no results", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "grep 'nonexistent_string_xyz' src/main.go",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("No matches found"))
+			})
+
+			It("returns matches for successful grep", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "grep 'package' src/main.go",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("package main"))
+			})
+
+			It("handles grep with multiple matches", func() {
+				// Create a file with multiple matching lines
+				Expect(os.WriteFile(filepath.Join(tempDir, "multi.txt"), []byte("line1\nline2\nline3\n"), 0o644)).To(Succeed())
+
+				args, _ := json.Marshal(map[string]any{
+					"command": "grep 'line' multi.txt",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("line1"))
+				Expect(result).To(ContainSubstring("line2"))
+				Expect(result).To(ContainSubstring("line3"))
 			})
 		})
 
 		Describe("Edge Cases", func() {
-			It("handles path with spaces", func() {
+			It("handles empty command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("command is required"))
+			})
+
+			It("handles whitespace-only command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "   ",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("command is required"))
+			})
+
+			It("handles command with leading/trailing whitespace", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "  cat src/main.go  ",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("package main"))
+			})
+
+			It("handles piped commands", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "cat src/main.go | head -1",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("package main"))
+			})
+
+			It("handles command that produces error output", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "cat nonexistent_file.txt",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("No such file"))
+			})
+
+			It("handles paths with spaces", func() {
 				spacePath := filepath.Join(tempDir, "path with spaces")
 				Expect(os.MkdirAll(spacePath, 0o755)).To(Succeed())
-				Expect(os.WriteFile(filepath.Join(spacePath, "file.txt"), []byte("test"), 0o644)).To(Succeed())
+				Expect(os.WriteFile(filepath.Join(spacePath, "file.txt"), []byte("test content"), 0o644)).To(Succeed())
 
 				args, _ := json.Marshal(map[string]any{
-					"path": "path with spaces",
+					"command": `cat "path with spaces/file.txt"`,
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("file.txt"))
+				Expect(result).To(ContainSubstring("test content"))
+			})
+		})
+
+		Describe("Output Limits", func() {
+			It("truncates very large output", func() {
+				// Create a large file
+				largeContent := make([]byte, 20000) // 20KB - exceeds 10KB limit
+				for i := range largeContent {
+					largeContent[i] = byte('a' + (i % 26))
+				}
+				Expect(os.WriteFile(filepath.Join(tempDir, "large.txt"), largeContent, 0o644)).To(Succeed())
+
+				args, _ := json.Marshal(map[string]any{
+					"command": "cat large.txt",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(len(result)).To(BeNumerically("<", 15000)) // Should be truncated
+				Expect(result).To(ContainSubstring("truncated"))
 			})
 
-			It("handles path with special characters", func() {
-				specialPath := filepath.Join(tempDir, "special-chars_123")
-				Expect(os.MkdirAll(specialPath, 0o755)).To(Succeed())
-				Expect(os.WriteFile(filepath.Join(specialPath, "test.go"), []byte("package test"), 0o644)).To(Succeed())
+			It("preserves output under the limit", func() {
+				smallContent := "small content"
+				Expect(os.WriteFile(filepath.Join(tempDir, "small.txt"), []byte(smallContent), 0o644)).To(Succeed())
 
 				args, _ := json.Marshal(map[string]any{
-					"path": "special-chars_123",
+					"command": "cat small.txt",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("test.go"))
-			})
-
-			It("handles deeply nested structure within depth limit", func() {
-				// Create a/b/c/d/e/f structure
-				deepPath := filepath.Join(tempDir, "a", "b", "c", "d", "e", "f")
-				Expect(os.MkdirAll(deepPath, 0o755)).To(Succeed())
-				Expect(os.WriteFile(filepath.Join(deepPath, "deep.txt"), []byte("deep"), 0o644)).To(Succeed())
-
-				args, _ := json.Marshal(map[string]any{
-					"path":  "a",
-					"depth": 4, // max depth
-				})
-
-				result, err := tools.Execute(ctx, "tree", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("b/"))
-				Expect(result).To(ContainSubstring("c/"))
-				Expect(result).To(ContainSubstring("d/"))
-				// e/ is at depth 4, should be visible
-				Expect(result).To(ContainSubstring("e/"))
-				// f/ is at depth 5, should NOT be visible
-				Expect(result).NotTo(ContainSubstring("f/"))
+				Expect(result).To(ContainSubstring("small content"))
+				Expect(result).NotTo(ContainSubstring("truncated"))
 			})
 		})
 	})
 
-	Describe("Graph Tool", func() {
-		var mockArango *mockArangoClient
-
-		BeforeEach(func() {
-			mockArango = &mockArangoClient{}
-			tools = brain.NewExploreTools(tempDir, mockArango)
-		})
-
-		Describe("symbols operation", func() {
-			It("returns symbols for a Go file", func() {
-				mockArango.getFileSymbolsFn = func(ctx context.Context, filepath string) ([]arangodb.FileSymbol, error) {
-					return []arangodb.FileSymbol{
-						{QName: "pkg.Planner", Name: "Planner", Kind: "struct", Pos: 25, End: 40},
-						{QName: "pkg.Planner.Plan", Name: "Plan", Kind: "method", Signature: "(p *Planner) Plan(ctx context.Context) error", Pos: 52, End: 80},
-						{QName: "pkg.NewPlanner", Name: "NewPlanner", Kind: "function", Signature: "NewPlanner(cfg Config) *Planner", Pos: 37, End: 50},
-					}, nil
-				}
-
+	Describe("Codegraph Tool", func() {
+		Describe("Parameter Validation", func() {
+			It("returns error for missing symbol in find operation", func() {
 				args, _ := json.Marshal(map[string]any{
-					"operation": "symbols",
-					"file":      "internal/brain/planner.go",
+					"operation": "find",
 				})
 
-				result, err := tools.Execute(ctx, "graph", string(args))
+				result, err := tools.Execute(ctx, "codegraph", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Symbols in internal/brain/planner.go [indexed]"))
-				Expect(result).To(ContainSubstring("Planner (struct)"))
-				Expect(result).To(ContainSubstring("(p *Planner) Plan(ctx context.Context) error (method)"))
-				Expect(result).To(ContainSubstring("NewPlanner(cfg Config) *Planner (function)"))
-				Expect(result).To(ContainSubstring("qname: pkg.Planner"))
+				Expect(result).To(ContainSubstring("symbol"))
+				Expect(result).To(ContainSubstring("required"))
 			})
 
-			It("returns error for non-indexed file types", func() {
-				args, _ := json.Marshal(map[string]any{
-					"operation": "symbols",
-					"file":      "src/component.tsx",
-				})
-
-				result, err := tools.Execute(ctx, "graph", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Symbols not available for .tsx files"))
-				Expect(result).To(ContainSubstring("Use grep to find definitions"))
-			})
-
-			It("returns helpful message when no symbols found", func() {
-				mockArango.getFileSymbolsFn = func(ctx context.Context, filepath string) ([]arangodb.FileSymbol, error) {
-					return []arangodb.FileSymbol{}, nil
-				}
-
-				args, _ := json.Marshal(map[string]any{
-					"operation": "symbols",
-					"file":      "internal/empty.go",
-				})
-
-				result, err := tools.Execute(ctx, "graph", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("No symbols found"))
-				Expect(result).To(ContainSubstring("may not be indexed yet"))
-			})
-
-			It("requires file parameter", func() {
-				args, _ := json.Marshal(map[string]any{
-					"operation": "symbols",
-				})
-
-				result, err := tools.Execute(ctx, "graph", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("'file' parameter is required"))
-			})
-		})
-
-		Describe("search operation", func() {
-			It("finds symbols by name pattern", func() {
-				mockArango.searchSymbolsFn = func(ctx context.Context, opts arangodb.SearchOptions) ([]arangodb.SearchResult, int, error) {
-					Expect(opts.Name).To(Equal("*Issue*"))
-					return []arangodb.SearchResult{
-						{QName: "pkg/model.Issue", Name: "Issue", Kind: "struct", Filepath: "internal/model/issue.go", Pos: 15},
-						{QName: "pkg/store.IssueStore", Name: "IssueStore", Kind: "struct", Filepath: "internal/store/issue.go", Pos: 22},
-					}, 2, nil
-				}
-
-				args, _ := json.Marshal(map[string]any{
-					"operation": "search",
-					"name":      "*Issue*",
-				})
-
-				result, err := tools.Execute(ctx, "graph", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring(`Search results for name="*Issue*"`))
-				Expect(result).To(ContainSubstring("(2 of 2)"))
-				Expect(result).To(ContainSubstring("Issue (struct)"))
-				Expect(result).To(ContainSubstring("IssueStore (struct)"))
-				Expect(result).To(ContainSubstring("qname: pkg/model.Issue"))
-			})
-
-			It("filters by kind", func() {
-				mockArango.searchSymbolsFn = func(ctx context.Context, opts arangodb.SearchOptions) ([]arangodb.SearchResult, int, error) {
-					Expect(opts.Name).To(Equal("Plan*"))
-					Expect(opts.Kind).To(Equal("method"))
-					return []arangodb.SearchResult{
-						{QName: "pkg.Planner.Plan", Name: "Plan", Kind: "method", Signature: "(p *Planner) Plan(ctx context.Context) error", Filepath: "internal/brain/planner.go", Pos: 52},
-					}, 1, nil
-				}
-
-				args, _ := json.Marshal(map[string]any{
-					"operation": "search",
-					"name":      "Plan*",
-					"kind":      "method",
-				})
-
-				result, err := tools.Execute(ctx, "graph", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring(`kind="method"`))
-				Expect(result).To(ContainSubstring("(p *Planner) Plan(ctx context.Context) error (method)"))
-			})
-
-			It("shows truncation message when results exceed limit", func() {
-				mockArango.searchSymbolsFn = func(ctx context.Context, opts arangodb.SearchOptions) ([]arangodb.SearchResult, int, error) {
-					results := make([]arangodb.SearchResult, 50)
-					for i := range results {
-						results[i] = arangodb.SearchResult{QName: "pkg.Func", Name: "Func", Kind: "function", Filepath: "file.go", Pos: i}
-					}
-					return results, 150, nil // 150 total, only 50 returned
-				}
-
-				args, _ := json.Marshal(map[string]any{
-					"operation": "search",
-					"name":      "*",
-				})
-
-				result, err := tools.Execute(ctx, "graph", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("(50 of 150)"))
-				Expect(result).To(ContainSubstring("Showing 50 of 150 results"))
-			})
-
-			It("requires name parameter", func() {
-				args, _ := json.Marshal(map[string]any{
-					"operation": "search",
-				})
-
-				result, err := tools.Execute(ctx, "graph", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("'name' parameter is required"))
-			})
-
-			It("returns helpful message when no results found", func() {
-				mockArango.searchSymbolsFn = func(ctx context.Context, opts arangodb.SearchOptions) ([]arangodb.SearchResult, int, error) {
-					return []arangodb.SearchResult{}, 0, nil
-				}
-
-				args, _ := json.Marshal(map[string]any{
-					"operation": "search",
-					"name":      "NonExistent*",
-				})
-
-				result, err := tools.Execute(ctx, "graph", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("No symbols found matching"))
-				Expect(result).To(ContainSubstring("Try a broader pattern"))
-			})
-		})
-
-		Describe("relationship operations", func() {
-			It("requires qname for callers operation", func() {
+			It("returns error for missing symbol in callers operation", func() {
 				args, _ := json.Marshal(map[string]any{
 					"operation": "callers",
 				})
 
-				result, err := tools.Execute(ctx, "graph", string(args))
+				result, err := tools.Execute(ctx, "codegraph", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("'qname' parameter is required"))
-				Expect(result).To(ContainSubstring("Use graph(symbols, file=...)"))
+				Expect(result).To(ContainSubstring("symbol"))
+				Expect(result).To(ContainSubstring("required"))
 			})
 
-			It("returns callers with depth", func() {
-				mockArango.getCallersFn = func(ctx context.Context, qname string, depth int) ([]arangodb.GraphNode, error) {
-					Expect(qname).To(Equal("pkg.Planner.Plan"))
-					Expect(depth).To(Equal(2))
-					return []arangodb.GraphNode{
-						{QName: "pkg.Handler.Handle", Name: "Handle", Kind: "method", Filepath: "internal/http/handler.go"},
-						{QName: "pkg.Worker.Run", Name: "Run", Kind: "method", Filepath: "internal/worker/worker.go"},
-					}, nil
-				}
-
+			It("returns error for missing file in symbols operation", func() {
 				args, _ := json.Marshal(map[string]any{
-					"operation": "callers",
-					"qname":     "pkg.Planner.Plan",
-					"depth":     2,
+					"operation": "symbols",
 				})
 
-				result, err := tools.Execute(ctx, "graph", string(args))
+				result, err := tools.Execute(ctx, "codegraph", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Callers of pkg.Planner.Plan (depth 2)"))
-				Expect(result).To(ContainSubstring("Handle (method)"))
-				Expect(result).To(ContainSubstring("Run (method)"))
+				Expect(result).To(ContainSubstring("file"))
+				Expect(result).To(ContainSubstring("required"))
 			})
 
-			It("returns methods of a type", func() {
-				mockArango.getMethodsFn = func(ctx context.Context, qname string) ([]arangodb.GraphNode, error) {
-					Expect(qname).To(Equal("pkg.Planner"))
-					return []arangodb.GraphNode{
-						{QName: "pkg.Planner.Plan", Name: "Plan", Kind: "method", Filepath: "internal/brain/planner.go"},
-						{QName: "pkg.Planner.Execute", Name: "Execute", Kind: "method", Filepath: "internal/brain/planner.go"},
-					}, nil
-				}
-
+			It("returns error for invalid operation", func() {
 				args, _ := json.Marshal(map[string]any{
-					"operation": "methods",
-					"qname":     "pkg.Planner",
+					"operation": "invalid_op",
+					"symbol":    "Test",
 				})
 
-				result, err := tools.Execute(ctx, "graph", string(args))
+				result, err := tools.Execute(ctx, "codegraph", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Methods of pkg.Planner"))
-				Expect(result).To(ContainSubstring("Plan (method)"))
-				Expect(result).To(ContainSubstring("Execute (method)"))
+				Expect(result).To(ContainSubstring("invalid_operation"))
+				Expect(result).To(ContainSubstring("invalid_op"))
+			})
+		})
+
+		Describe("Unsupported Language Detection", func() {
+			It("returns unsupported language error for TypeScript files", func() {
+				args, _ := json.Marshal(map[string]any{
+					"operation": "symbols",
+					"file":      "src/components/Button.tsx",
+				})
+
+				result, err := tools.Execute(ctx, "codegraph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("unsupported_language"))
+				Expect(result).To(ContainSubstring("TypeScript"))
+				Expect(result).To(ContainSubstring("Go, Python"))
 			})
 
-			It("returns helpful message when no results", func() {
-				mockArango.getCallersFn = func(ctx context.Context, qname string, depth int) ([]arangodb.GraphNode, error) {
-					return []arangodb.GraphNode{}, nil
-				}
-
+			It("returns unsupported language error for JavaScript files", func() {
 				args, _ := json.Marshal(map[string]any{
-					"operation": "callers",
-					"qname":     "pkg.Unused",
+					"operation": "symbols",
+					"file":      "src/index.js",
 				})
 
-				result, err := tools.Execute(ctx, "graph", string(args))
+				result, err := tools.Execute(ctx, "codegraph", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Callers of pkg.Unused: No results found"))
+				Expect(result).To(ContainSubstring("unsupported_language"))
+				Expect(result).To(ContainSubstring("JavaScript"))
+			})
+
+			It("returns unsupported language error for Rust files", func() {
+				args, _ := json.Marshal(map[string]any{
+					"operation": "symbols",
+					"file":      "src/main.rs",
+				})
+
+				result, err := tools.Execute(ctx, "codegraph", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("unsupported_language"))
+				Expect(result).To(ContainSubstring("Rust"))
 			})
 		})
 	})
 })
-
-// Helper function to find substring index
-func findSubstring(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}

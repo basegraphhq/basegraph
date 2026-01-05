@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	maxParallelExplorers = 2 // Parallel exploration with non-overlapping scopes
+	maxParallelExplorers = 1 // Parallel exploration with non-overlapping scopes
 )
 
 type ExploreParams struct {
@@ -325,13 +325,13 @@ func (p *Planner) tools() []llm.Tool {
 			Description: `Explore the codebase to answer a specific question.
 
 THOROUGHNESS LEVELS:
-* quick: Fast lookup (~15 iterations, ~20k tokens)
+* quick: Fast lookup (~10 iterations, ~15k tokens)
   → "Where is X defined?" "Does Y exist?" "What type is Z?"
   
-* medium: Balanced exploration (~40 iterations, ~60k tokens)
+* medium: Balanced exploration (~20 iterations, ~25k tokens)
   → "How does X work?" "What calls Y?" "How is Z configured?"
   
-* thorough: Comprehensive search (~100 iterations, ~120k tokens)
+* thorough: Comprehensive search (~50 iterations, ~60k tokens)
   → "Find ALL places that do X" "Full impact analysis of changing Y"
   → Use sparingly - only when you need exhaustive coverage
 

@@ -32,10 +32,12 @@ type Edge struct {
 }
 
 type GraphNode struct {
-	QName    string
-	Name     string
-	Kind     string
-	Filepath string
+	QName     string
+	Name      string
+	Kind      string
+	Filepath  string
+	Pos       int
+	Signature string
 }
 
 type GraphEdge struct {
@@ -60,6 +62,12 @@ type FileSymbol struct {
 	End       int
 }
 
+// FileSymbolsOptions configures file symbols query parameters.
+type FileSymbolsOptions struct {
+	Filepath string // Required: path to the file
+	Kind     string // Optional: filter by kind (function, method, struct, interface)
+}
+
 // SearchOptions configures symbol search parameters.
 type SearchOptions struct {
 	Name      string // Glob pattern: "Plan*", "*Issue*"
@@ -76,4 +84,24 @@ type SearchResult struct {
 	Signature string
 	Filepath  string
 	Pos       int
+}
+
+// ResolvedSymbol contains the qname and location of a uniquely resolved symbol.
+type ResolvedSymbol struct {
+	QName     string
+	Name      string
+	Kind      string
+	Filepath  string
+	Pos       int
+	Signature string
+}
+
+// AmbiguousSymbolError is returned when multiple symbols match the query.
+type AmbiguousSymbolError struct {
+	Query      string
+	Candidates []SearchResult
+}
+
+func (e AmbiguousSymbolError) Error() string {
+	return "multiple symbols match: " + e.Query
 }

@@ -1,4 +1,4 @@
-.PHONY: build build-server build-worker run-server run-worker test test-unit test-bdd test-integration clean sqlc-generate migrate-up migrate-down format lint install-tools reindex-codegraph reset reset-redis reset-db tidy
+.PHONY: build build-server build-worker run-server run-worker run-worker-testdata test test-unit test-bdd test-integration clean sqlc-generate migrate-up migrate-down format lint install-tools reindex-codegraph reset reset-redis reset-db tidy
 
 tidy:
 	go mod tidy
@@ -18,6 +18,11 @@ run-server:
 	go run ./cmd/server
 
 run-worker:
+	go run ./cmd/worker
+
+run-worker-testdata:
+	REPO_ROOT=$(CURDIR)/testdata/fixtures/relay-without-ack \
+	MODULE_PATH=basegraph.app/relay-without-ack \
 	go run ./cmd/worker
 
 # Testing
@@ -85,8 +90,8 @@ reset:
 reset-redis:
 	@./scripts/reset.sh --redis-only
 
-reset-db:
-	@./scripts/reset.sh --db-only
+reset-codegraph:
+	@./scripts/reset.sh --codegraph-only
 
 # Environment setup
 .env:

@@ -38,8 +38,9 @@ type Client interface {
 	TraverseFrom(ctx context.Context, qnames []string, opts TraversalOptions) ([]GraphNode, []GraphEdge, error)
 
 	// Symbol discovery operations
-	GetFileSymbols(ctx context.Context, filepath string) ([]FileSymbol, error)
+	GetFileSymbols(ctx context.Context, opts FileSymbolsOptions) ([]FileSymbol, error)
 	SearchSymbols(ctx context.Context, opts SearchOptions) ([]SearchResult, int, error) // returns results, total count, error
+	ResolveSymbol(ctx context.Context, opts SearchOptions) (ResolvedSymbol, error)      // returns single symbol or error
 
 	// Utility
 	Close() error
@@ -418,7 +419,8 @@ func (c *client) GetCallers(ctx context.Context, qname string, depth int) ([]Gra
 	query := `
 		FOR v IN 1..@depth INBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["calls"] }
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath }
+			LIMIT 30
+			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversal(ctx, query, qname, depth)
@@ -432,7 +434,8 @@ func (c *client) GetCallees(ctx context.Context, qname string, depth int) ([]Gra
 	query := `
 		FOR v IN 1..@depth OUTBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["calls"] }
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath }
+			LIMIT 30
+			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversal(ctx, query, qname, depth)
@@ -442,7 +445,7 @@ func (c *client) GetChildren(ctx context.Context, qname string) ([]GraphNode, er
 	query := `
 		FOR v IN 1..1 INBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["parent"] }
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath }
+			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversalFrom(ctx, query, "types", qname, 1)
@@ -452,7 +455,7 @@ func (c *client) GetImplementations(ctx context.Context, qname string) ([]GraphN
 	query := `
 		FOR v IN 1..1 INBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["implements"] }
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath }
+			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversalFrom(ctx, query, "types", qname, 1)
@@ -462,7 +465,7 @@ func (c *client) GetMethods(ctx context.Context, qname string) ([]GraphNode, err
 	query := `
 		FOR v IN 1..1 INBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["parent"] }
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath }
+			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversalFrom(ctx, query, "types", qname, 1)
@@ -472,7 +475,7 @@ func (c *client) GetUsages(ctx context.Context, qname string) ([]GraphNode, erro
 	query := `
 		FOR v IN 1..1 INBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["param_of", "returns"] }
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath }
+			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversalFrom(ctx, query, "types", qname, 1)
@@ -482,7 +485,7 @@ func (c *client) GetInheritors(ctx context.Context, qname string) ([]GraphNode, 
 	query := `
 		FOR v IN 1..1 INBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["inherits"] }
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath }
+			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversalFrom(ctx, query, "types", qname, 1)
@@ -520,10 +523,12 @@ func (c *client) executeTraversalFrom(ctx context.Context, query string, collect
 	var results []GraphNode
 	for cursor.HasMore() {
 		var doc struct {
-			QName    string `json:"qname"`
-			Name     string `json:"name"`
-			Kind     string `json:"kind"`
-			Filepath string `json:"filepath"`
+			QName     string `json:"qname"`
+			Name      string `json:"name"`
+			Kind      string `json:"kind"`
+			Filepath  string `json:"filepath"`
+			Pos       int    `json:"pos"`
+			Signature string `json:"signature"`
 		}
 		_, err := cursor.ReadDocument(ctx, &doc)
 		if err != nil {
@@ -534,10 +539,12 @@ func (c *client) executeTraversalFrom(ctx context.Context, query string, collect
 			continue
 		}
 		results = append(results, GraphNode{
-			QName:    doc.QName,
-			Name:     doc.Name,
-			Kind:     doc.Kind,
-			Filepath: doc.Filepath,
+			QName:     doc.QName,
+			Name:      doc.Name,
+			Kind:      doc.Kind,
+			Filepath:  doc.Filepath,
+			Pos:       doc.Pos,
+			Signature: doc.Signature,
 		})
 	}
 
@@ -684,22 +691,43 @@ func extractQNameFromID(id string) string {
 }
 
 // GetFileSymbols returns all symbols defined in a file, sorted by position.
-func (c *client) GetFileSymbols(ctx context.Context, filepath string) ([]FileSymbol, error) {
+// If opts.Kind is set, only symbols of that kind are returned.
+func (c *client) GetFileSymbols(ctx context.Context, opts FileSymbolsOptions) ([]FileSymbol, error) {
 	if c.db == nil {
 		return nil, fmt.Errorf("database not initialized")
 	}
 
 	start := time.Now()
+	filepath := opts.Filepath
+
+	// Build kind filter clause
+	// Note: "method" is stored as kind="function" + is_method=true
+	kindFilter := ""
+	switch opts.Kind {
+	case "method":
+		kindFilter = "FILTER doc.is_method == true"
+	case "function":
+		kindFilter = "FILTER doc.kind == 'function' AND (doc.is_method == null OR doc.is_method == false)"
+	case "struct", "interface", "class", "type":
+		kindFilter = "FILTER doc.kind == @kind"
+	case "field", "const", "var":
+		kindFilter = "FILTER doc.kind == @kind"
+	case "":
+		// No filter
+	default:
+		kindFilter = "FILTER doc.kind == @kind"
+	}
 
 	// Query all collections for symbols in this file
 	// Note: is_method=true means it's a method, so we return "method" as kind for display
 	// Use suffix matching to handle relative vs absolute paths
-	query := `
+	query := fmt.Sprintf(`
 		FOR doc IN UNION(
 			(FOR f IN functions FILTER f.filepath == @filepath OR f.filepath LIKE @pathPattern RETURN f),
 			(FOR t IN types FILTER t.filepath == @filepath OR t.filepath LIKE @pathPattern RETURN t),
 			(FOR m IN members FILTER m.filepath == @filepath OR m.filepath LIKE @pathPattern RETURN m)
 		)
+		%s
 		SORT doc.pos ASC
 		RETURN { 
 			qname: doc.qname, 
@@ -709,7 +737,7 @@ func (c *client) GetFileSymbols(ctx context.Context, filepath string) ([]FileSym
 			pos: doc.pos, 
 			end: doc.end 
 		}
-	`
+	`, kindFilter)
 
 	// Create suffix pattern for matching: "%" + "/path/to/file.go"
 	pathPattern := "%" + filepath
@@ -718,11 +746,16 @@ func (c *client) GetFileSymbols(ctx context.Context, filepath string) ([]FileSym
 		pathPattern = filepath
 	}
 
+	bindVars := map[string]any{
+		"filepath":    filepath,
+		"pathPattern": pathPattern,
+	}
+	if opts.Kind != "" && opts.Kind != "method" && opts.Kind != "function" {
+		bindVars["kind"] = opts.Kind
+	}
+
 	cursor, err := c.db.Query(ctx, query, &arangodb.QueryOptions{
-		BindVars: map[string]any{
-			"filepath":    filepath,
-			"pathPattern": pathPattern,
-		},
+		BindVars: bindVars,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("execute query: %w", err)
@@ -754,7 +787,8 @@ func (c *client) GetFileSymbols(ctx context.Context, filepath string) ([]FileSym
 	}
 
 	slog.DebugContext(ctx, "arangodb file symbols retrieved",
-		"filepath", filepath,
+		"filepath", opts.Filepath,
+		"kind", opts.Kind,
 		"count", len(results),
 		"duration_ms", time.Since(start).Milliseconds())
 
@@ -830,14 +864,14 @@ func (c *client) SearchSymbols(ctx context.Context, opts SearchOptions) ([]Searc
 		LET limited = (
 			FOR doc IN all_results
 			SORT doc.filepath, doc.pos
-			LIMIT 50
-			RETURN { 
-				qname: doc.qname, 
-				name: doc.name, 
-				kind: doc.is_method ? "method" : doc.kind, 
+			LIMIT 30
+			RETURN {
+				qname: doc.qname,
+				name: doc.name,
+				kind: doc.is_method ? "method" : doc.kind,
 				signature: doc.signature,
 				filepath: doc.filepath,
-				pos: doc.pos 
+				pos: doc.pos
 			}
 		)
 		RETURN { results: limited, total: total }
@@ -896,4 +930,41 @@ func (c *client) SearchSymbols(ctx context.Context, opts SearchOptions) ([]Searc
 // * -> % (match any characters)
 func globToLike(pattern string) string {
 	return strings.ReplaceAll(pattern, "*", "%")
+}
+
+// ResolveSymbol finds a single symbol matching the query.
+// Returns AmbiguousSymbolError if multiple matches found (with up to 5 candidates).
+// Returns ErrNotFound if no matches found.
+func (c *client) ResolveSymbol(ctx context.Context, opts SearchOptions) (ResolvedSymbol, error) {
+	results, total, err := c.SearchSymbols(ctx, opts)
+	if err != nil {
+		return ResolvedSymbol{}, fmt.Errorf("search symbols: %w", err)
+	}
+
+	if total == 0 {
+		return ResolvedSymbol{}, ErrNotFound
+	}
+
+	if total == 1 {
+		r := results[0]
+		return ResolvedSymbol{
+			QName:     r.QName,
+			Name:      r.Name,
+			Kind:      r.Kind,
+			Filepath:  r.Filepath,
+			Pos:       r.Pos,
+			Signature: r.Signature,
+		}, nil
+	}
+
+	// Multiple matches - return up to 5 candidates for the error message
+	candidates := results
+	if len(candidates) > 5 {
+		candidates = candidates[:5]
+	}
+
+	return ResolvedSymbol{}, AmbiguousSymbolError{
+		Query:      opts.Name,
+		Candidates: candidates,
+	}
 }
