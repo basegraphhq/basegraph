@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"basegraph.app/relay/common/llm"
 	"basegraph.app/relay/internal/model"
@@ -60,6 +62,12 @@ func (b *contextBuilder) BuildPlannerMessages(ctx context.Context, issue model.I
 		return nil, fmt.Errorf("fetching open gaps: %w", err)
 	}
 
+	// Fetch recent closed gaps (last 10) for context
+	recentClosed, err := b.fetchRecentClosedGaps(ctx, issue.ID, 10)
+	if err != nil {
+		return nil, err
+	}
+
 	messages := make([]llm.Message, 0, 3+len(issue.Discussions))
 
 	// Message 1: System prompt with self-identity
@@ -71,7 +79,7 @@ func (b *contextBuilder) BuildPlannerMessages(ctx context.Context, issue model.I
 	// Message 2: Context dump (issue metadata, participants, learnings, gaps, findings)
 	messages = append(messages, llm.Message{
 		Role:    "user",
-		Content: b.buildContextDump(issue, learnings, gaps, triggerThreadID),
+		Content: b.buildContextDump(issue, learnings, gaps, recentClosed, triggerThreadID),
 	})
 
 	// Messages 3+: Discussion history as conversation
@@ -134,6 +142,15 @@ func (b *contextBuilder) fetchOpenGaps(ctx context.Context, issueID int64) ([]mo
 	return gaps, nil
 }
 
+// fetchRecentClosedGaps returns the most recent closed gaps (resolved or skipped), up to limit.
+func (b *contextBuilder) fetchRecentClosedGaps(ctx context.Context, issueID int64, limit int) ([]model.Gap, error) {
+	all, err := b.gaps.ListClosedByIssue(ctx, issueID, int32(limit))
+	if err != nil {
+		return nil, fmt.Errorf("fetching closed gaps: %w", err)
+	}
+	return all, nil
+}
+
 // buildSystemPrompt creates the system message with Relay's identity.
 func (b *contextBuilder) buildSystemPrompt(relayUsername string) string {
 	return fmt.Sprintf(`%s
@@ -144,7 +161,7 @@ Your comments appear as @%s. When you see messages from @%s in the discussion hi
 }
 
 // buildContextDump creates the context message with issue metadata, learnings, gaps, and findings.
-func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.Learning, gaps []model.Gap, triggerThreadID string) string {
+func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.Learning, openGaps []model.Gap, recentClosed []model.Gap, triggerThreadID string) string {
 	var sb strings.Builder
 
 	// Issue section
@@ -187,8 +204,13 @@ func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.L
 	}
 
 	// Open gaps section
-	if gapsSection := formatGapsSection(gaps); gapsSection != "" {
+	if gapsSection := formatGapsSection(issue, openGaps); gapsSection != "" {
 		sb.WriteString(gapsSection)
+	}
+
+	// Recently closed gaps section (last N)
+	if closedSection := formatClosedGapsSection(issue, recentClosed); closedSection != "" {
+		sb.WriteString(closedSection)
 	}
 
 	// Code findings section
@@ -219,7 +241,7 @@ func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.L
 }
 
 // formatGapsSection creates markdown for open gaps grouped by severity.
-func formatGapsSection(gaps []model.Gap) string {
+func formatGapsSection(issue model.Issue, gaps []model.Gap) string {
 	if len(gaps) == 0 {
 		return ""
 	}
@@ -250,7 +272,11 @@ func formatGapsSection(gaps []model.Gap) string {
 		sb.WriteString(fmt.Sprintf("## %s\n\n", strings.ToUpper(string(sev))))
 
 		for i, g := range gapsForSev {
-			sb.WriteString(fmt.Sprintf("%d. [for @%s] %s\n", i+1, g.Respondent, g.Question))
+			gapID := g.ShortID
+			if gapID == 0 {
+				gapID = g.ID
+			}
+			sb.WriteString(fmt.Sprintf("%d. [gap %s] [for %s] %s\n", i+1, strconv.FormatInt(gapID, 10), formatGapRespondent(issue, g.Respondent), g.Question))
 			if g.Evidence != "" {
 				sb.WriteString(fmt.Sprintf("   Evidence: %s\n", g.Evidence))
 			}
@@ -259,6 +285,67 @@ func formatGapsSection(gaps []model.Gap) string {
 	}
 
 	return sb.String()
+}
+
+func formatClosedGapsSection(issue model.Issue, gaps []model.Gap) string {
+	if len(gaps) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# Recently Closed Gaps (latest 10)\n\n")
+
+	for i, g := range gaps {
+		gapID := g.ShortID
+		if gapID == 0 {
+			gapID = g.ID
+		}
+		sb.WriteString(fmt.Sprintf("%d. [gap %s] [%s] %s", i+1, strconv.FormatInt(gapID, 10), strings.ToUpper(string(g.Status)), g.Question))
+		if g.Respondent != "" {
+			sb.WriteString(fmt.Sprintf(" (for %s)", formatGapRespondent(issue, g.Respondent)))
+		}
+		sb.WriteString("\n")
+		if g.Evidence != "" {
+			sb.WriteString(fmt.Sprintf("   Evidence: %s\n", g.Evidence))
+		}
+		if g.ClosedReason != "" {
+			sb.WriteString(fmt.Sprintf("   Closed reason: %s", g.ClosedReason))
+			if g.ClosedNote != "" {
+				sb.WriteString(fmt.Sprintf(" — %s", g.ClosedNote))
+			}
+			sb.WriteString("\n")
+		}
+		if g.ResolvedAt != nil {
+			sb.WriteString(fmt.Sprintf("   Closed at: %s\n", g.ResolvedAt.UTC().Format(time.RFC3339)))
+		}
+	}
+
+	sb.WriteString("\n")
+	return sb.String()
+}
+
+func formatGapRespondent(issue model.Issue, respondent model.GapRespondent) string {
+	switch respondent {
+	case model.GapRespondentReporter:
+		if issue.Reporter != nil && *issue.Reporter != "" {
+			return fmt.Sprintf("reporter (@%s)", *issue.Reporter)
+		}
+		return "reporter"
+	case model.GapRespondentAssignee:
+		if len(issue.Assignees) == 1 {
+			return fmt.Sprintf("assignee (@%s)", issue.Assignees[0])
+		}
+		if len(issue.Assignees) > 1 {
+			tags := make([]string, len(issue.Assignees))
+			for i, a := range issue.Assignees {
+				tags[i] = "@" + a
+			}
+			return fmt.Sprintf("assignees (%s)", strings.Join(tags, ", "))
+		}
+		return "assignee"
+	default:
+		return string(respondent)
+	}
 }
 
 // buildDiscussionMessages converts discussions to LLM messages.

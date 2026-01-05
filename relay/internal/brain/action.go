@@ -11,10 +11,11 @@ import (
 type ActionType string
 
 const (
-	ActionTypePostComment    ActionType = "post_comment"
-	ActionTypeUpdateFindings ActionType = "update_findings"
-	ActionTypeUpdateGaps     ActionType = "update_gaps"
-	ActionTypeReadyForPlan   ActionType = "ready_for_plan"
+	ActionTypePostComment     ActionType = "post_comment"
+	ActionTypeUpdateFindings  ActionType = "update_findings"
+	ActionTypeUpdateGaps      ActionType = "update_gaps"
+	ActionTypeUpdateLearnings ActionType = "update_learnings"
+	ActionTypeReadyForPlan    ActionType = "ready_for_plan"
 )
 
 type Action struct {
@@ -62,6 +63,16 @@ type UpdateGapsAction struct {
 	Add     []GapInput `json:"add,omitempty"`
 	Resolve []string   `json:"resolve,omitempty"`
 	Skip    []string   `json:"skip,omitempty"`
+	Close   []GapClose `json:"close,omitempty"`
+}
+
+type UpdateLearningsAction struct {
+	Propose []LearningInput `json:"propose,omitempty"`
+}
+
+type LearningInput struct {
+	Type    string `json:"type"`
+	Content string `json:"content"`
 }
 
 type GapInput struct {
@@ -69,6 +80,20 @@ type GapInput struct {
 	Evidence   string      `json:"evidence,omitempty"`
 	Severity   GapSeverity `json:"severity"`
 	Respondent Respondent  `json:"respondent"`
+}
+
+type GapCloseReason string
+
+const (
+	GapCloseAnswered    GapCloseReason = "answered"
+	GapCloseInferred    GapCloseReason = "inferred"
+	GapCloseNotRelevant GapCloseReason = "not_relevant"
+)
+
+type GapClose struct {
+	GapID  string         `json:"gap_id"`
+	Reason GapCloseReason `json:"reason"`
+	Note   string         `json:"note,omitempty"`
 }
 
 type GapSeverity string
@@ -90,7 +115,7 @@ const (
 type ReadyForSpecAction struct {
 	ContextSummary   string   `json:"context_summary"`
 	RelevantFindings []string `json:"relevant_finding_ids"`
-	ResolvedGaps     []string `json:"resolved_gap_ids"`
+	ClosedGaps       []string `json:"closed_gap_ids"`
 	LearningsApplied []string `json:"learning_ids"`
 }
 

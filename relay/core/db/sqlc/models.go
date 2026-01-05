@@ -25,11 +25,15 @@ type EventLog struct {
 
 type Gap struct {
 	ID      int64 `json:"id"`
+	ShortID int64 `json:"short_id"`
 	IssueID int64 `json:"issue_id"`
 	// open | resolved | skipped
-	Status   string  `json:"status"`
-	Question string  `json:"question"`
-	Evidence *string `json:"evidence"`
+	Status string `json:"status"`
+	// answered | inferred | not_relevant
+	ClosedReason *string `json:"closed_reason"`
+	ClosedNote   *string `json:"closed_note"`
+	Question     string  `json:"question"`
+	Evidence     *string `json:"evidence"`
 	// blocking | high | medium | low
 	Severity string `json:"severity"`
 	// reporter | assignee
@@ -107,6 +111,7 @@ type Issue struct {
 
 type Learning struct {
 	ID                   int64              `json:"id"`
+	ShortID              int64              `json:"short_id"`
 	WorkspaceID          int64              `json:"workspace_id"`
 	RuleUpdatedByIssueID *int64             `json:"rule_updated_by_issue_id"`
 	Type                 string             `json:"type"`

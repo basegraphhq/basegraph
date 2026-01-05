@@ -28,8 +28,11 @@ const (
 
 type Gap struct {
 	ID         int64         `json:"id"`
+	ShortID    int64         `json:"short_id"`
 	IssueID    int64         `json:"issue_id"`
 	Status     GapStatus     `json:"status"`
+	ClosedReason string      `json:"closed_reason,omitempty"`
+	ClosedNote   string      `json:"closed_note,omitempty"`
 	Question   string        `json:"question"`
 	Evidence   string        `json:"evidence,omitempty"`
 	Severity   GapSeverity   `json:"severity"`

@@ -24,9 +24,14 @@ var (
 	ErrInvalidSeverity       = errors.New("invalid gap severity")
 	ErrInvalidRespondent     = errors.New("invalid gap respondent")
 	ErrGapNotFound           = errors.New("gap not found")
+	ErrMissingGapCloseReason = errors.New("gap close missing reason")
+	ErrMissingGapCloseNote   = errors.New("gap close missing note")
+	ErrInvalidGapCloseReason = errors.New("invalid gap close reason")
 	ErrMissingSynthesis      = errors.New("finding missing synthesis")
 	ErrMissingSources        = errors.New("finding missing sources")
 	ErrMissingSourceLocation = errors.New("source missing location")
+	ErrMissingLearning       = errors.New("learning missing content")
+	ErrInvalidLearningType   = errors.New("invalid learning type")
 	ErrOpenBlockingGaps      = errors.New("open blocking gaps exist")
 	ErrNoResolvedContext     = errors.New("no resolved gaps or findings")
 )
@@ -44,10 +49,28 @@ func (v *actionValidator) Validate(ctx context.Context, issue model.Issue, input
 		return ErrEmptyActions
 	}
 
-	// Track gap IDs that will be resolved by earlier actions in this batch.
-	// This allows ready_for_plan to pass validation when blocking gaps
-	// are resolved in the same batch.
-	pendingResolutions := make(map[string]struct{})
+	// Track gap IDs that will be closed (resolved or skipped) anywhere in this batch.
+	// This allows ready_for_plan to pass validation when blocking gaps are closed in the same batch,
+	// regardless of action ordering.
+	pendingClosures := make(map[string]struct{})
+	for _, action := range input.Actions {
+		if action.Type != ActionTypeUpdateGaps {
+			continue
+		}
+		data, err := ParseActionData[UpdateGapsAction](action)
+		if err != nil {
+			continue
+		}
+		for _, id := range data.Resolve {
+			pendingClosures[id] = struct{}{}
+		}
+		for _, id := range data.Skip {
+			pendingClosures[id] = struct{}{}
+		}
+		for _, close := range data.Close {
+			pendingClosures[close.GapID] = struct{}{}
+		}
+	}
 
 	for i, action := range input.Actions {
 		var err error
@@ -57,16 +80,11 @@ func (v *actionValidator) Validate(ctx context.Context, issue model.Issue, input
 		case ActionTypeUpdateFindings:
 			err = v.validateUpdateFindings(action)
 		case ActionTypeUpdateGaps:
-			err = v.validateUpdateGaps(ctx, issue, action)
-			if err == nil {
-				// Track resolved gaps for later ready_for_plan validation
-				data, _ := ParseActionData[UpdateGapsAction](action)
-				for _, id := range data.Resolve {
-					pendingResolutions[id] = struct{}{}
-				}
-			}
+			err = v.validateUpdateGaps(ctx, action)
+		case ActionTypeUpdateLearnings:
+			err = v.validateUpdateLearnings(action)
 		case ActionTypeReadyForPlan:
-			err = v.validateReadyForPlan(ctx, issue, action, pendingResolutions)
+			err = v.validateReadyForPlan(ctx, issue, action, pendingClosures)
 		default:
 			err = fmt.Errorf("%w: %s", ErrUnknownActionType, action.Type)
 		}
@@ -117,7 +135,7 @@ func (v *actionValidator) validateUpdateFindings(action Action) error {
 	return nil
 }
 
-func (v *actionValidator) validateUpdateGaps(ctx context.Context, issue model.Issue, action Action) error {
+func (v *actionValidator) validateUpdateGaps(ctx context.Context, action Action) error {
 	data, err := ParseActionData[UpdateGapsAction](action)
 	if err != nil {
 		return err
@@ -136,11 +154,8 @@ func (v *actionValidator) validateUpdateGaps(ctx context.Context, issue model.Is
 	}
 
 	for i, idStr := range data.Resolve {
-		id, err := strconv.ParseInt(idStr, 10, 64)
+		_, err := v.lookupGapByAnyID(ctx, idStr)
 		if err != nil {
-			return fmt.Errorf("resolve[%d]: invalid gap id: %s", i, idStr)
-		}
-		if _, err := v.gaps.GetByID(ctx, id); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return fmt.Errorf("resolve[%d]: %w: %s", i, ErrGapNotFound, idStr)
 			}
@@ -149,11 +164,8 @@ func (v *actionValidator) validateUpdateGaps(ctx context.Context, issue model.Is
 	}
 
 	for i, idStr := range data.Skip {
-		id, err := strconv.ParseInt(idStr, 10, 64)
+		_, err := v.lookupGapByAnyID(ctx, idStr)
 		if err != nil {
-			return fmt.Errorf("skip[%d]: invalid gap id: %s", i, idStr)
-		}
-		if _, err := v.gaps.GetByID(ctx, id); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
 				return fmt.Errorf("skip[%d]: %w: %s", i, ErrGapNotFound, idStr)
 			}
@@ -161,10 +173,50 @@ func (v *actionValidator) validateUpdateGaps(ctx context.Context, issue model.Is
 		}
 	}
 
+	for i, close := range data.Close {
+		if close.GapID == "" {
+			return fmt.Errorf("close[%d]: %w", i, ErrGapNotFound)
+		}
+		if !isValidGapCloseReason(close.Reason) {
+			return fmt.Errorf("close[%d]: %w: %s", i, ErrInvalidGapCloseReason, close.Reason)
+		}
+		switch close.Reason {
+		case GapCloseAnswered, GapCloseInferred:
+			if close.Note == "" {
+				return fmt.Errorf("close[%d]: %w", i, ErrMissingGapCloseNote)
+			}
+		}
+
+		if _, err := v.lookupGapByAnyID(ctx, close.GapID); err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("close[%d]: %w: %s", i, ErrGapNotFound, close.GapID)
+			}
+			return fmt.Errorf("close[%d]: %w", i, err)
+		}
+	}
+
 	return nil
 }
 
-func (v *actionValidator) validateReadyForPlan(ctx context.Context, issue model.Issue, action Action, pendingResolutions map[string]struct{}) error {
+func (v *actionValidator) validateUpdateLearnings(action Action) error {
+	data, err := ParseActionData[UpdateLearningsAction](action)
+	if err != nil {
+		return err
+	}
+
+	for i, learning := range data.Propose {
+		if learning.Content == "" {
+			return fmt.Errorf("propose[%d]: %w", i, ErrMissingLearning)
+		}
+		if !isValidLearningType(learning.Type) {
+			return fmt.Errorf("propose[%d]: %w: %s", i, ErrInvalidLearningType, learning.Type)
+		}
+	}
+
+	return nil
+}
+
+func (v *actionValidator) validateReadyForPlan(ctx context.Context, issue model.Issue, action Action, pendingClosures map[string]struct{}) error {
 	data, err := ParseActionData[ReadyForSpecAction](action)
 	if err != nil {
 		return err
@@ -176,14 +228,18 @@ func (v *actionValidator) validateReadyForPlan(ctx context.Context, issue model.
 		return fmt.Errorf("checking blocking gaps: %w", err)
 	}
 
-	// Count blocking gaps that won't be resolved by earlier actions in this batch
+	// Count blocking gaps that won't be closed by earlier actions in this batch
 	remainingBlocking := 0
 	for _, gap := range openGaps {
 		if gap.Severity != model.GapSeverityBlocking {
 			continue
 		}
-		idStr := strconv.FormatInt(gap.ID, 10)
-		if _, willBeResolved := pendingResolutions[idStr]; !willBeResolved {
+		primaryIDStr := strconv.FormatInt(gap.ID, 10)
+		shortIDStr := strconv.FormatInt(gap.ShortID, 10)
+		if _, willBeClosed := pendingClosures[primaryIDStr]; willBeClosed {
+			continue
+		}
+		if _, willBeClosed := pendingClosures[shortIDStr]; !willBeClosed {
 			remainingBlocking++
 		}
 	}
@@ -192,12 +248,29 @@ func (v *actionValidator) validateReadyForPlan(ctx context.Context, issue model.
 		return fmt.Errorf("%w: %d blocking", ErrOpenBlockingGaps, remainingBlocking)
 	}
 
-	hasContext := len(data.ResolvedGaps) > 0 || len(data.RelevantFindings) > 0
+	hasContext := len(data.ClosedGaps) > 0 || len(data.RelevantFindings) > 0
 	if !hasContext {
 		return ErrNoResolvedContext
 	}
 
 	return nil
+}
+
+func (v *actionValidator) lookupGapByAnyID(ctx context.Context, idStr string) (model.Gap, error) {
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		return model.Gap{}, fmt.Errorf("invalid gap id: %s", idStr)
+	}
+
+	gap, err := v.gaps.GetByID(ctx, id)
+	if err == nil {
+		return gap, nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return model.Gap{}, err
+	}
+
+	return v.gaps.GetByShortID(ctx, id)
 }
 
 func isValidSeverity(s GapSeverity) bool {
@@ -211,6 +284,22 @@ func isValidSeverity(s GapSeverity) bool {
 func isValidRespondent(r Respondent) bool {
 	switch r {
 	case RespondentReporter, RespondentAssignee:
+		return true
+	}
+	return false
+}
+
+func isValidLearningType(t string) bool {
+	switch t {
+	case model.LearningTypeProjectStandards, model.LearningTypeCodebaseStandards, model.LearningTypeDomainKnowledge:
+		return true
+	}
+	return false
+}
+
+func isValidGapCloseReason(r GapCloseReason) bool {
+	switch r {
+	case GapCloseAnswered, GapCloseInferred, GapCloseNotRelevant:
 		return true
 	}
 	return false
