@@ -128,6 +128,7 @@ func (i *Ingestor) ingestFunctionNodes(ctx context.Context, functions map[string
 			Pos:       fn.Pos,
 			End:       fn.End,
 			IsMethod:  isMethod,
+			Signature: fn.Signature,
 		})
 	}
 

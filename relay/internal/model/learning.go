@@ -4,6 +4,7 @@ import "time"
 
 type Learning struct {
 	ID                   int64     `json:"id"`
+	ShortID              int64     `json:"short_id"`
 	WorkspaceID          int64     `json:"workspace_id"`
 	RuleUpdatedByIssueID *int64    `json:"rule_updated_by_issue_id,omitempty"`
 	Type                 string    `json:"type"`
@@ -13,7 +14,6 @@ type Learning struct {
 }
 
 const (
-	LearningTypeProjectStandards  = "project_standards"
-	LearningTypeCodebaseStandards = "codebase_standards"
-	LearningTypeDomainKnowledge   = "domain_knowledge"
+	LearningTypeDomainLearnings = "domain_learnings"
+	LearningTypeCodeLearnings   = "code_learnings"
 )

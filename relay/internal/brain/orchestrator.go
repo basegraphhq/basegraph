@@ -58,6 +58,8 @@ type Orchestrator struct {
 	actionValidator ActionValidator
 	issues          store.IssueStore
 	gaps            store.GapStore
+	integrations    store.IntegrationStore
+	learnings       store.LearningStore
 	eventLogs       store.EventLogStore
 	issueTrackers   map[model.Provider]issue_tracker.IssueTrackerService
 }
@@ -65,7 +67,7 @@ type Orchestrator struct {
 func NewOrchestrator(
 	cfg OrchestratorConfig,
 	agentClient llm.AgentClient,
-	arangoDB arangodb.Client,
+	arango arangodb.Client,
 	issues store.IssueStore,
 	gaps store.GapStore,
 	eventLogs store.EventLogStore,
@@ -74,7 +76,7 @@ func NewOrchestrator(
 	learnings store.LearningStore,
 	issueTrackers map[model.Provider]issue_tracker.IssueTrackerService,
 ) *Orchestrator {
-	tools := NewExploreTools(cfg.RepoRoot, arangoDB)
+	tools := NewExploreTools(cfg.RepoRoot)
 	explore := NewExploreAgent(agentClient, tools, cfg.ModulePath)
 	planner := NewPlanner(agentClient, explore)
 	ctxBuilder := NewContextBuilder(integrations, configs, learnings, gaps)
@@ -91,6 +93,8 @@ func NewOrchestrator(
 		actionValidator: validator,
 		issues:          issues,
 		gaps:            gaps,
+		integrations:    integrations,
+		learnings:       learnings,
 		eventLogs:       eventLogs,
 		issueTrackers:   issueTrackers,
 	}
@@ -173,10 +177,7 @@ func (o *Orchestrator) HandleEngagement(ctx context.Context, input EngagementInp
 
 	if len(output.Actions) > 0 {
 		// Validate actions before execution to catch LLM output errors early
-		validationInput := SubmitActionsInput{
-			Actions:   output.Actions,
-			Reasoning: output.Reasoning,
-		}
+		validationInput := SubmitActionsInput(output)
 		if err := o.actionValidator.Validate(ctx, *issue, validationInput); err != nil {
 			slog.ErrorContext(ctx, "action validation failed", "error", err)
 			return NewFatalError(fmt.Errorf("validating actions: %w", err))
@@ -187,7 +188,7 @@ func (o *Orchestrator) HandleEngagement(ctx context.Context, input EngagementInp
 			return NewFatalError(fmt.Errorf("no issue tracker for provider: %s", issue.Provider))
 		}
 
-		executor := NewActionExecutor(tracker, o.issues, o.gaps)
+		executor := NewActionExecutor(tracker, o.issues, o.gaps, o.integrations, o.learnings)
 		errs := executor.ExecuteBatch(ctx, *issue, output.Actions)
 		if len(errs) > 0 {
 			for _, e := range errs {

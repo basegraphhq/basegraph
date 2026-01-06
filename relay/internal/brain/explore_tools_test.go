@@ -33,18 +33,14 @@ var _ = Describe("ExploreTools", func() {
 		//     main.go
 		//     util/
 		//       helper.go
-		//   .git/
-		//     config
 		//   README.md
 		Expect(os.MkdirAll(filepath.Join(tempDir, "src", "util"), 0o755)).To(Succeed())
-		Expect(os.MkdirAll(filepath.Join(tempDir, ".git"), 0o755)).To(Succeed())
-		Expect(os.WriteFile(filepath.Join(tempDir, "src", "main.go"), []byte("package main"), 0o644)).To(Succeed())
-		Expect(os.WriteFile(filepath.Join(tempDir, "src", "util", "helper.go"), []byte("package util"), 0o644)).To(Succeed())
-		Expect(os.WriteFile(filepath.Join(tempDir, ".git", "config"), []byte("[core]"), 0o644)).To(Succeed())
-		Expect(os.WriteFile(filepath.Join(tempDir, "README.md"), []byte("# Test"), 0o644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(tempDir, "src", "main.go"), []byte("package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n"), 0o644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(tempDir, "src", "util", "helper.go"), []byte("package util\n\nfunc Helper() string {\n\treturn \"help\"\n}\n"), 0o644)).To(Succeed())
+		Expect(os.WriteFile(filepath.Join(tempDir, "README.md"), []byte("# Test Project\n\nThis is a test.\n"), 0o644)).To(Succeed())
 
-		// Create tools with nil arango client (not needed for tree tests)
-		tools = brain.NewExploreTools(tempDir, nil)
+		// Create tools for testing
+		tools = brain.NewExploreTools(tempDir)
 	})
 
 	AfterEach(func() {
@@ -53,270 +49,402 @@ var _ = Describe("ExploreTools", func() {
 		}
 	})
 
-	Describe("Tree Tool", func() {
-		Describe("Security", func() {
-			It("rejects absolute paths outside repo root", func() {
-				args, _ := json.Marshal(map[string]any{
-					"path": "/etc/passwd",
-				})
-
-				result, err := tools.Execute(ctx, "tree", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("path outside repository"))
+	Describe("Read Tool", func() {
+		It("reads a file", func() {
+			args, _ := json.Marshal(map[string]any{
+				"file_path": "src/main.go",
 			})
 
-			It("rejects path traversal with ..", func() {
-				args, _ := json.Marshal(map[string]any{
-					"path": "../../../etc",
-				})
+			result, err := tools.Execute(ctx, "read", string(args))
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("package main"))
+			Expect(result).To(ContainSubstring("func main()"))
+		})
 
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("path outside repository"))
+		It("reads with offset", func() {
+			args, _ := json.Marshal(map[string]any{
+				"file_path": "src/main.go",
+				"offset":    3,
 			})
 
-			It("rejects path traversal with encoded ..", func() {
-				args, _ := json.Marshal(map[string]any{
-					"path": "src/../../..",
-				})
+			result, err := tools.Execute(ctx, "read", string(args))
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("func main()"))
+			Expect(result).NotTo(ContainSubstring("package main"))
+		})
 
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("path outside repository"))
+		It("reads with limit", func() {
+			args, _ := json.Marshal(map[string]any{
+				"file_path": "src/main.go",
+				"limit":     2,
 			})
 
-			It("rejects path that looks like subdirectory but escapes", func() {
-				// Create a sibling directory to test /repo vs /repo-evil scenario
-				siblingDir := tempDir + "-evil"
-				Expect(os.MkdirAll(siblingDir, 0o755)).To(Succeed())
-				Expect(os.WriteFile(filepath.Join(siblingDir, "secret.txt"), []byte("secret"), 0o644)).To(Succeed())
-				defer os.RemoveAll(siblingDir)
+			result, err := tools.Execute(ctx, "read", string(args))
 
-				// Try to access sibling via path traversal
-				args, _ := json.Marshal(map[string]any{
-					"path": "../" + filepath.Base(siblingDir),
-				})
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("package main"))
+			// Should indicate only 2 lines were read
+			Expect(result).To(ContainSubstring("lines 1-2"))
+		})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("path outside repository"))
+		It("returns error for missing file", func() {
+			args, _ := json.Marshal(map[string]any{
+				"file_path": "nonexistent.go",
 			})
 
-			It("rejects symlink escape attempts", func() {
-				// Create a symlink pointing outside the repo
-				symlinkPath := filepath.Join(tempDir, "escape-link")
-				err := os.Symlink("/etc", symlinkPath)
-				if err != nil {
-					Skip("Cannot create symlinks on this system")
-				}
+			result, err := tools.Execute(ctx, "read", string(args))
 
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("file not found"))
+		})
+
+		It("returns error for path outside repo", func() {
+			args, _ := json.Marshal(map[string]any{
+				"file_path": "../../../etc/passwd",
+			})
+
+			result, err := tools.Execute(ctx, "read", string(args))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("outside repository"))
+		})
+
+		It("returns error for missing file_path", func() {
+			args, _ := json.Marshal(map[string]any{})
+
+			result, err := tools.Execute(ctx, "read", string(args))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("file_path is required"))
+		})
+	})
+
+	Describe("Grep Tool", func() {
+		It("finds pattern in files", func() {
+			args, _ := json.Marshal(map[string]any{
+				"pattern": "package",
+			})
+
+			result, err := tools.Execute(ctx, "grep", string(args))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("main.go"))
+			Expect(result).To(ContainSubstring("helper.go"))
+		})
+
+		It("finds pattern with glob filter", func() {
+			args, _ := json.Marshal(map[string]any{
+				"pattern": "func",
+				"glob":    "*.go",
+			})
+
+			result, err := tools.Execute(ctx, "grep", string(args))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("func"))
+		})
+
+		It("finds pattern in specific path", func() {
+			args, _ := json.Marshal(map[string]any{
+				"pattern": "Helper",
+				"path":    "src/util",
+			})
+
+			result, err := tools.Execute(ctx, "grep", string(args))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("helper.go"))
+		})
+
+		It("returns no matches message", func() {
+			args, _ := json.Marshal(map[string]any{
+				"pattern": "nonexistent_xyz_123",
+			})
+
+			result, err := tools.Execute(ctx, "grep", string(args))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("No matches"))
+		})
+
+		It("returns error for missing pattern", func() {
+			args, _ := json.Marshal(map[string]any{})
+
+			result, err := tools.Execute(ctx, "grep", string(args))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("pattern is required"))
+		})
+	})
+
+	Describe("Glob Tool", func() {
+		It("finds files by pattern", func() {
+			args, _ := json.Marshal(map[string]any{
+				"pattern": "*.go",
+			})
+
+			result, err := tools.Execute(ctx, "glob", string(args))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("main.go"))
+			Expect(result).To(ContainSubstring("helper.go"))
+		})
+
+		It("finds files in specific path", func() {
+			args, _ := json.Marshal(map[string]any{
+				"pattern": "*.go",
+				"path":    "src/util",
+			})
+
+			result, err := tools.Execute(ctx, "glob", string(args))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("helper.go"))
+			Expect(result).NotTo(ContainSubstring("main.go"))
+		})
+
+		It("returns no matches for non-matching pattern", func() {
+			args, _ := json.Marshal(map[string]any{
+				"pattern": "*.xyz",
+			})
+
+			result, err := tools.Execute(ctx, "glob", string(args))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("No files match"))
+		})
+
+		It("returns error for missing pattern", func() {
+			args, _ := json.Marshal(map[string]any{})
+
+			result, err := tools.Execute(ctx, "glob", string(args))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("pattern is required"))
+		})
+
+		It("returns error for path outside repo", func() {
+			args, _ := json.Marshal(map[string]any{
+				"pattern": "*.go",
+				"path":    "../../../",
+			})
+
+			result, err := tools.Execute(ctx, "glob", string(args))
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result).To(ContainSubstring("outside repository"))
+		})
+	})
+
+	Describe("Bash Tool", func() {
+		Describe("Allowed Commands", func() {
+			It("executes ls command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "escape-link",
+					"command": "ls src",
 				})
 
-				_, execErr := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
-				// Should either reject or show the symlink as a file, not traverse it
-				Expect(execErr).NotTo(HaveOccurred())
-				// The symlink itself is in the repo, but we shouldn't traverse into /etc
-				// Current implementation: os.Stat follows symlinks, so /etc would be listed
-				// This test documents current behavior - symlink traversal is a known limitation
-				// For now, we accept that symlinks are followed (like standard `tree` command)
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("main.go"))
+				Expect(result).To(ContainSubstring("util"))
+			})
+
+			It("executes find command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "find . -name '*.go'",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("main.go"))
+			})
+
+			It("executes git log command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "git log --oneline -1 2>/dev/null || echo 'not a git repo'",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).NotTo(BeEmpty())
+			})
+
+			It("executes tree command", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "tree -L 1 2>/dev/null || ls",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).NotTo(ContainSubstring("Command blocked"))
 			})
 		})
 
-		Describe("Functionality", func() {
-			It("lists directory structure at default depth", func() {
-				args, _ := json.Marshal(map[string]any{})
-
-				result, err := tools.Execute(ctx, "tree", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("src/"))
-				Expect(result).To(ContainSubstring("main.go"))
-				Expect(result).To(ContainSubstring("README.md"))
-			})
-
-			It("respects path parameter", func() {
+		Describe("Blocked Commands", func() {
+			It("blocks cat command (use read tool)", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "src",
+					"command": "cat src/main.go",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("src/"))
-				Expect(result).To(ContainSubstring("main.go"))
-				Expect(result).To(ContainSubstring("util/"))
+				Expect(result).To(ContainSubstring("Command blocked"))
+				Expect(result).To(ContainSubstring("read"))
 			})
 
-			It("excludes .git directory", func() {
-				args, _ := json.Marshal(map[string]any{})
-
-				result, err := tools.Execute(ctx, "tree", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).NotTo(ContainSubstring(".git"))
-				Expect(result).NotTo(ContainSubstring("config"))
-			})
-
-			It("excludes node_modules directory", func() {
-				// Create node_modules
-				Expect(os.MkdirAll(filepath.Join(tempDir, "node_modules", "lodash"), 0o755)).To(Succeed())
-				Expect(os.WriteFile(filepath.Join(tempDir, "node_modules", "lodash", "index.js"), []byte(""), 0o644)).To(Succeed())
-
-				args, _ := json.Marshal(map[string]any{})
-
-				result, err := tools.Execute(ctx, "tree", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).NotTo(ContainSubstring("node_modules"))
-				Expect(result).NotTo(ContainSubstring("lodash"))
-			})
-
-			It("respects depth parameter", func() {
+			It("blocks head command (use read tool)", func() {
 				args, _ := json.Marshal(map[string]any{
-					"depth": 1,
+					"command": "head -10 src/main.go",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("src/"))
-				// At depth 1, we should NOT see files inside src/
-				Expect(result).NotTo(ContainSubstring("main.go"))
+				Expect(result).To(ContainSubstring("Command blocked"))
 			})
 
-			It("caps depth at maximum", func() {
+			It("blocks grep command (use grep tool)", func() {
 				args, _ := json.Marshal(map[string]any{
-					"depth": 100, // Way over max
+					"command": "grep pattern src/main.go",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				// Should still work, just capped at max depth (4)
-				Expect(result).To(ContainSubstring("src/"))
+				Expect(result).To(ContainSubstring("Command blocked"))
+				Expect(result).To(ContainSubstring("grep"))
 			})
 
-			It("returns error for non-existent path", func() {
+			It("blocks rg command (use grep tool)", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "nonexistent",
+					"command": "rg pattern",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Directory not found"))
+				Expect(result).To(ContainSubstring("Command blocked"))
 			})
 
-			It("returns error when path is a file", func() {
+			It("blocks rm command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "README.md",
+					"command": "rm src/main.go",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Not a directory"))
+				Expect(result).To(ContainSubstring("Command blocked"))
 			})
 
-			It("shows directories before files", func() {
+			It("blocks git push command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "src",
+					"command": "git push origin main",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				// util/ (directory) should appear before main.go (file)
-				utilIdx := len(result) - len(result[findSubstring(result, "util/"):])
-				mainIdx := len(result) - len(result[findSubstring(result, "main.go"):])
-				Expect(utilIdx).To(BeNumerically("<", mainIdx))
+				Expect(result).To(ContainSubstring("Command blocked"))
 			})
 
-			It("handles empty directory", func() {
-				emptyDir := filepath.Join(tempDir, "empty")
-				Expect(os.MkdirAll(emptyDir, 0o755)).To(Succeed())
-
+			It("blocks git commit command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "empty",
+					"command": "git commit -m 'test'",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Directory is empty"))
+				Expect(result).To(ContainSubstring("Command blocked"))
+			})
+
+			It("blocks output redirection", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "ls > output.txt",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+				Expect(result).To(ContainSubstring("redirection"))
+			})
+
+			It("blocks unlisted commands", func() {
+				args, _ := json.Marshal(map[string]any{
+					"command": "curl https://example.com",
+				})
+
+				result, err := tools.Execute(ctx, "bash", string(args))
+
+				Expect(err).NotTo(HaveOccurred())
+				Expect(result).To(ContainSubstring("Command blocked"))
+				Expect(result).To(ContainSubstring("not in allowed list"))
 			})
 		})
 
 		Describe("Edge Cases", func() {
-			It("handles path with spaces", func() {
-				spacePath := filepath.Join(tempDir, "path with spaces")
-				Expect(os.MkdirAll(spacePath, 0o755)).To(Succeed())
-				Expect(os.WriteFile(filepath.Join(spacePath, "file.txt"), []byte("test"), 0o644)).To(Succeed())
-
+			It("handles empty command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "path with spaces",
+					"command": "",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("file.txt"))
+				Expect(result).To(ContainSubstring("command is required"))
 			})
 
-			It("handles path with special characters", func() {
-				specialPath := filepath.Join(tempDir, "special-chars_123")
-				Expect(os.MkdirAll(specialPath, 0o755)).To(Succeed())
-				Expect(os.WriteFile(filepath.Join(specialPath, "test.go"), []byte("package test"), 0o644)).To(Succeed())
-
+			It("handles whitespace-only command", func() {
 				args, _ := json.Marshal(map[string]any{
-					"path": "special-chars_123",
+					"command": "   ",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("test.go"))
+				Expect(result).To(ContainSubstring("command is required"))
 			})
+		})
 
-			It("handles deeply nested structure within depth limit", func() {
-				// Create a/b/c/d/e/f structure
-				deepPath := filepath.Join(tempDir, "a", "b", "c", "d", "e", "f")
-				Expect(os.MkdirAll(deepPath, 0o755)).To(Succeed())
-				Expect(os.WriteFile(filepath.Join(deepPath, "deep.txt"), []byte("deep"), 0o644)).To(Succeed())
+		Describe("Output Limits", func() {
+			It("truncates very large output", func() {
+				// Create many files to generate large ls output
+				for i := 0; i < 200; i++ {
+					Expect(os.WriteFile(filepath.Join(tempDir, "file"+string(rune('a'+i%26))+".txt"), []byte("content"), 0o644)).To(Succeed())
+				}
 
 				args, _ := json.Marshal(map[string]any{
-					"path":  "a",
-					"depth": 4, // max depth
+					"command": "find . -type f",
 				})
 
-				result, err := tools.Execute(ctx, "tree", string(args))
+				result, err := tools.Execute(ctx, "bash", string(args))
 
 				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("b/"))
-				Expect(result).To(ContainSubstring("c/"))
-				Expect(result).To(ContainSubstring("d/"))
-				// e/ is at depth 4, should be visible
-				Expect(result).To(ContainSubstring("e/"))
-				// f/ is at depth 5, should NOT be visible
-				Expect(result).NotTo(ContainSubstring("f/"))
+				// Should not error, output may be truncated for very large results
+				Expect(result).NotTo(BeEmpty())
 			})
 		})
 	})
-})
 
-// Helper function to find substring index
-func findSubstring(s, substr string) int {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return i
-		}
-	}
-	return -1
-}
+	Describe("Unknown Tool", func() {
+		It("returns error for unknown tool", func() {
+			args, _ := json.Marshal(map[string]any{
+				"operation": "find",
+			})
+
+			_, err := tools.Execute(ctx, "codegraph", string(args))
+
+			Expect(err).To(HaveOccurred())
+			Expect(err.Error()).To(ContainSubstring("unknown tool"))
+		})
+	})
+})

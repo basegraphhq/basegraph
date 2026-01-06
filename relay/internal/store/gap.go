@@ -50,6 +50,18 @@ func (s *gapStore) GetByID(ctx context.Context, id int64) (model.Gap, error) {
 	return toGapModel(row), nil
 }
 
+func (s *gapStore) GetByShortID(ctx context.Context, shortID int64) (model.Gap, error) {
+	row, err := s.queries.GetGapByShortID(ctx, shortID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.Gap{}, ErrNotFound
+		}
+		return model.Gap{}, err
+	}
+
+	return toGapModel(row), nil
+}
+
 func (s *gapStore) ListByIssue(ctx context.Context, issueID int64) ([]model.Gap, error) {
 	rows, err := s.queries.ListGapsByIssue(ctx, issueID)
 	if err != nil {
@@ -60,6 +72,17 @@ func (s *gapStore) ListByIssue(ctx context.Context, issueID int64) ([]model.Gap,
 
 func (s *gapStore) ListOpenByIssue(ctx context.Context, issueID int64) ([]model.Gap, error) {
 	rows, err := s.queries.ListOpenGapsByIssue(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+	return toGapModels(rows), nil
+}
+
+func (s *gapStore) ListClosedByIssue(ctx context.Context, issueID int64, limit int32) ([]model.Gap, error) {
+	rows, err := s.queries.ListClosedGapsByIssue(ctx, sqlc.ListClosedGapsByIssueParams{
+		IssueID: issueID,
+		Limit:   limit,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -80,6 +103,31 @@ func (s *gapStore) Resolve(ctx context.Context, id int64) (model.Gap, error) {
 
 func (s *gapStore) Skip(ctx context.Context, id int64) (model.Gap, error) {
 	row, err := s.queries.SkipGap(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.Gap{}, ErrNotFound
+		}
+		return model.Gap{}, err
+	}
+	return toGapModel(row), nil
+}
+
+func (s *gapStore) Close(ctx context.Context, id int64, status model.GapStatus, reason, note string) (model.Gap, error) {
+	var closedReason *string
+	var closedNote *string
+	if reason != "" {
+		closedReason = &reason
+	}
+	if note != "" {
+		closedNote = &note
+	}
+
+	row, err := s.queries.CloseGap(ctx, sqlc.CloseGapParams{
+		ID:           id,
+		Status:       string(status),
+		ClosedReason: closedReason,
+		ClosedNote:   closedNote,
+	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return model.Gap{}, ErrNotFound
@@ -113,14 +161,17 @@ func (s *gapStore) CountOpenBlocking(ctx context.Context, issueID int64) (int64,
 
 func toGapModel(row sqlc.Gap) model.Gap {
 	gap := model.Gap{
-		ID:         row.ID,
-		IssueID:    row.IssueID,
-		Status:     model.GapStatus(row.Status),
-		Respondent: model.GapRespondent(row.Respondent),
-		LearningID: row.LearningID,
-		Severity:   model.GapSeverity(row.Severity),
-		Question:   row.Question,
-		CreatedAt:  row.CreatedAt.Time,
+		ID:           row.ID,
+		ShortID:      row.ShortID,
+		IssueID:      row.IssueID,
+		Status:       model.GapStatus(row.Status),
+		ClosedReason: "",
+		ClosedNote:   "",
+		Respondent:   model.GapRespondent(row.Respondent),
+		LearningID:   row.LearningID,
+		Severity:     model.GapSeverity(row.Severity),
+		Question:     row.Question,
+		CreatedAt:    row.CreatedAt.Time,
 	}
 
 	if row.ResolvedAt.Valid {
@@ -130,6 +181,12 @@ func toGapModel(row sqlc.Gap) model.Gap {
 		gap.Evidence = ""
 	} else {
 		gap.Evidence = *row.Evidence
+	}
+	if row.ClosedReason != nil {
+		gap.ClosedReason = *row.ClosedReason
+	}
+	if row.ClosedNote != nil {
+		gap.ClosedNote = *row.ClosedNote
 	}
 
 	return gap

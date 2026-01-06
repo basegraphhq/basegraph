@@ -354,6 +354,8 @@ func (s *gitLabService) SetupIntegration(ctx context.Context, params SetupIntegr
 	)
 
 	events := []string{"issues_events", "merge_requests_events", "note_events", "wiki_page_events"}
+	webhookName := "Relay"
+	webhookDescription := "Relay outbound webhook"
 
 	for _, project := range projects {
 		externalID := strconv.FormatInt(project.ID, 10)
@@ -363,6 +365,8 @@ func (s *gitLabService) SetupIntegration(ctx context.Context, params SetupIntegr
 
 		hook, _, hookErr := client.Projects.AddProjectHook(project.ID, &gitlab.AddProjectHookOptions{
 			URL:                   gitlab.Ptr(webhookURL),
+			Name:                  gitlab.Ptr(webhookName),
+			Description:           gitlab.Ptr(webhookDescription),
 			IssuesEvents:          gitlab.Ptr(true),
 			MergeRequestsEvents:   gitlab.Ptr(true),
 			NoteEvents:            gitlab.Ptr(true),
@@ -585,6 +589,8 @@ func (s *gitLabService) RefreshIntegration(ctx context.Context, workspaceID int6
 }
 
 func (s *gitLabService) updateExistingWebhooksWithWikiEvents(ctx context.Context, integrationID int64, instanceURL, token string) {
+	webhookName := "Relay"
+	webhookDescription := "Relay outbound webhook"
 	configs, err := s.stores.IntegrationConfigs().ListByIntegrationAndType(ctx, integrationID, "webhook")
 	if err != nil {
 		slog.WarnContext(ctx, "failed to list webhook configs for wiki update",
@@ -643,6 +649,8 @@ func (s *gitLabService) updateExistingWebhooksWithWikiEvents(ctx context.Context
 		}
 
 		_, _, editErr := client.Projects.EditProjectHook(projectID, cfg.WebhookID, &gitlab.EditProjectHookOptions{
+			Name:           gitlab.Ptr(webhookName),
+			Description:    gitlab.Ptr(webhookDescription),
 			WikiPageEvents: gitlab.Ptr(true),
 		}, gitlab.WithContext(ctx))
 		if editErr != nil {

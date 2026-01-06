@@ -79,22 +79,23 @@ echo -e "  → ArangoDB databases: ${ARANGO_DBS}"
 
 echo ""
 
-# Step 3: Run codegraph extraction and ingestion
-echo -e "${YELLOW}[3/3] Running codegraph extraction and ingestion...${NC}"
+# Step 3: Build latest codegraph binary
+echo -e "${YELLOW}[3/4] Building latest codegraph binary...${NC}"
 echo ""
 
-# Check if codegraph binary exists
-if [ ! -f "$CODEGRAPH_BIN" ]; then
-    echo -e "${RED}✗ Codegraph binary not found at: $CODEGRAPH_BIN${NC}"
-    echo -e "${YELLOW}  Building codegraph...${NC}"
-    (cd ../codegraph/golang && make build-codegraph)
+echo -e "  → Building codegraph..."
+(cd ../codegraph/golang && go build -o bin/codegraph cmd/codegraph/main.go)
 
-    if [ ! -f "$CODEGRAPH_BIN" ]; then
-        echo -e "${RED}✗ Failed to build codegraph binary${NC}"
-        exit 1
-    fi
-    echo -e "${GREEN}✓ Codegraph binary built${NC}"
+if [ ! -f "$CODEGRAPH_BIN" ]; then
+    echo -e "${RED}✗ Failed to build codegraph binary${NC}"
+    exit 1
 fi
+echo -e "${GREEN}✓ Codegraph binary built${NC}"
+echo ""
+
+# Step 4: Run codegraph extraction and ingestion
+echo -e "${YELLOW}[4/4] Running codegraph extraction and ingestion...${NC}"
+echo ""
 
 echo -e "  → Target repository: ${TARGET_REPO_PATH}"
 echo -e "  → Codegraph binary: ${CODEGRAPH_BIN}"
@@ -108,12 +109,21 @@ export ARANGO_PASSWORD
 export ARANGO_DATABASE
 
 # Run codegraph
+# Note: testdata directories are automatically skipped by Go's packages.Load
 echo -e "${BLUE}  Starting extraction and ingestion...${NC}"
 echo ""
 
 START_TIME=$(date +%s)
 
+set +e
 $CODEGRAPH_BIN
+CODEGRAPH_STATUS=$?
+set -e
+
+if [ $CODEGRAPH_STATUS -ne 0 ]; then
+    echo -e "${RED}✗ Codegraph failed with status ${CODEGRAPH_STATUS}${NC}"
+    exit $CODEGRAPH_STATUS
+fi
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))

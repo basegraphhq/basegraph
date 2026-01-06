@@ -53,8 +53,8 @@ func (v *actionValidator) Validate(ctx context.Context, issue model.Issue, input
 			err = v.validateUpdateFindings(action)
 		case ActionTypeUpdateGaps:
 			err = v.validateUpdateGaps(ctx, issue, action)
-		case ActionTypeReadyForPlan:
-			err = v.validateReadyForPlan(ctx, issue, action)
+		case ActionTypeReadyForSpecGeneration:
+			err = v.validateReadyForSpecGeneration(ctx, issue, action)
 		default:
 			err = fmt.Errorf("%w: %s", ErrUnknownActionType, action.Type)
 		}
@@ -123,37 +123,27 @@ func (v *actionValidator) validateUpdateGaps(ctx context.Context, issue model.Is
 		}
 	}
 
-	for i, idStr := range data.Resolve {
-		id, err := strconv.ParseInt(idStr, 10, 64)
+	for i, close := range data.Close {
+		if close.GapID == "" {
+			return fmt.Errorf("close[%d]: %w", i, ErrGapNotFound)
+		}
+		id, err := strconv.ParseInt(close.GapID, 10, 64)
 		if err != nil {
-			return fmt.Errorf("resolve[%d]: invalid gap id: %s", i, idStr)
+			return fmt.Errorf("close[%d]: invalid gap id: %s", i, close.GapID)
 		}
 		if _, err := v.gaps.GetByID(ctx, id); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				return fmt.Errorf("resolve[%d]: %w: %s", i, ErrGapNotFound, idStr)
+				return fmt.Errorf("close[%d]: %w: %s", i, ErrGapNotFound, close.GapID)
 			}
-			return fmt.Errorf("resolve[%d]: %w", i, err)
-		}
-	}
-
-	for i, idStr := range data.Skip {
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			return fmt.Errorf("skip[%d]: invalid gap id: %s", i, idStr)
-		}
-		if _, err := v.gaps.GetByID(ctx, id); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return fmt.Errorf("skip[%d]: %w: %s", i, ErrGapNotFound, idStr)
-			}
-			return fmt.Errorf("skip[%d]: %w", i, err)
+			return fmt.Errorf("close[%d]: %w", i, err)
 		}
 	}
 
 	return nil
 }
 
-func (v *actionValidator) validateReadyForPlan(ctx context.Context, issue model.Issue, action Action) error {
-	data, err := ParseActionData[ReadyForSpecAction](action)
+func (v *actionValidator) validateReadyForSpecGeneration(ctx context.Context, issue model.Issue, action Action) error {
+	data, err := ParseActionData[ReadyForSpecGenerationAction](action)
 	if err != nil {
 		return err
 	}

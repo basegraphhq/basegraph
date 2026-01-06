@@ -1,8 +1,10 @@
 package integration
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -91,6 +93,9 @@ var _ = Describe("GitLabService", func() {
 		Expect(findCredentialType(credStore.created, model.CredentialTypeAPIKey)).To(BeTrue())
 		Expect(findCredentialType(credStore.created, model.CredentialTypeWebhookSecret)).To(BeTrue())
 		Expect(mock.hookCalls).To(Equal([]int64{10}))
+		Expect(mock.addHookCalls).To(HaveLen(1))
+		Expect(mock.addHookCalls[0].Name).To(Equal("Relay"))
+		Expect(mock.addHookCalls[0].Description).To(Equal("Relay outbound webhook"))
 	})
 
 	It("continues when some hooks fail", func() {
@@ -268,11 +273,18 @@ type gitlabAPIMock struct {
 	server        *httptest.Server
 	projects      []gitlabProject
 	hookCalls     []int64
+	addHookCalls  []addHookCall
 	editHookCalls []editHookCall
 	hookDelay     time.Duration
 	hookMu        sync.Mutex
 	inFlight      int32
 	maxInFlight   int32
+}
+
+type addHookCall struct {
+	ProjectID   int64
+	Name        string
+	Description string
 }
 
 type editHookCall struct {
@@ -379,8 +391,29 @@ func (m *gitlabAPIMock) handleAddHook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	bodyBytes, _ := io.ReadAll(r.Body)
+	_ = r.Body.Close()
+
+	var payload struct {
+		Name        string `json:"name"`
+		Description string `json:"description"`
+	}
+
+	_ = json.Unmarshal(bodyBytes, &payload)
+	if payload.Name == "" && payload.Description == "" {
+		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+		_ = r.ParseForm()
+		payload.Name = r.FormValue("name")
+		payload.Description = r.FormValue("description")
+	}
+
 	m.hookMu.Lock()
 	m.hookCalls = append(m.hookCalls, projectID)
+	m.addHookCalls = append(m.addHookCalls, addHookCall{
+		ProjectID:   projectID,
+		Name:        payload.Name,
+		Description: payload.Description,
+	})
 	m.hookMu.Unlock()
 
 	w.WriteHeader(http.StatusCreated)

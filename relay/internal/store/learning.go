@@ -99,6 +99,7 @@ func (s *learningStore) ListByWorkspaceAndType(ctx context.Context, workspaceID 
 func toLearningModel(row sqlc.Learning) *model.Learning {
 	return &model.Learning{
 		ID:                   row.ID,
+		ShortID:              row.ShortID,
 		WorkspaceID:          row.WorkspaceID,
 		RuleUpdatedByIssueID: row.RuleUpdatedByIssueID,
 		Type:                 row.Type,

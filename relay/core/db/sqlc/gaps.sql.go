@@ -9,6 +9,49 @@ import (
 	"context"
 )
 
+const closeGap = `-- name: CloseGap :one
+UPDATE gaps
+SET status = $2, -- 'resolved' | 'skipped'
+    closed_reason = $3, -- answered | inferred | not_relevant
+    closed_note = $4,
+    resolved_at = now()
+WHERE id = $1
+RETURNING id, short_id, issue_id, status, closed_reason, closed_note, question, evidence, severity, respondent, learning_id, created_at, resolved_at
+`
+
+type CloseGapParams struct {
+	ID           int64   `json:"id"`
+	Status       string  `json:"status"`
+	ClosedReason *string `json:"closed_reason"`
+	ClosedNote   *string `json:"closed_note"`
+}
+
+func (q *Queries) CloseGap(ctx context.Context, arg CloseGapParams) (Gap, error) {
+	row := q.db.QueryRow(ctx, closeGap,
+		arg.ID,
+		arg.Status,
+		arg.ClosedReason,
+		arg.ClosedNote,
+	)
+	var i Gap
+	err := row.Scan(
+		&i.ID,
+		&i.ShortID,
+		&i.IssueID,
+		&i.Status,
+		&i.ClosedReason,
+		&i.ClosedNote,
+		&i.Question,
+		&i.Evidence,
+		&i.Severity,
+		&i.Respondent,
+		&i.LearningID,
+		&i.CreatedAt,
+		&i.ResolvedAt,
+	)
+	return i, err
+}
+
 const countOpenBlockingGapsByIssue = `-- name: CountOpenBlockingGapsByIssue :one
 SELECT COUNT(*)::bigint FROM gaps
 WHERE issue_id = $1 AND status = 'open' AND severity = 'blocking'
@@ -32,7 +75,7 @@ INSERT INTO gaps (
     respondent
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, issue_id, status, question, evidence, severity, respondent, learning_id, created_at, resolved_at
+RETURNING id, short_id, issue_id, status, closed_reason, closed_note, question, evidence, severity, respondent, learning_id, created_at, resolved_at
 `
 
 type CreateGapParams struct {
@@ -58,8 +101,11 @@ func (q *Queries) CreateGap(ctx context.Context, arg CreateGapParams) (Gap, erro
 	var i Gap
 	err := row.Scan(
 		&i.ID,
+		&i.ShortID,
 		&i.IssueID,
 		&i.Status,
+		&i.ClosedReason,
+		&i.ClosedNote,
 		&i.Question,
 		&i.Evidence,
 		&i.Severity,
@@ -72,7 +118,7 @@ func (q *Queries) CreateGap(ctx context.Context, arg CreateGapParams) (Gap, erro
 }
 
 const getGap = `-- name: GetGap :one
-SELECT id, issue_id, status, question, evidence, severity, respondent, learning_id, created_at, resolved_at FROM gaps WHERE id = $1
+SELECT id, short_id, issue_id, status, closed_reason, closed_note, question, evidence, severity, respondent, learning_id, created_at, resolved_at FROM gaps WHERE id = $1
 `
 
 func (q *Queries) GetGap(ctx context.Context, id int64) (Gap, error) {
@@ -80,8 +126,11 @@ func (q *Queries) GetGap(ctx context.Context, id int64) (Gap, error) {
 	var i Gap
 	err := row.Scan(
 		&i.ID,
+		&i.ShortID,
 		&i.IssueID,
 		&i.Status,
+		&i.ClosedReason,
+		&i.ClosedNote,
 		&i.Question,
 		&i.Evidence,
 		&i.Severity,
@@ -93,8 +142,79 @@ func (q *Queries) GetGap(ctx context.Context, id int64) (Gap, error) {
 	return i, err
 }
 
+const getGapByShortID = `-- name: GetGapByShortID :one
+SELECT id, short_id, issue_id, status, closed_reason, closed_note, question, evidence, severity, respondent, learning_id, created_at, resolved_at FROM gaps WHERE short_id = $1
+`
+
+func (q *Queries) GetGapByShortID(ctx context.Context, shortID int64) (Gap, error) {
+	row := q.db.QueryRow(ctx, getGapByShortID, shortID)
+	var i Gap
+	err := row.Scan(
+		&i.ID,
+		&i.ShortID,
+		&i.IssueID,
+		&i.Status,
+		&i.ClosedReason,
+		&i.ClosedNote,
+		&i.Question,
+		&i.Evidence,
+		&i.Severity,
+		&i.Respondent,
+		&i.LearningID,
+		&i.CreatedAt,
+		&i.ResolvedAt,
+	)
+	return i, err
+}
+
+const listClosedGapsByIssue = `-- name: ListClosedGapsByIssue :many
+SELECT id, short_id, issue_id, status, closed_reason, closed_note, question, evidence, severity, respondent, learning_id, created_at, resolved_at FROM gaps
+WHERE issue_id = $1 AND status != 'open'
+ORDER BY COALESCE(resolved_at, created_at) DESC
+LIMIT $2
+`
+
+type ListClosedGapsByIssueParams struct {
+	IssueID int64 `json:"issue_id"`
+	Limit   int32 `json:"limit"`
+}
+
+func (q *Queries) ListClosedGapsByIssue(ctx context.Context, arg ListClosedGapsByIssueParams) ([]Gap, error) {
+	rows, err := q.db.Query(ctx, listClosedGapsByIssue, arg.IssueID, arg.Limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Gap
+	for rows.Next() {
+		var i Gap
+		if err := rows.Scan(
+			&i.ID,
+			&i.ShortID,
+			&i.IssueID,
+			&i.Status,
+			&i.ClosedReason,
+			&i.ClosedNote,
+			&i.Question,
+			&i.Evidence,
+			&i.Severity,
+			&i.Respondent,
+			&i.LearningID,
+			&i.CreatedAt,
+			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGapsByIssue = `-- name: ListGapsByIssue :many
-SELECT id, issue_id, status, question, evidence, severity, respondent, learning_id, created_at, resolved_at FROM gaps
+SELECT id, short_id, issue_id, status, closed_reason, closed_note, question, evidence, severity, respondent, learning_id, created_at, resolved_at FROM gaps
 WHERE issue_id = $1
 ORDER BY created_at DESC
 `
@@ -110,8 +230,11 @@ func (q *Queries) ListGapsByIssue(ctx context.Context, issueID int64) ([]Gap, er
 		var i Gap
 		if err := rows.Scan(
 			&i.ID,
+			&i.ShortID,
 			&i.IssueID,
 			&i.Status,
+			&i.ClosedReason,
+			&i.ClosedNote,
 			&i.Question,
 			&i.Evidence,
 			&i.Severity,
@@ -131,7 +254,7 @@ func (q *Queries) ListGapsByIssue(ctx context.Context, issueID int64) ([]Gap, er
 }
 
 const listOpenGapsByIssue = `-- name: ListOpenGapsByIssue :many
-SELECT id, issue_id, status, question, evidence, severity, respondent, learning_id, created_at, resolved_at FROM gaps
+SELECT id, short_id, issue_id, status, closed_reason, closed_note, question, evidence, severity, respondent, learning_id, created_at, resolved_at FROM gaps
 WHERE issue_id = $1 AND status = 'open'
 ORDER BY
     CASE severity
@@ -154,8 +277,11 @@ func (q *Queries) ListOpenGapsByIssue(ctx context.Context, issueID int64) ([]Gap
 		var i Gap
 		if err := rows.Scan(
 			&i.ID,
+			&i.ShortID,
 			&i.IssueID,
 			&i.Status,
+			&i.ClosedReason,
+			&i.ClosedNote,
 			&i.Question,
 			&i.Evidence,
 			&i.Severity,
@@ -179,7 +305,7 @@ UPDATE gaps
 SET status = 'resolved',
     resolved_at = now()
 WHERE id = $1
-RETURNING id, issue_id, status, question, evidence, severity, respondent, learning_id, created_at, resolved_at
+RETURNING id, short_id, issue_id, status, closed_reason, closed_note, question, evidence, severity, respondent, learning_id, created_at, resolved_at
 `
 
 func (q *Queries) ResolveGap(ctx context.Context, id int64) (Gap, error) {
@@ -187,8 +313,11 @@ func (q *Queries) ResolveGap(ctx context.Context, id int64) (Gap, error) {
 	var i Gap
 	err := row.Scan(
 		&i.ID,
+		&i.ShortID,
 		&i.IssueID,
 		&i.Status,
+		&i.ClosedReason,
+		&i.ClosedNote,
 		&i.Question,
 		&i.Evidence,
 		&i.Severity,
@@ -204,7 +333,7 @@ const setGapLearning = `-- name: SetGapLearning :one
 UPDATE gaps
 SET learning_id = $2
 WHERE id = $1
-RETURNING id, issue_id, status, question, evidence, severity, respondent, learning_id, created_at, resolved_at
+RETURNING id, short_id, issue_id, status, closed_reason, closed_note, question, evidence, severity, respondent, learning_id, created_at, resolved_at
 `
 
 type SetGapLearningParams struct {
@@ -217,8 +346,11 @@ func (q *Queries) SetGapLearning(ctx context.Context, arg SetGapLearningParams) 
 	var i Gap
 	err := row.Scan(
 		&i.ID,
+		&i.ShortID,
 		&i.IssueID,
 		&i.Status,
+		&i.ClosedReason,
+		&i.ClosedNote,
 		&i.Question,
 		&i.Evidence,
 		&i.Severity,
@@ -233,9 +365,11 @@ func (q *Queries) SetGapLearning(ctx context.Context, arg SetGapLearningParams) 
 const skipGap = `-- name: SkipGap :one
 UPDATE gaps
 SET status = 'skipped',
+    closed_reason = 'not_relevant',
+    closed_note = null,
     resolved_at = now()
 WHERE id = $1
-RETURNING id, issue_id, status, question, evidence, severity, respondent, learning_id, created_at, resolved_at
+RETURNING id, short_id, issue_id, status, closed_reason, closed_note, question, evidence, severity, respondent, learning_id, created_at, resolved_at
 `
 
 func (q *Queries) SkipGap(ctx context.Context, id int64) (Gap, error) {
@@ -243,8 +377,11 @@ func (q *Queries) SkipGap(ctx context.Context, id int64) (Gap, error) {
 	var i Gap
 	err := row.Scan(
 		&i.ID,
+		&i.ShortID,
 		&i.IssueID,
 		&i.Status,
+		&i.ClosedReason,
+		&i.ClosedNote,
 		&i.Question,
 		&i.Evidence,
 		&i.Severity,

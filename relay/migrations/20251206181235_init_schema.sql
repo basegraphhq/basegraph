@@ -224,9 +224,10 @@ create index idx_sessions_expires_at on sessions (expires_at);
 
 create table learnings (
     id bigint primary key,
+    short_id bigserial not null,
     workspace_id bigint not null references workspaces(id),
     rule_updated_by_issue_id bigint references issues(id), -- NULL for workspace-level rules
-    type text not null check (type in ('project_standards', 'codebase_standards', 'domain_knowledge')),
+    type text not null check (type in ('domain_learnings', 'code_learnings')),
     content text not null,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
@@ -236,12 +237,16 @@ create table learnings (
 
 create index idx_learnings_workspace_id on learnings (workspace_id);
 create index idx_learnings_type on learnings (type);
+create unique index unq_learnings_short_id on learnings (short_id);
 
 
 create table gaps (
     id bigint primary key,
+    short_id bigserial not null,
     issue_id bigint not null references issues(id),
     status text not null default 'open',
+    closed_reason text,
+    closed_note text,
     question text not null,
     evidence text,
     severity text not null,
@@ -252,6 +257,7 @@ create table gaps (
 );
 
 comment on column gaps.status is 'open | resolved | skipped';
+comment on column gaps.closed_reason is 'answered | inferred | not_relevant';
 comment on column gaps.severity is 'blocking | high | medium | low';
 comment on column gaps.respondent is 'reporter | assignee';
 
@@ -267,6 +273,7 @@ alter table gaps add constraint chk_gaps_respondent
 create index idx_gaps_issue_id on gaps (issue_id);
 create index idx_gaps_status on gaps (status) where status = 'open';
 create index idx_gaps_issue_status on gaps (issue_id, status);
+create unique index unq_gaps_short_id on gaps (short_id);
 
 
 -- LLM Pipeline Evaluation Logs

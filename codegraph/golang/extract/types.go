@@ -138,6 +138,7 @@ type Function struct {
 	Filepath     string
 	ReturnQNames []string
 	ParamQNames  []string
+	Signature    string // Human-readable signature, e.g., "(p *Planner) Plan(ctx context.Context, issue Issue) ([]Action, error)"
 }
 
 type DocType byte

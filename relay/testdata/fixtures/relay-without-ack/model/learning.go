@@ -13,7 +13,6 @@ type Learning struct {
 }
 
 const (
-	LearningTypeProjectStandards  = "project_standards"
-	LearningTypeCodebaseStandards = "codebase_standards"
-	LearningTypeDomainKnowledge   = "domain_knowledge"
+	LearningTypeDomainLearnings = "domain_learnings"
+	LearningTypeCodeLearnings   = "code_learnings"
 )

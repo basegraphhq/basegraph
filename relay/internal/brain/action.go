@@ -11,10 +11,11 @@ import (
 type ActionType string
 
 const (
-	ActionTypePostComment    ActionType = "post_comment"
-	ActionTypeUpdateFindings ActionType = "update_findings"
-	ActionTypeUpdateGaps     ActionType = "update_gaps"
-	ActionTypeReadyForPlan   ActionType = "ready_for_plan"
+	ActionTypePostComment            ActionType = "post_comment"
+	ActionTypeUpdateFindings         ActionType = "update_findings"
+	ActionTypeUpdateGaps             ActionType = "update_gaps"
+	ActionTypeUpdateLearnings        ActionType = "update_learnings"
+	ActionTypeReadyForSpecGeneration ActionType = "ready_for_spec_generation"
 )
 
 type Action struct {
@@ -59,9 +60,17 @@ type CodeSourceInput struct {
 }
 
 type UpdateGapsAction struct {
-	Add     []GapInput `json:"add,omitempty"`
-	Resolve []string   `json:"resolve,omitempty"`
-	Skip    []string   `json:"skip,omitempty"`
+	Add   []GapInput `json:"add,omitempty"`
+	Close []GapClose `json:"close,omitempty"`
+}
+
+type UpdateLearningsAction struct {
+	Propose []LearningInput `json:"propose,omitempty"`
+}
+
+type LearningInput struct {
+	Type    string `json:"type"`
+	Content string `json:"content"`
 }
 
 type GapInput struct {
@@ -69,6 +78,46 @@ type GapInput struct {
 	Evidence   string      `json:"evidence,omitempty"`
 	Severity   GapSeverity `json:"severity"`
 	Respondent Respondent  `json:"respondent"`
+}
+
+type GapCloseReason string
+
+const (
+	GapCloseAnswered    GapCloseReason = "answered"
+	GapCloseInferred    GapCloseReason = "inferred"
+	GapCloseNotRelevant GapCloseReason = "not_relevant"
+)
+
+type GapID string
+
+func (g *GapID) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		*g = ""
+		return nil
+	}
+	if len(b) == 0 {
+		return fmt.Errorf("gap_id empty")
+	}
+	if b[0] == '"' {
+		var s string
+		if err := json.Unmarshal(b, &s); err != nil {
+			return err
+		}
+		*g = GapID(s)
+		return nil
+	}
+	var n json.Number
+	if err := json.Unmarshal(b, &n); err != nil {
+		return err
+	}
+	*g = GapID(n.String())
+	return nil
+}
+
+type GapClose struct {
+	GapID  GapID          `json:"gap_id"`
+	Reason GapCloseReason `json:"reason"`
+	Note   string         `json:"note,omitempty"`
 }
 
 type GapSeverity string
@@ -87,11 +136,12 @@ const (
 	RespondentAssignee Respondent = "assignee"
 )
 
-type ReadyForSpecAction struct {
+type ReadyForSpecGenerationAction struct {
 	ContextSummary   string   `json:"context_summary"`
 	RelevantFindings []string `json:"relevant_finding_ids"`
-	ResolvedGaps     []string `json:"resolved_gap_ids"`
+	ClosedGaps       []GapID  `json:"closed_gap_ids"`
 	LearningsApplied []string `json:"learning_ids"`
+	ProceedSignal    string   `json:"proceed_signal"`
 }
 
 // ActionExecutor executes actions returned by the Planner.

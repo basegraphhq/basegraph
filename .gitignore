@@ -208,3 +208,6 @@ Icon?
 test-results/
 playwright-report/
 playwright/.cache/
+
+opencode/
+.gocache/

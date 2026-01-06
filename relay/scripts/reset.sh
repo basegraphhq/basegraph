@@ -4,7 +4,7 @@
 # Usage:
 #   ./scripts/reset.sh              # Reset everything
 #   ./scripts/reset.sh --redis-only # Only clear Redis
-#   ./scripts/reset.sh --db-only    # Only clear ArangoDB
+#   ./scripts/reset.sh --codegraph-only    # Only clear ArangoDB
 #   ./scripts/reset.sh --no-reindex # Reset but don't re-index
 
 set -e
@@ -43,7 +43,7 @@ for arg in "$@"; do
             RESET_DB=false
             REINDEX=false
             ;;
-        --db-only)
+        --codegraph-only)
             RESET_REDIS=false
             REINDEX=false
             ;;

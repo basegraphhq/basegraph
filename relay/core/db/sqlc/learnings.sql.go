@@ -15,7 +15,7 @@ INSERT INTO learnings (
 ) VALUES (
     $1, $2, $3, $4, $5
 )
-RETURNING id, workspace_id, rule_updated_by_issue_id, type, content, created_at, updated_at
+RETURNING id, short_id, workspace_id, rule_updated_by_issue_id, type, content, created_at, updated_at
 `
 
 type CreateLearningParams struct {
@@ -37,6 +37,7 @@ func (q *Queries) CreateLearning(ctx context.Context, arg CreateLearningParams) 
 	var i Learning
 	err := row.Scan(
 		&i.ID,
+		&i.ShortID,
 		&i.WorkspaceID,
 		&i.RuleUpdatedByIssueID,
 		&i.Type,
@@ -57,7 +58,7 @@ func (q *Queries) DeleteLearning(ctx context.Context, id int64) error {
 }
 
 const getLearning = `-- name: GetLearning :one
-SELECT id, workspace_id, rule_updated_by_issue_id, type, content, created_at, updated_at FROM learnings
+SELECT id, short_id, workspace_id, rule_updated_by_issue_id, type, content, created_at, updated_at FROM learnings
 WHERE id = $1 LIMIT 1
 `
 
@@ -66,6 +67,7 @@ func (q *Queries) GetLearning(ctx context.Context, id int64) (Learning, error) {
 	var i Learning
 	err := row.Scan(
 		&i.ID,
+		&i.ShortID,
 		&i.WorkspaceID,
 		&i.RuleUpdatedByIssueID,
 		&i.Type,
@@ -77,7 +79,7 @@ func (q *Queries) GetLearning(ctx context.Context, id int64) (Learning, error) {
 }
 
 const listLearningsByWorkspace = `-- name: ListLearningsByWorkspace :many
-SELECT id, workspace_id, rule_updated_by_issue_id, type, content, created_at, updated_at FROM learnings
+SELECT id, short_id, workspace_id, rule_updated_by_issue_id, type, content, created_at, updated_at FROM learnings
 WHERE workspace_id = $1
 ORDER BY created_at DESC
 `
@@ -93,6 +95,7 @@ func (q *Queries) ListLearningsByWorkspace(ctx context.Context, workspaceID int6
 		var i Learning
 		if err := rows.Scan(
 			&i.ID,
+			&i.ShortID,
 			&i.WorkspaceID,
 			&i.RuleUpdatedByIssueID,
 			&i.Type,
@@ -111,7 +114,7 @@ func (q *Queries) ListLearningsByWorkspace(ctx context.Context, workspaceID int6
 }
 
 const listLearningsByWorkspaceAndType = `-- name: ListLearningsByWorkspaceAndType :many
-SELECT id, workspace_id, rule_updated_by_issue_id, type, content, created_at, updated_at FROM learnings
+SELECT id, short_id, workspace_id, rule_updated_by_issue_id, type, content, created_at, updated_at FROM learnings
 WHERE workspace_id = $1 AND type = $2
 ORDER BY created_at DESC
 `
@@ -132,6 +135,7 @@ func (q *Queries) ListLearningsByWorkspaceAndType(ctx context.Context, arg ListL
 		var i Learning
 		if err := rows.Scan(
 			&i.ID,
+			&i.ShortID,
 			&i.WorkspaceID,
 			&i.RuleUpdatedByIssueID,
 			&i.Type,
@@ -153,7 +157,7 @@ const updateLearning = `-- name: UpdateLearning :one
 UPDATE learnings
 SET content = $2, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, rule_updated_by_issue_id, type, content, created_at, updated_at
+RETURNING id, short_id, workspace_id, rule_updated_by_issue_id, type, content, created_at, updated_at
 `
 
 type UpdateLearningParams struct {
@@ -166,6 +170,7 @@ func (q *Queries) UpdateLearning(ctx context.Context, arg UpdateLearningParams) 
 	var i Learning
 	err := row.Scan(
 		&i.ID,
+		&i.ShortID,
 		&i.WorkspaceID,
 		&i.RuleUpdatedByIssueID,
 		&i.Type,

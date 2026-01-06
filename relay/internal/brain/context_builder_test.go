@@ -144,8 +144,21 @@ func (m *mockContextBuilderGapStore) GetByID(ctx context.Context, id int64) (mod
 	return model.Gap{}, nil
 }
 
+func (m *mockContextBuilderGapStore) GetByShortID(ctx context.Context, shortID int64) (model.Gap, error) {
+	return model.Gap{}, nil
+}
+
 func (m *mockContextBuilderGapStore) ListByIssue(ctx context.Context, issueID int64) ([]model.Gap, error) {
-	return nil, nil
+	if m.err != nil {
+		return nil, m.err
+	}
+	var result []model.Gap
+	for _, g := range m.gaps {
+		if g.IssueID == issueID {
+			result = append(result, g)
+		}
+	}
+	return result, nil
 }
 
 func (m *mockContextBuilderGapStore) ListOpenByIssue(ctx context.Context, issueID int64) ([]model.Gap, error) {
@@ -161,11 +174,32 @@ func (m *mockContextBuilderGapStore) ListOpenByIssue(ctx context.Context, issueI
 	return result, nil
 }
 
+func (m *mockContextBuilderGapStore) ListClosedByIssue(ctx context.Context, issueID int64, limit int32) ([]model.Gap, error) {
+	all, err := m.ListByIssue(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+	var closed []model.Gap
+	for _, g := range all {
+		if g.Status != model.GapStatusOpen {
+			closed = append(closed, g)
+		}
+	}
+	if int(limit) > 0 && len(closed) > int(limit) {
+		closed = closed[:limit]
+	}
+	return closed, nil
+}
+
 func (m *mockContextBuilderGapStore) Resolve(ctx context.Context, id int64) (model.Gap, error) {
 	return model.Gap{}, nil
 }
 
 func (m *mockContextBuilderGapStore) Skip(ctx context.Context, id int64) (model.Gap, error) {
+	return model.Gap{}, nil
+}
+
+func (m *mockContextBuilderGapStore) Close(ctx context.Context, id int64, status model.GapStatus, reason, note string) (model.Gap, error) {
 	return model.Gap{}, nil
 }
 
@@ -229,8 +263,8 @@ var _ = Describe("ContextBuilder", func() {
 			listByWorkspaceFn: func(ctx context.Context, wID int64) ([]model.Learning, error) {
 				if wID == workspaceID {
 					return []model.Learning{
-						{ID: 1, Type: model.LearningTypeProjectStandards, Content: "Batch ops must be idempotent"},
-						{ID: 2, Type: model.LearningTypeCodebaseStandards, Content: "Use JobQueue for >100 items"},
+						{ID: 1, Type: model.LearningTypeDomainLearnings, Content: "Batch ops must be idempotent"},
+						{ID: 2, Type: model.LearningTypeCodeLearnings, Content: "Use JobQueue for >100 items"},
 					}, nil
 				}
 				return nil, nil
@@ -308,9 +342,9 @@ var _ = Describe("ContextBuilder", func() {
 				// Context dump should include learnings
 				contextDump := messages[1]
 				Expect(contextDump.Content).To(ContainSubstring("Learnings"))
-				Expect(contextDump.Content).To(ContainSubstring("project_standards"))
+				Expect(contextDump.Content).To(ContainSubstring("domain_learnings"))
 				Expect(contextDump.Content).To(ContainSubstring("Batch ops must be idempotent"))
-				Expect(contextDump.Content).To(ContainSubstring("codebase_standards"))
+				Expect(contextDump.Content).To(ContainSubstring("code_learnings"))
 				Expect(contextDump.Content).To(ContainSubstring("Use JobQueue for >100 items"))
 			})
 		})
@@ -347,16 +381,19 @@ var _ = Describe("ContextBuilder", func() {
 			It("includes gaps grouped by severity in context dump", func() {
 				issueID := int64(1)
 				mockGaps.gaps = []model.Gap{
-					{ID: 1, IssueID: issueID, Status: model.GapStatusOpen, Severity: model.GapSeverityBlocking, Respondent: model.GapRespondentReporter, Question: "What is the expected behavior?"},
-					{ID: 2, IssueID: issueID, Status: model.GapStatusOpen, Severity: model.GapSeverityHigh, Respondent: model.GapRespondentAssignee, Question: "What is the SLA?"},
-					{ID: 3, IssueID: issueID, Status: model.GapStatusOpen, Severity: model.GapSeverityBlocking, Respondent: model.GapRespondentAssignee, Question: "Should we support partial refunds?"},
+					{ID: 1, ShortID: 11, IssueID: issueID, Status: model.GapStatusOpen, Severity: model.GapSeverityBlocking, Respondent: model.GapRespondentReporter, Question: "What is the expected behavior?"},
+					{ID: 2, ShortID: 12, IssueID: issueID, Status: model.GapStatusOpen, Severity: model.GapSeverityHigh, Respondent: model.GapRespondentAssignee, Question: "What is the SLA?"},
+					{ID: 3, ShortID: 13, IssueID: issueID, Status: model.GapStatusOpen, Severity: model.GapSeverityBlocking, Respondent: model.GapRespondentAssignee, Question: "Should we support partial refunds?"},
 				}
 
 				title := "Test issue"
+				reporter := "alice"
 				issue := model.Issue{
 					ID:            issueID,
 					IntegrationID: integrationID,
 					Title:         &title,
+					Reporter:      &reporter,
+					Assignees:     []string{"bob"},
 				}
 
 				messages, err := builder.BuildPlannerMessages(ctx, issue, "")
@@ -365,10 +402,10 @@ var _ = Describe("ContextBuilder", func() {
 				contextDump := messages[1]
 				Expect(contextDump.Content).To(ContainSubstring("# Open Gaps"))
 				Expect(contextDump.Content).To(ContainSubstring("## BLOCKING"))
-				Expect(contextDump.Content).To(ContainSubstring("[for @reporter] What is the expected behavior?"))
-				Expect(contextDump.Content).To(ContainSubstring("[for @assignee] Should we support partial refunds?"))
+				Expect(contextDump.Content).To(ContainSubstring("[gap 11] [for reporter (@alice)] What is the expected behavior?"))
+				Expect(contextDump.Content).To(ContainSubstring("[gap 13] [for assignee (@bob)] Should we support partial refunds?"))
 				Expect(contextDump.Content).To(ContainSubstring("## HIGH"))
-				Expect(contextDump.Content).To(ContainSubstring("[for @assignee] What is the SLA?"))
+				Expect(contextDump.Content).To(ContainSubstring("[gap 12] [for assignee (@bob)] What is the SLA?"))
 			})
 
 			It("excludes gaps section when no open gaps exist", func() {
@@ -393,6 +430,7 @@ var _ = Describe("ContextBuilder", func() {
 				mockGaps.gaps = []model.Gap{
 					{
 						ID:         1,
+						ShortID:    11,
 						IssueID:    issueID,
 						Status:     model.GapStatusOpen,
 						Severity:   model.GapSeverityBlocking,
@@ -403,10 +441,12 @@ var _ = Describe("ContextBuilder", func() {
 				}
 
 				title := "Test issue"
+				reporter := "alice"
 				issue := model.Issue{
 					ID:            issueID,
 					IntegrationID: integrationID,
 					Title:         &title,
+					Reporter:      &reporter,
 				}
 
 				messages, err := builder.BuildPlannerMessages(ctx, issue, "")

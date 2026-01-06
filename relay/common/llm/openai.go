@@ -183,13 +183,15 @@ func (c *openaiClient) convertTools(tools []Tool) []openai.ChatCompletionToolPar
 			_ = json.Unmarshal(data, &params)
 		}
 
-		result[i] = openai.ChatCompletionToolParam{
-			Function: shared.FunctionDefinitionParam{
-				Name:        t.Name,
-				Description: openai.String(t.Description),
-				Parameters:  params,
-			},
+		definition := shared.FunctionDefinitionParam{
+			Name:        t.Name,
+			Description: openai.String(t.Description),
+			Parameters:  params,
 		}
+		if t.Strict {
+			definition.Strict = openai.Bool(true)
+		}
+		result[i] = openai.ChatCompletionToolParam{Function: definition}
 	}
 
 	return result

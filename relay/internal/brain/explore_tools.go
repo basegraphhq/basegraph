@@ -8,199 +8,113 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
+	"regexp"
+	"sort"
 	"strings"
+	"time"
 
-	"basegraph.app/relay/common/arangodb"
 	"basegraph.app/relay/common/llm"
 )
 
 const (
-	defaultGrepLimit  = 30  // Max grep matches - keep focused
-	maxGrepLimit      = 50  // Hard limit
-	defaultReadLines  = 100 // Default lines to read
-	maxReadLines      = 300 // Increased from 200 - let model read more when needed
-	maxLineLength     = 500 // Truncate long lines
-	maxGlobResults    = 50  // Max files from glob
-	defaultGraphDepth = 1
-	maxGraphDepth     = 3 // Increased from 2 - deeper call chain analysis
-	defaultTreeDepth  = 2
-	maxTreeDepth      = 4
-	maxTreeEntries    = 200 // Prevent token explosion on large repos
+	bashTimeout      = 10    // Bash command timeout in seconds
+	maxBashOutput    = 10000 // Max bash output bytes (10KB)
+	maxGlobResults   = 100   // Max files returned by glob
+	maxGrepMatches   = 50    // Max matches returned by grep
+	maxReadLines     = 500   // Max lines returned by read
+	defaultReadLines = 200   // Default lines if not specified
+	maxLineLength    = 2000  // Truncate lines longer than this
 )
 
-// GrepParams for the Grep tool.
-type GrepParams struct {
-	Pattern string `json:"pattern" jsonschema:"required,description=Regex pattern to search for"`
-	Include string `json:"include,omitempty" jsonschema:"description=File glob pattern (e.g. '*.go', '*.ts'). Default: all files"`
-	Limit   int    `json:"limit,omitempty" jsonschema:"description=Max results (default 50, max 100)"`
-}
+// Tool parameter structs - Claude Code style
 
-// GlobParams for the Glob tool.
+// GlobParams for file pattern matching.
 type GlobParams struct {
-	Pattern string `json:"pattern" jsonschema:"required,description=Glob pattern (e.g. '**/*.go', '**/retriever*.go', 'internal/brain/*.go')"`
+	Pattern string `json:"pattern" jsonschema:"required,description=Glob pattern to match files (e.g. '**/*.go', 'internal/**/*.ts')"`
+	Path    string `json:"path,omitempty" jsonschema:"description=Directory to search in. Defaults to repo root."`
 }
 
-// ReadParams for the Read tool.
+// GrepParams for content search.
+type GrepParams struct {
+	Pattern    string `json:"pattern" jsonschema:"required,description=Regex pattern to search for in file contents"`
+	Path       string `json:"path,omitempty" jsonschema:"description=File or directory to search. Defaults to repo root."`
+	Glob       string `json:"glob,omitempty" jsonschema:"description=Filter files by glob pattern (e.g. '*.go', '*.ts')"`
+	IgnoreCase bool   `json:"ignore_case,omitempty" jsonschema:"description=Case insensitive search"`
+	Context    int    `json:"context,omitempty" jsonschema:"description=Lines of context around matches (default 0)"`
+}
+
+// ReadParams for reading files.
 type ReadParams struct {
-	File      string `json:"file" jsonschema:"required,description=File path to read"`
-	StartLine int    `json:"start_line,omitempty" jsonschema:"description=Line to start from (1-indexed, default 1)"`
-	NumLines  int    `json:"num_lines,omitempty" jsonschema:"description=Number of lines to read (default 100, max 300)"`
+	FilePath string `json:"file_path" jsonschema:"required,description=Path to the file to read (relative to repo root)"`
+	Offset   int    `json:"offset,omitempty" jsonschema:"description=Line number to start reading from (1-indexed)"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"description=Number of lines to read (default 200, max 500)"`
 }
 
-// GraphParams for the Graph tool.
-type GraphParams struct {
-	Operation string `json:"operation" jsonschema:"required,enum=callers,enum=callees,enum=implementations,enum=methods,enum=usages,enum=inheritors,description=Graph operation: callers, callees, implementations, methods, usages, inheritors"`
-	Target    string `json:"target" jsonschema:"required,description=Qualified name of the entity to query (e.g. 'basegraph.app/relay/internal/brain.Retriever')"`
-	Depth     int    `json:"depth,omitempty" jsonschema:"description=Traversal depth for callers/callees (default 1, max 3)"`
+// BashParams for shell commands.
+type BashParams struct {
+	Command string `json:"command" jsonschema:"required,description=Bash command to execute (read-only: git log/diff/blame, ls, find)"`
 }
 
-// TreeParams for the Tree tool.
-type TreeParams struct {
-	Path  string `json:"path,omitempty" jsonschema:"description=Directory to list (default: repo root)"`
-	Depth int    `json:"depth,omitempty" jsonschema:"description=Max depth (default 2, max 4)"`
-}
-
-// ExploreTools provides Grep, Glob, Read, and Graph tools for the ExploreAgent sub-agent.
+// ExploreTools provides Claude Code-style tools for the ExploreAgent.
 type ExploreTools struct {
 	repoRoot    string
-	arango      arangodb.Client
 	definitions []llm.Tool
 }
 
-// NewExploreTools creates tools for code exploration.
-// repoRoot is the root directory of the repository to search.
-// modulePath is the Go module path for qualified name examples in tool descriptions.
-func NewExploreTools(repoRoot string, arango arangodb.Client) *ExploreTools {
+// NewExploreTools creates tools for code exploration (Claude Code style).
+func NewExploreTools(repoRoot string) *ExploreTools {
 	t := &ExploreTools{
 		repoRoot: repoRoot,
-		arango:   arango,
 	}
-
-	// Enhanced tool descriptions following Anthropic's guidance:
-	// "We put a lot of effort into the descriptions and specs for these tools...
-	// We believe that much more attention should go into designing tool interfaces
-	// for models, in the same way that attention goes into designing tool interfaces for humans."
 
 	t.definitions = []llm.Tool{
 		{
-			Name: "grep",
-			Description: `Search file contents using regex pattern.
-
-WHEN TO USE:
-- Finding where something is defined or used
-- Locating specific strings, function names, error messages
-- Discovering patterns across the codebase
-
-USAGE TIPS:
-* Be specific - if you get >30 results, your pattern is too broad
-* Use 'include' to filter: include="*.go" for Go, include="*.ts" for TypeScript
-* Regex supported: "func.*Handler", "error.*timeout", etc.
-* Case-sensitive by default
-
-RETURNS: file:line matches sorted by modification time (most recent first)
-Each line truncated at 500 chars. Shows match context.
-
-COMMON PATTERNS:
-- Find function: "func\s+FunctionName"
-- Find struct: "type\s+StructName\s+struct"
-- Find interface impl: "func\s+\([^)]+\)\s+MethodName\("
-- Find imports: "import.*packagename"`,
-			Parameters: llm.GenerateSchemaFrom(GrepParams{}),
-		},
-		{
 			Name: "glob",
-			Description: `Find files by path pattern.
+			Description: `Find files by pattern. Returns file paths sorted by modification time (newest first).
 
-WHEN TO USE:
-- Discovering file structure
-- Finding all files of a type
-- Locating files by naming convention
+Examples:
+  glob(pattern="**/*.go")                    # All Go files
+  glob(pattern="internal/**/*.go")           # Go files in internal/
+  glob(pattern="*_test.go", path="pkg/")     # Test files in pkg/
 
-PATTERN SYNTAX:
-* "**/*.go" - all Go files recursively
-* "internal/**/*.go" - Go files under internal/
-* "**/test_*.py" - test files
-* "cmd/*/main.go" - main files in cmd subdirs
-
-RETURNS: File paths sorted by modification time (most recent first)
-Limited to 50 results. Use more specific patterns if truncated.`,
+Use this to discover files before reading them.`,
 			Parameters: llm.GenerateSchemaFrom(GlobParams{}),
 		},
 		{
+			Name: "grep",
+			Description: `Search file contents with regex. Returns matching lines with file:line references.
+
+Examples:
+  grep(pattern="func.*Plan")                      # Find Plan functions
+  grep(pattern="TODO|FIXME", glob="*.go")         # TODOs in Go files
+  grep(pattern="error", path="internal/", context=2)  # Errors with context
+
+Use this to find where patterns occur in code.`,
+			Parameters: llm.GenerateSchemaFrom(GrepParams{}),
+		},
+		{
 			Name: "read",
-			Description: `Read file contents with line numbers.
+			Description: `Read a file with optional line range. Returns numbered lines.
 
-WHEN TO USE:
-- After grep/glob found a relevant file
-- Understanding implementation details
-- Reading specific functions or sections
+Examples:
+  read(file_path="internal/brain/planner.go")              # First 200 lines
+  read(file_path="pkg/api/handler.go", offset=50, limit=100)  # Lines 50-149
 
-PARAMETERS:
-* file: Path to file (required)
-* start_line: Line to start from (1-indexed, default 1)
-* num_lines: Lines to read (default 100, max 300)
-
-EFFICIENCY TIP: Use start_line and num_lines to read only what you need.
-If grep found a match at line 150, read lines 140-180, not the whole file.
-
-RETURNS: Lines with 4-digit line numbers. Long lines truncated at 500 chars.`,
+Use this after glob/grep to examine specific code.`,
 			Parameters: llm.GenerateSchemaFrom(ReadParams{}),
 		},
 		{
-			Name: "graph",
-			Description: `Query code structure relationships from the semantic graph.
+			Name: "bash",
+			Description: `Execute read-only bash commands. Use for git history and directory listing.
 
-THIS IS POWERFUL - use it to understand code relationships without grepping.
+Allowed:
+  git log --oneline -10 file.go    # Recent commits
+  git diff HEAD~5 file.go          # Recent changes
+  git blame -L 50,70 file.go       # Line history
+  ls -la internal/                 # Directory contents
 
-OPERATIONS:
-* callers(target, depth): Who calls this function? (depth 1-3)
-* callees(target, depth): What does this function call? (depth 1-3)
-* implementations(target): What types implement this interface?
-* methods(target): What methods does this type have?
-* usages(target): Where is this type/function referenced?
-* inheritors(target): What interfaces embed this interface?
-
-QUALIFIED NAME FORMAT:
-Pattern: {module}/{package}.{Type}.{Method}
-
-EXAMPLES:
-* Function: basegraph.app/relay/internal/brain.Planner.Plan
-* Method: basegraph.app/relay/internal/brain.ExploreAgent.Explore
-* Type: basegraph.app/relay/internal/brain.Planner
-* Interface: basegraph.app/relay/common/llm.AgentClient
-
-WHEN TO USE GRAPH vs GREP:
-* "What calls this function?" → graph(callers, ...)
-* "What implements this interface?" → graph(implementations, ...)
-* "Where is this string literal?" → grep
-* "What files match this pattern?" → glob
-
-Graph queries are faster and more accurate for structural questions.`,
-			Parameters: llm.GenerateSchemaFrom(GraphParams{}),
-		},
-		{
-			Name: "tree",
-			Description: `Show directory structure.
-
-WHEN TO USE:
-- First step when exploring unfamiliar area
-- Before grep/glob to understand where to look
-- When you need to find the right directory
-
-PARAMETERS:
-* path: Directory to list (default: repo root)
-* depth: How deep to go (default 2, max 4)
-
-RETURNS: Tree view of directories and files.
-Directories shown with trailing /, sorted before files.
-Limited to 200 entries. Use path param to focus on specific areas.
-
-EXAMPLE: After tree(path="internal"), you know to grep in "internal/brain/" not "**/*brain*"
-
-EFFICIENCY: Use this BEFORE glob/grep to understand project structure.
-Saves tokens by helping you target searches.`,
-			Parameters: llm.GenerateSchemaFrom(TreeParams{}),
+NOT allowed: rm, mv, cp, echo, write operations.`,
+			Parameters: llm.GenerateSchemaFrom(BashParams{}),
 		},
 	}
 
@@ -212,511 +126,522 @@ func (t *ExploreTools) Definitions() []llm.Tool {
 	return t.definitions
 }
 
-// Execute runs a tool by name and returns prose output.
+// Execute runs a tool by name and returns output.
 func (t *ExploreTools) Execute(ctx context.Context, name, arguments string) (string, error) {
 	switch name {
-	case "grep":
-		return t.executeGrep(ctx, arguments)
 	case "glob":
 		return t.executeGlob(ctx, arguments)
+	case "grep":
+		return t.executeGrep(ctx, arguments)
 	case "read":
 		return t.executeRead(ctx, arguments)
-	case "graph":
-		return t.executeGraph(ctx, arguments)
-	case "tree":
-		return t.executeTree(ctx, arguments)
+	case "bash":
+		return t.executeBash(ctx, arguments)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
 }
 
-func (t *ExploreTools) executeGrep(ctx context.Context, arguments string) (string, error) {
-	params, err := llm.ParseToolArguments[GrepParams](arguments)
-	if err != nil {
-		return "", fmt.Errorf("parse grep params: %w", err)
-	}
-
-	limit := params.Limit
-	if limit <= 0 {
-		limit = defaultGrepLimit
-	}
-	if limit > maxGrepLimit {
-		limit = maxGrepLimit
-	}
-
-	// Build ripgrep command
-	args := []string{
-		"--line-number",
-		"--no-heading",
-		"--color=never",
-		"--max-count", strconv.Itoa(limit),
-	}
-
-	if params.Include != "" {
-		args = append(args, "--glob", params.Include)
-	}
-
-	// Exclude common non-code directories
-	args = append(args,
-		"--glob", "!.git",
-		"--glob", "!node_modules",
-		"--glob", "!vendor",
-		"--glob", "!*.min.js",
-	)
-
-	args = append(args, params.Pattern, ".")
-
-	cmd := exec.CommandContext(ctx, "rg", args...)
-	cmd.Dir = t.repoRoot
-
-	output, err := cmd.Output()
-	if err != nil {
-		// Exit code 1 means no matches (not an error)
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
-			return fmt.Sprintf("No matches found for pattern '%s'", params.Pattern), nil
-		}
-		return fmt.Sprintf("Grep error: %s", err), nil
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
-		return fmt.Sprintf("No matches found for pattern '%s'", params.Pattern), nil
-	}
-
-	var out strings.Builder
-	out.WriteString(fmt.Sprintf("Found %d matches for '%s':\n\n", len(lines), params.Pattern))
-
-	for _, line := range lines {
-		// Truncate long lines to prevent context bloat
-		if len(line) > maxLineLength {
-			line = line[:maxLineLength] + "..."
-		}
-		out.WriteString(line)
-		out.WriteString("\n")
-	}
-
-	if len(lines) >= limit {
-		out.WriteString(fmt.Sprintf("\n(Results limited to %d. Use a more specific pattern or include filter.)\n", limit))
-	}
-
-	slog.DebugContext(ctx, "grep executed",
-		"pattern", params.Pattern,
-		"include", params.Include,
-		"matches", len(lines))
-
-	return out.String(), nil
-}
-
+// executeGlob finds files matching a glob pattern using fd (fast find).
 func (t *ExploreTools) executeGlob(ctx context.Context, arguments string) (string, error) {
 	params, err := llm.ParseToolArguments[GlobParams](arguments)
 	if err != nil {
 		return "", fmt.Errorf("parse glob params: %w", err)
 	}
 
-	// Use find with glob pattern or filepath.Glob
-	pattern := filepath.Join(t.repoRoot, params.Pattern)
+	if params.Pattern == "" {
+		return "Error: pattern is required", nil
+	}
 
-	matches, err := filepath.Glob(pattern)
+	searchPath := t.repoRoot
+	if params.Path != "" {
+		searchPath = filepath.Join(t.repoRoot, params.Path)
+	}
+
+	// Validate path is within repo
+	if !pathWithinRoot(t.repoRoot, searchPath) {
+		return "Error: path outside repository", nil
+	}
+
+	// Use fd for fast glob matching (falls back to find if fd not available)
+	var matches []fileMatch
+
+	// Try fd first (much faster)
+	args := []string{
+		"--type", "f",
+		"--hidden",
+		"--no-ignore",
+		"--exclude", ".git",
+		"--exclude", "node_modules",
+		"--exclude", "vendor",
+		"--exclude", "__pycache__",
+		"--glob", params.Pattern,
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, "fd", args...)
+	cmd.Dir = searchPath
+	output, err := cmd.Output()
 	if err != nil {
-		return fmt.Sprintf("Glob error: %s", err), nil
+		// Fall back to find command
+		findArgs := []string{
+			searchPath,
+			"-type", "f",
+			"-name", params.Pattern,
+			"-not", "-path", "*/.git/*",
+			"-not", "-path", "*/node_modules/*",
+			"-not", "-path", "*/vendor/*",
+		}
+		cmd = exec.CommandContext(timeoutCtx, "find", findArgs...)
+		output, err = cmd.Output()
+		if err != nil {
+			if timeoutCtx.Err() == context.DeadlineExceeded {
+				return "Search timed out. Use more specific pattern.", nil
+			}
+			return fmt.Sprintf("Error: glob failed: %s", err), nil
+		}
+	}
+
+	// Parse output and get file info
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		fullPath := line
+		if !filepath.IsAbs(fullPath) {
+			fullPath = filepath.Join(searchPath, line)
+		}
+
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			continue
+		}
+
+		relPath, _ := filepath.Rel(t.repoRoot, fullPath)
+		if shouldSkipFile(relPath) {
+			continue
+		}
+
+		matches = append(matches, fileMatch{
+			path:    relPath,
+			modTime: info.ModTime(),
+		})
+
+		if len(matches) >= maxGlobResults*2 {
+			break
+		}
 	}
 
 	if len(matches) == 0 {
-		// Try with fd for more flexible globbing
-		args := []string{
-			"--type", "f",
-			"--glob", params.Pattern,
-			"--color=never",
-		}
-
-		cmd := exec.CommandContext(ctx, "fd", args...)
-		cmd.Dir = t.repoRoot
-
-		output, err := cmd.Output()
-		if err != nil {
-			return fmt.Sprintf("No files found matching '%s'", params.Pattern), nil
-		}
-
-		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-		if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
-			return fmt.Sprintf("No files found matching '%s'", params.Pattern), nil
-		}
-
-		truncated := len(lines) > maxGlobResults
-		if truncated {
-			lines = lines[:maxGlobResults]
-		}
-
-		var out strings.Builder
-		out.WriteString(fmt.Sprintf("Found %d files matching '%s':\n\n", len(lines), params.Pattern))
-		for _, line := range lines {
-			out.WriteString(line)
-			out.WriteString("\n")
-		}
-		if truncated {
-			out.WriteString(fmt.Sprintf("\n(Results limited to %d. Use a more specific pattern.)\n", maxGlobResults))
-		}
-		return out.String(), nil
+		return fmt.Sprintf("No files match pattern: %s", params.Pattern), nil
 	}
 
+	// Sort by modification time (newest first)
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].modTime.After(matches[j].modTime)
+	})
+
+	// Truncate to max results
 	truncated := len(matches) > maxGlobResults
 	if truncated {
 		matches = matches[:maxGlobResults]
 	}
 
-	var out strings.Builder
-	out.WriteString(fmt.Sprintf("Found %d files matching '%s':\n\n", len(matches), params.Pattern))
-
-	for _, match := range matches {
-		// Make path relative to repo root
-		rel, _ := filepath.Rel(t.repoRoot, match)
-		out.WriteString(rel)
-		out.WriteString("\n")
+	var result strings.Builder
+	for _, m := range matches {
+		result.WriteString(m.path)
+		result.WriteString("\n")
 	}
 
 	if truncated {
-		out.WriteString(fmt.Sprintf("\n(Results limited to %d. Use a more specific pattern.)\n", maxGlobResults))
+		result.WriteString(fmt.Sprintf("\n[Showing %d of %d+ matches. Refine pattern for more specific results.]", maxGlobResults, len(matches)))
 	}
 
-	slog.DebugContext(ctx, "glob executed",
-		"pattern", params.Pattern,
-		"matches", len(matches))
-
-	return out.String(), nil
+	return withTokenEstimate(result.String()), nil
 }
 
+type fileMatch struct {
+	path    string
+	modTime time.Time
+}
+
+// shouldSkipFile returns true for files that should be excluded from glob results.
+func shouldSkipFile(path string) bool {
+	// Skip hidden files/dirs
+	parts := strings.Split(path, string(filepath.Separator))
+	for _, p := range parts {
+		if strings.HasPrefix(p, ".") && p != "." && p != ".." {
+			return true
+		}
+	}
+
+	// Skip common noise directories
+	skipDirs := []string{"node_modules", "vendor", "__pycache__", ".git", "dist", "build"}
+	for _, skip := range skipDirs {
+		if strings.Contains(path, string(filepath.Separator)+skip+string(filepath.Separator)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// executeGrep searches file contents with ripgrep.
+func (t *ExploreTools) executeGrep(ctx context.Context, arguments string) (string, error) {
+	params, err := llm.ParseToolArguments[GrepParams](arguments)
+	if err != nil {
+		return "", fmt.Errorf("parse grep params: %w", err)
+	}
+
+	if params.Pattern == "" {
+		return "Error: pattern is required", nil
+	}
+
+	// Build ripgrep command
+	args := []string{
+		"-n",           // Line numbers
+		"--no-heading", // File:line format
+		"--color=never",
+	}
+
+	if params.IgnoreCase {
+		args = append(args, "-i")
+	}
+
+	if params.Context > 0 {
+		args = append(args, fmt.Sprintf("-C%d", params.Context))
+	}
+
+	if params.Glob != "" {
+		args = append(args, "-g", params.Glob)
+	}
+
+	// Add pattern
+	args = append(args, params.Pattern)
+
+	// Add path
+	searchPath := t.repoRoot
+	if params.Path != "" {
+		searchPath = filepath.Join(t.repoRoot, params.Path)
+	}
+	if !pathWithinRoot(t.repoRoot, searchPath) {
+		return "Error: path outside repository", nil
+	}
+	args = append(args, searchPath)
+
+	// Execute ripgrep with timeout
+	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(bashTimeout)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, "rg", args...)
+	output, err := cmd.Output()
+
+	if timeoutCtx.Err() == context.DeadlineExceeded {
+		return "Search timed out. Use more specific pattern or path.", nil
+	}
+
+	// ripgrep returns exit code 1 for no matches
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return fmt.Sprintf("No matches for pattern: %s", params.Pattern), nil
+		}
+		// Other errors might still have useful output
+		if len(output) == 0 {
+			return fmt.Sprintf("Search error: %s", err), nil
+		}
+	}
+
+	// Truncate results
+	lines := strings.Split(string(output), "\n")
+	truncated := len(lines) > maxGrepMatches
+	if truncated {
+		lines = lines[:maxGrepMatches]
+	}
+
+	// Make paths relative
+	var result strings.Builder
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		// Convert absolute paths to relative
+		if strings.HasPrefix(line, t.repoRoot) {
+			line = strings.TrimPrefix(line, t.repoRoot+"/")
+		}
+		result.WriteString(line)
+		result.WriteString("\n")
+	}
+
+	if truncated {
+		result.WriteString(fmt.Sprintf("\n[Showing %d matches. Add glob filter or refine pattern.]", maxGrepMatches))
+	}
+
+	return withTokenEstimate(result.String()), nil
+}
+
+// executeRead reads a file with optional line range.
 func (t *ExploreTools) executeRead(ctx context.Context, arguments string) (string, error) {
 	params, err := llm.ParseToolArguments[ReadParams](arguments)
 	if err != nil {
 		return "", fmt.Errorf("parse read params: %w", err)
 	}
 
-	// Resolve file path
-	filePath := params.File
-	if !filepath.IsAbs(filePath) {
-		filePath = filepath.Join(t.repoRoot, filePath)
+	if params.FilePath == "" {
+		return "Error: file_path is required", nil
 	}
 
-	// Security check: ensure path is within repo root
-	absPath, err := filepath.Abs(filePath)
-	if err != nil {
-		return fmt.Sprintf("Invalid path: %s", err), nil
-	}
-	absRoot, _ := filepath.Abs(t.repoRoot)
-	if !strings.HasPrefix(absPath, absRoot) {
+	// Resolve and validate path
+	fullPath := filepath.Join(t.repoRoot, params.FilePath)
+	if !pathWithinRoot(t.repoRoot, fullPath) {
 		return "Error: path outside repository", nil
 	}
 
-	file, err := os.Open(absPath)
+	// Open file
+	file, err := os.Open(fullPath)
 	if err != nil {
-		return fmt.Sprintf("Cannot open file: %s", err), nil
+		if os.IsNotExist(err) {
+			return fmt.Sprintf("Error: file not found: %s", params.FilePath), nil
+		}
+		return fmt.Sprintf("Error: cannot read file: %s", err), nil
 	}
 	defer file.Close()
 
-	startLine := params.StartLine
-	if startLine <= 0 {
-		startLine = 1
+	// Set defaults
+	offset := params.Offset
+	if offset < 1 {
+		offset = 1
+	}
+	limit := params.Limit
+	if limit < 1 {
+		limit = defaultReadLines
+	}
+	if limit > maxReadLines {
+		limit = maxReadLines
 	}
 
-	numLines := params.NumLines
-	if numLines <= 0 {
-		numLines = defaultReadLines
-	}
-	if numLines > maxReadLines {
-		numLines = maxReadLines
-	}
-
-	var out strings.Builder
-	relPath, _ := filepath.Rel(t.repoRoot, absPath)
-	out.WriteString(fmt.Sprintf("## %s (lines %d-%d)\n\n```\n", relPath, startLine, startLine+numLines-1))
-
+	// Read lines
 	scanner := bufio.NewScanner(file)
+	var result strings.Builder
 	lineNum := 0
 	linesRead := 0
 
 	for scanner.Scan() {
 		lineNum++
-		if lineNum < startLine {
+
+		// Skip until offset
+		if lineNum < offset {
 			continue
 		}
-		if linesRead >= numLines {
+
+		// Stop at limit
+		if linesRead >= limit {
 			break
 		}
 
 		line := scanner.Text()
-		// Truncate long lines to prevent context bloat
+		// Truncate long lines
 		if len(line) > maxLineLength {
 			line = line[:maxLineLength] + "..."
 		}
-		out.WriteString(fmt.Sprintf("%4d | %s\n", lineNum, line))
+
+		// Format with line number (cat -n style)
+		result.WriteString(fmt.Sprintf("%6d\t%s\n", lineNum, line))
 		linesRead++
 	}
-
-	out.WriteString("```\n")
 
 	if err := scanner.Err(); err != nil {
 		return fmt.Sprintf("Error reading file: %s", err), nil
 	}
 
-	slog.DebugContext(ctx, "read executed",
-		"file", relPath,
-		"start", startLine,
-		"lines", linesRead)
+	if linesRead == 0 {
+		if lineNum == 0 {
+			return "File is empty", nil
+		}
+		return fmt.Sprintf("No lines at offset %d (file has %d lines)", offset, lineNum), nil
+	}
 
-	return out.String(), nil
+	// Add info about what was read
+	info := fmt.Sprintf("\n[Read lines %d-%d of %s", offset, offset+linesRead-1, params.FilePath)
+	if lineNum > offset+linesRead-1 {
+		info += fmt.Sprintf(". File continues to line %d.]", lineNum)
+	} else {
+		info += ". End of file.]"
+	}
+	result.WriteString(info)
+
+	return withTokenEstimate(result.String()), nil
 }
 
-func (t *ExploreTools) executeGraph(ctx context.Context, arguments string) (string, error) {
-	params, err := llm.ParseToolArguments[GraphParams](arguments)
+// bashAllowedPrefixes defines read-only commands that are allowed.
+var bashAllowedPrefixes = []string{
+	// Git read-only
+	"git log", "git show", "git diff", "git blame", "git status",
+	"git branch", "git tag", "git remote", "git grep", "git rev-parse",
+	// File info
+	"ls ", "ls", "wc ", "file ", "stat ", "tree ",
+	// Find (useful for complex searches)
+	"find ",
+}
+
+// bashBlockedPrefixes defines write operations that are always blocked.
+var bashBlockedPrefixes = []string{
+	"rm ", "mv ", "cp ", "mkdir ", "touch ", "chmod ", "chown ",
+	"git push", "git commit", "git checkout", "git reset", "git rebase",
+	"git merge", "git pull", "git stash", "git clean", "git add",
+	"echo ", "printf ", "cat ", "head ", "tail ", "sed ", "awk ",
+	"grep ", "rg ", // Use the grep tool instead
+	">", ">>",
+}
+
+func (t *ExploreTools) executeBash(ctx context.Context, arguments string) (string, error) {
+	params, err := llm.ParseToolArguments[BashParams](arguments)
 	if err != nil {
-		return "", fmt.Errorf("parse graph params: %w", err)
+		return "", fmt.Errorf("parse bash params: %w", err)
 	}
 
-	depth := params.Depth
-	if depth <= 0 {
-		depth = defaultGraphDepth
-	}
-	if depth > maxGraphDepth {
-		depth = maxGraphDepth
+	command := strings.TrimSpace(params.Command)
+	if command == "" {
+		return "Error: command is required", nil
 	}
 
-	var nodes []arangodb.GraphNode
-	var opErr error
-
-	switch params.Operation {
-	case "callers":
-		nodes, opErr = t.arango.GetCallers(ctx, params.Target, depth)
-	case "callees":
-		nodes, opErr = t.arango.GetCallees(ctx, params.Target, depth)
-	case "implementations":
-		nodes, opErr = t.arango.GetImplementations(ctx, params.Target)
-	case "methods":
-		nodes, opErr = t.arango.GetMethods(ctx, params.Target)
-	case "usages":
-		nodes, opErr = t.arango.GetUsages(ctx, params.Target)
-	case "inheritors":
-		nodes, opErr = t.arango.GetInheritors(ctx, params.Target)
-	default:
-		return fmt.Sprintf("Unknown graph operation: %s. Valid: callers, callees, implementations, methods, usages, inheritors", params.Operation), nil
+	// Check if command is allowed
+	allowed, reason := t.isBashCommandAllowed(command)
+	if !allowed {
+		slog.DebugContext(ctx, "bash command blocked",
+			"command", command,
+			"reason", reason)
+		return fmt.Sprintf("Command blocked: %s\n\nAllowed: git log/show/diff/blame/status, ls, tree, find\nUse 'read' tool for file contents, 'grep' tool for searching.", reason), nil
 	}
 
-	if opErr != nil {
-		return fmt.Sprintf("Graph error: %s", opErr), nil
+	// Create timeout context
+	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(bashTimeout)*time.Second)
+	defer cancel()
+
+	// Execute command
+	cmd := exec.CommandContext(timeoutCtx, "bash", "-c", command)
+	cmd.Dir = t.repoRoot
+
+	output, err := cmd.CombinedOutput()
+
+	// Handle timeout
+	if timeoutCtx.Err() == context.DeadlineExceeded {
+		return fmt.Sprintf("Command timed out after %d seconds.", bashTimeout), nil
 	}
 
-	if len(nodes) == 0 {
-		return fmt.Sprintf("%s of %s: No results found.\n", capitalize(params.Operation), params.Target), nil
-	}
-
-	var out strings.Builder
-	out.WriteString(fmt.Sprintf("%s of %s", capitalize(params.Operation), params.Target))
-	if params.Operation == "callers" || params.Operation == "callees" {
-		out.WriteString(fmt.Sprintf(" (depth %d)", depth))
-	}
-	out.WriteString(fmt.Sprintf(" - %d results:\n\n", len(nodes)))
-
-	for _, n := range nodes {
-		out.WriteString(fmt.Sprintf("- %s (%s)\n", n.Name, n.Kind))
-		out.WriteString(fmt.Sprintf("  qname: %s\n", n.QName))
-		if n.Filepath != "" {
-			out.WriteString(fmt.Sprintf("  file: %s\n", n.Filepath))
-		}
-		out.WriteString("\n")
-	}
-
-	out.WriteString("Use read(file) to see the code for any of these.\n")
-
-	slog.DebugContext(ctx, "graph executed",
-		"operation", params.Operation,
-		"target", params.Target,
-		"depth", depth,
-		"results", len(nodes))
-
-	return out.String(), nil
-}
-
-func (t *ExploreTools) executeTree(ctx context.Context, arguments string) (string, error) {
-	params, err := llm.ParseToolArguments[TreeParams](arguments)
+	// Handle other errors (but still return output if available)
 	if err != nil {
-		return "", fmt.Errorf("parse tree params: %w", err)
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			// Non-zero exit code - might just be "no matches" for find
+			if exitErr.ExitCode() == 1 && strings.HasPrefix(command, "find") {
+				return "No matches found", nil
+			}
+		}
+		if len(output) > 0 {
+			return fmt.Sprintf("Command failed: %s\nOutput:\n%s", err, t.truncateOutput(output)), nil
+		}
+		return fmt.Sprintf("Command failed: %s", err), nil
 	}
 
-	depth := params.Depth
-	if depth <= 0 {
-		depth = defaultTreeDepth
-	}
-	if depth > maxTreeDepth {
-		depth = maxTreeDepth
+	result := t.truncateOutput(output)
+
+	slog.DebugContext(ctx, "bash executed",
+		"command", command,
+		"output_len", len(output))
+
+	return withTokenEstimate(result), nil
+}
+
+// isBashCommandAllowed checks if a command is allowed.
+func (t *ExploreTools) isBashCommandAllowed(command string) (bool, string) {
+	cmd := strings.TrimSpace(command)
+
+	// Check blocked prefixes first
+	for _, prefix := range bashBlockedPrefixes {
+		if strings.HasPrefix(cmd, prefix) {
+			return false, fmt.Sprintf("'%s' not allowed - use dedicated tools", strings.TrimSpace(prefix))
+		}
 	}
 
-	// Security check: reject absolute paths immediately
-	if params.Path != "" && filepath.IsAbs(params.Path) {
-		return "Error: path outside repository", nil
+	// Check for blocked patterns
+	if strings.Contains(cmd, " > ") || strings.Contains(cmd, " >> ") {
+		return false, "output redirection not allowed"
 	}
 
-	// Resolve path
-	rootPath := t.repoRoot
-	if params.Path != "" {
-		rootPath = filepath.Join(t.repoRoot, params.Path)
+	if ok, reason := t.areBashPathsAllowed(cmd); !ok {
+		return false, reason
 	}
 
-	// Security check: ensure path is within repo root
-	absPath, err := filepath.Abs(rootPath)
+	// Check allowed prefixes
+	for _, prefix := range bashAllowedPrefixes {
+		if strings.HasPrefix(cmd, prefix) {
+			return true, ""
+		}
+	}
+
+	return false, "command not in allowed list"
+}
+
+var absPathPattern = regexp.MustCompile(`(?:^|[\s'"])(/[^\\s'"]+)`)
+
+func (t *ExploreTools) areBashPathsAllowed(command string) (bool, string) {
+	if strings.HasPrefix(command, "..") || strings.Contains(command, "../") {
+		return false, "path traversal outside repository not allowed"
+	}
+
+	matches := absPathPattern.FindAllStringSubmatch(command, -1)
+	for _, match := range matches {
+		if len(match) < 2 {
+			continue
+		}
+		pathToken := strings.TrimRight(match[1], ".,;:")
+		if !pathWithinRoot(t.repoRoot, pathToken) {
+			return false, "absolute path outside repository not allowed"
+		}
+	}
+
+	return true, ""
+}
+
+func pathWithinRoot(root, path string) bool {
+	absRoot, err := filepath.Abs(root)
 	if err != nil {
-		return fmt.Sprintf("Invalid path: %s", err), nil
+		return false
 	}
-	absRoot, _ := filepath.Abs(t.repoRoot)
-	// Use filepath.Rel to properly check containment (handles /repo vs /repo-evil)
-	relPath, err := filepath.Rel(absRoot, absPath)
-	if err != nil || strings.HasPrefix(relPath, "..") {
-		return "Error: path outside repository", nil
-	}
-
-	// Check if path exists and is a directory
-	info, err := os.Stat(absPath)
+	absPath, err := filepath.Abs(path)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Sprintf("Directory not found: %s", params.Path), nil
-		}
-		return fmt.Sprintf("Cannot access path: %s", err), nil
+		return false
 	}
-	if !info.IsDir() {
-		return fmt.Sprintf("Not a directory: %s", params.Path), nil
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return false
 	}
-
-	// Build tree
-	entries, truncated := t.buildTree(absPath, depth)
-
-	// Determine display path
-	displayPath := params.Path
-	if displayPath == "" {
-		displayPath = "."
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
 	}
-
-	if len(entries) == 0 {
-		return fmt.Sprintf("Directory is empty: %s", displayPath), nil
-	}
-
-	var out strings.Builder
-	out.WriteString(fmt.Sprintf("%s/\n", displayPath))
-
-	for _, entry := range entries {
-		out.WriteString(entry)
-		out.WriteString("\n")
-	}
-
-	if truncated {
-		out.WriteString(fmt.Sprintf("\n(Truncated at %d entries. Use path param to focus on a subdirectory.)\n", maxTreeEntries))
-	}
-
-	slog.DebugContext(ctx, "tree executed",
-		"path", params.Path,
-		"depth", depth,
-		"entries", len(entries))
-
-	return out.String(), nil
+	return true
 }
 
-// buildTree recursively builds a tree view of the directory structure.
-// Returns the formatted entries and whether the result was truncated.
-func (t *ExploreTools) buildTree(dirPath string, maxDepth int) ([]string, bool) {
-	var entries []string
-	truncated := false
-
-	var walk func(path string, depth int, prefix string)
-	walk = func(path string, depth int, prefix string) {
-		if depth > maxDepth || len(entries) >= maxTreeEntries {
-			if len(entries) >= maxTreeEntries {
-				truncated = true
-			}
-			return
-		}
-
-		items, err := os.ReadDir(path)
-		if err != nil {
-			return
-		}
-
-		// Separate dirs and files, filter excluded directories
-		var dirs, files []os.DirEntry
-		for _, item := range items {
-			if item.IsDir() {
-				if !isExcludedDir(item.Name()) {
-					dirs = append(dirs, item)
-				}
-			} else {
-				files = append(files, item)
-			}
-		}
-
-		// Process directories first (sorted), then files (sorted)
-		for i, dir := range dirs {
-			if len(entries) >= maxTreeEntries {
-				truncated = true
-				return
-			}
-
-			isLast := i == len(dirs)-1 && len(files) == 0
-			connector := "├── "
-			if isLast {
-				connector = "└── "
-			}
-
-			entries = append(entries, prefix+connector+dir.Name()+"/")
-
-			// Recurse into subdirectory
-			newPrefix := prefix + "│   "
-			if isLast {
-				newPrefix = prefix + "    "
-			}
-			walk(filepath.Join(path, dir.Name()), depth+1, newPrefix)
-		}
-
-		for i, file := range files {
-			if len(entries) >= maxTreeEntries {
-				truncated = true
-				return
-			}
-
-			isLast := i == len(files)-1
-			connector := "├── "
-			if isLast {
-				connector = "└── "
-			}
-
-			entries = append(entries, prefix+connector+file.Name())
-		}
+// truncateOutput limits output size.
+func (t *ExploreTools) truncateOutput(output []byte) string {
+	if len(output) <= maxBashOutput {
+		return string(output)
 	}
 
-	walk(dirPath, 1, "")
-	return entries, truncated
-}
-
-// excludedDirs contains directories to skip in tree output.
-var excludedDirs = map[string]bool{
-	".git":         true,
-	"node_modules": true,
-	"vendor":       true,
-	"__pycache__":  true,
-	".next":        true,
-	"dist":         true,
-	"build":        true,
-	".idea":        true,
-	".vscode":      true,
-	".cache":       true,
-	"coverage":     true,
-	".turbo":       true,
-	"target":       true, // Rust
-}
-
-// isExcludedDir returns true for directories that should be excluded from tree output.
-func isExcludedDir(name string) bool {
-	return excludedDirs[name]
-}
-
-func capitalize(s string) string {
-	if s == "" {
-		return s
+	truncated := output[:maxBashOutput]
+	if lastNewline := strings.LastIndex(string(truncated), "\n"); lastNewline > maxBashOutput/2 {
+		truncated = truncated[:lastNewline]
 	}
-	return strings.ToUpper(s[:1]) + s[1:]
+
+	return string(truncated) + "\n\n[Output truncated]"
+}
+
+// withTokenEstimate appends a token cost estimate.
+func withTokenEstimate(output string) string {
+	tokenEstimate := len(output) / 4 // ~4 chars per token
+	lineCount := strings.Count(output, "\n")
+	return output + fmt.Sprintf("\n\n[~%d tokens, %d lines]", tokenEstimate, lineCount)
 }

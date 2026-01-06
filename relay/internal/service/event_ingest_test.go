@@ -154,6 +154,10 @@ func (m *mockIssueTrackerService) ReplyToThread(ctx context.Context, params issu
 	return issue_tracker.ReplyToThreadResult{}, nil
 }
 
+func (m *mockIssueTrackerService) AddReaction(ctx context.Context, params issue_tracker.AddReactionParams) error {
+	return nil
+}
+
 // Mock EventLogStore
 type mockEventLogStore struct {
 	createOrGetFn func(ctx context.Context, log *model.EventLog) (*model.EventLog, bool, error)
