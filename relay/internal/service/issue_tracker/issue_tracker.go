@@ -33,6 +33,7 @@ type IssueTrackerService interface {
 	IsReplyToUser(ctx context.Context, params IsReplyParams) (bool, error)
 	CreateDiscussion(ctx context.Context, params CreateDiscussionParams) (CreateDiscussionResult, error)
 	ReplyToThread(ctx context.Context, params ReplyToThreadParams) (ReplyToThreadResult, error)
+	AddReaction(ctx context.Context, params AddReactionParams) error
 }
 
 type CreateDiscussionParams struct {
@@ -53,4 +54,12 @@ type ReplyToThreadParams struct {
 
 type ReplyToThreadResult struct {
 	NoteID string
+}
+
+type AddReactionParams struct {
+	IntegrationID int64
+	ProjectID     int64
+	IssueIID      int64
+	NoteID        *int64 // nil = react to issue, non-nil = react to note
+	Emoji         string
 }

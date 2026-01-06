@@ -255,3 +255,37 @@ func (s *gitLabIssueTrackerService) ReplyToThread(ctx context.Context, params Re
 		NoteID: strconv.FormatInt(note.ID, 10),
 	}, nil
 }
+
+func (s *gitLabIssueTrackerService) AddReaction(ctx context.Context, params AddReactionParams) error {
+	client, err := s.getClient(ctx, params.IntegrationID)
+	if err != nil {
+		return err
+	}
+
+	opts := &gitlab.CreateAwardEmojiOptions{
+		Name: params.Emoji,
+	}
+
+	if params.NoteID != nil {
+		_, _, err = client.AwardEmoji.CreateIssuesAwardEmojiOnNote(
+			params.ProjectID,
+			params.IssueIID,
+			*params.NoteID,
+			opts,
+			gitlab.WithContext(ctx),
+		)
+	} else {
+		_, _, err = client.AwardEmoji.CreateIssueAwardEmoji(
+			params.ProjectID,
+			params.IssueIID,
+			opts,
+			gitlab.WithContext(ctx),
+		)
+	}
+
+	if err != nil {
+		return fmt.Errorf("adding reaction: %w", err)
+	}
+
+	return nil
+}
