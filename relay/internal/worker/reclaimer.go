@@ -85,8 +85,6 @@ func (r *RedisReclaimer) Stop() {
 
 // reclaimOnce performs one reclaim cycle.
 func (r *RedisReclaimer) reclaimOnce(ctx context.Context) error {
-	slog.DebugContext(ctx, "starting reclaim cycle")
-
 	pending, err := r.client.XPendingExt(ctx, &redis.XPendingExtArgs{
 		Stream: r.cfg.Stream,
 		Group:  r.cfg.Group,
@@ -100,7 +98,6 @@ func (r *RedisReclaimer) reclaimOnce(ctx context.Context) error {
 	}
 
 	if len(pending) == 0 {
-		slog.DebugContext(ctx, "no stale messages found")
 		return nil
 	}
 
