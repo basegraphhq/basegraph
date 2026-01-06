@@ -1,5 +1,7 @@
 .PHONY: build build-server build-worker run-server run-worker run-worker-testdata test test-unit test-bdd test-integration clean sqlc-generate migrate-up migrate-down format lint install-tools reindex-codegraph reset reset-redis reset-db tidy
 
+PKGS := $(shell go list ./... | grep -v '/testdata/')
+
 tidy:
 	go mod tidy
 	go mod vendor
@@ -30,15 +32,15 @@ test: test-unit test-bdd test-integration
 
 test-unit:
 	@echo "Running unit tests..."
-	@go test -short ./...
+	@go test -short $(PKGS)
 
 test-bdd:
 	@echo "Running BDD tests with Ginkgo..."
-	@ginkgo -r --skip-package=vendor
+	@ginkgo -r --skip-package=vendor --skip-package=testdata
 
 test-integration:
 	@echo "Running integration tests..."
-	@go test -tags=integration ./...
+	@go test -tags=integration $(PKGS)
 
 # Database operations
 sqlc-generate:

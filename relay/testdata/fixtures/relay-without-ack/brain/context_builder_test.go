@@ -182,8 +182,8 @@ var _ = Describe("ContextBuilder", func() {
 			listByWorkspaceFn: func(ctx context.Context, wID int64) ([]model.Learning, error) {
 				if wID == workspaceID {
 					return []model.Learning{
-						{ID: 1, Type: model.LearningTypeProjectStandards, Content: "Batch ops must be idempotent"},
-						{ID: 2, Type: model.LearningTypeCodebaseStandards, Content: "Use JobQueue for >100 items"},
+						{ID: 1, Type: model.LearningTypeDomainLearnings, Content: "Batch ops must be idempotent"},
+						{ID: 2, Type: model.LearningTypeCodeLearnings, Content: "Use JobQueue for >100 items"},
 					}, nil
 				}
 				return nil, nil
@@ -257,9 +257,9 @@ var _ = Describe("ContextBuilder", func() {
 				// Context dump should include learnings
 				contextDump := messages[1]
 				Expect(contextDump.Content).To(ContainSubstring("Learnings"))
-				Expect(contextDump.Content).To(ContainSubstring("project_standards"))
+				Expect(contextDump.Content).To(ContainSubstring("domain_learnings"))
 				Expect(contextDump.Content).To(ContainSubstring("Batch ops must be idempotent"))
-				Expect(contextDump.Content).To(ContainSubstring("codebase_standards"))
+				Expect(contextDump.Content).To(ContainSubstring("code_learnings"))
 				Expect(contextDump.Content).To(ContainSubstring("Use JobQueue for >100 items"))
 			})
 		})

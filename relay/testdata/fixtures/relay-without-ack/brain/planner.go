@@ -32,7 +32,7 @@ type SubmitActionsParams struct {
 
 // ActionParam is the JSON schema for a single action in submit_actions.
 type ActionParam struct {
-	Type string          `json:"type" jsonschema:"required,enum=post_comment|update_findings|update_gaps|ready_for_plan"`
+	Type string          `json:"type" jsonschema:"required,enum=post_comment,enum=update_findings,enum=update_gaps,enum=ready_for_spec_generation"`
 	Data json.RawMessage `json:"data" jsonschema:"required"`
 }
 
@@ -425,11 +425,12 @@ update_gaps:
   resolve?: [gap_id, ...]
   skip?: [gap_id, ...]
 
-ready_for_plan:
+ready_for_spec_generation:
   context_summary: string
   relevant_finding_ids: [string, ...]
   resolved_gap_ids: [string, ...]
   learning_ids?: [string, ...]
+  proceed_signal: string
 </actions>
 
 # Tone

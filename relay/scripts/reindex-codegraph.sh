@@ -109,12 +109,21 @@ export ARANGO_PASSWORD
 export ARANGO_DATABASE
 
 # Run codegraph
+# Note: testdata directories are automatically skipped by Go's packages.Load
 echo -e "${BLUE}  Starting extraction and ingestion...${NC}"
 echo ""
 
 START_TIME=$(date +%s)
 
+set +e
 $CODEGRAPH_BIN
+CODEGRAPH_STATUS=$?
+set -e
+
+if [ $CODEGRAPH_STATUS -ne 0 ]; then
+    echo -e "${RED}✗ Codegraph failed with status ${CODEGRAPH_STATUS}${NC}"
+    exit $CODEGRAPH_STATUS
+fi
 
 END_TIME=$(date +%s)
 ELAPSED=$((END_TIME - START_TIME))

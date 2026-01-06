@@ -227,7 +227,7 @@ create table learnings (
     short_id bigserial not null,
     workspace_id bigint not null references workspaces(id),
     rule_updated_by_issue_id bigint references issues(id), -- NULL for workspace-level rules
-    type text not null check (type in ('project_standards', 'codebase_standards', 'domain_knowledge')),
+    type text not null check (type in ('domain_learnings', 'code_learnings')),
     content text not null,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),

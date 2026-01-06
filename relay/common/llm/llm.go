@@ -63,6 +63,7 @@ type Tool struct {
 	Name        string
 	Description string
 	Parameters  any // JSON Schema for parameters
+	Strict      bool
 }
 
 // ToolCall represents a tool invocation requested by the LLM.

@@ -12,6 +12,7 @@ import (
 
 	"basegraph.app/relay/common/id"
 	"basegraph.app/relay/common/logger"
+	"basegraph.app/relay/internal/mapper"
 	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/queue"
 	tracker "basegraph.app/relay/internal/service/issue_tracker"
@@ -164,6 +165,11 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 
 		existingIssue.Discussions = discussions
 		issueToUpsert = existingIssue
+
+		// Add eyes reaction for reply events on subscribed issues
+		if params.EventType == string(mapper.EventReply) {
+			s.addEyesReaction(ctx, issueTracker, params, issueIID)
+		}
 	} else {
 		engagement, err := s.engagementDetector.ShouldEngage(ctx, integration.ID, EngagementRequest{
 			Provider:          params.Provider,
@@ -209,6 +215,9 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		issue.ExternalProjectID = &externalProjectID
 
 		issueToUpsert = issue
+
+		// Add eyes reaction for new engagement
+		s.addEyesReaction(ctx, issueTracker, params, issueIID)
 	}
 
 	source := string(integration.Provider)
@@ -312,4 +321,30 @@ func computeDedupeKey(source, eventType, externalIssueID string, payload json.Ra
 	data, _ := json.Marshal(body)
 	hash := sha256.Sum256(data)
 	return fmt.Sprintf("%s:%s", source, hex.EncodeToString(hash[:]))
+}
+
+func (s *eventIngestService) addEyesReaction(ctx context.Context, issueTracker tracker.IssueTrackerService, params EventIngestParams, issueIID int64) {
+	var noteID *int64
+	if params.CommentBody != "" {
+		id, err := strconv.ParseInt(params.CommentID, 10, 64)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to parse comment ID for reaction",
+				"comment_id", params.CommentID,
+				"error", err,
+			)
+			return
+		}
+		noteID = &id
+	}
+
+	err := issueTracker.AddReaction(ctx, tracker.AddReactionParams{
+		IntegrationID: params.IntegrationID,
+		ProjectID:     params.ExternalProjectID,
+		IssueIID:      issueIID,
+		NoteID:        noteID,
+		Emoji:         "eyes",
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "failed to add eyes reaction", "error", err)
+	}
 }

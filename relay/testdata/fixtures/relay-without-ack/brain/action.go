@@ -11,10 +11,10 @@ import (
 type ActionType string
 
 const (
-	ActionTypePostComment    ActionType = "post_comment"
-	ActionTypeUpdateFindings ActionType = "update_findings"
-	ActionTypeUpdateGaps     ActionType = "update_gaps"
-	ActionTypeReadyForPlan   ActionType = "ready_for_plan"
+	ActionTypePostComment            ActionType = "post_comment"
+	ActionTypeUpdateFindings         ActionType = "update_findings"
+	ActionTypeUpdateGaps             ActionType = "update_gaps"
+	ActionTypeReadyForSpecGeneration ActionType = "ready_for_spec_generation"
 )
 
 type Action struct {
@@ -59,9 +59,8 @@ type CodeSourceInput struct {
 }
 
 type UpdateGapsAction struct {
-	Add     []GapInput `json:"add,omitempty"`
-	Resolve []string   `json:"resolve,omitempty"`
-	Skip    []string   `json:"skip,omitempty"`
+	Add   []GapInput `json:"add,omitempty"`
+	Close []GapClose `json:"close,omitempty"`
 }
 
 type GapInput struct {
@@ -80,6 +79,20 @@ const (
 	GapSeverityLow      GapSeverity = "low"
 )
 
+type GapCloseReason string
+
+const (
+	GapCloseAnswered    GapCloseReason = "answered"
+	GapCloseInferred    GapCloseReason = "inferred"
+	GapCloseNotRelevant GapCloseReason = "not_relevant"
+)
+
+type GapClose struct {
+	GapID  string         `json:"gap_id"`
+	Reason GapCloseReason `json:"reason"`
+	Note   string         `json:"note,omitempty"`
+}
+
 type Respondent string
 
 const (
@@ -87,7 +100,7 @@ const (
 	RespondentAssignee Respondent = "assignee"
 )
 
-type ReadyForSpecAction struct {
+type ReadyForSpecGenerationAction struct {
 	ContextSummary   string   `json:"context_summary"`
 	RelevantFindings []string `json:"relevant_finding_ids"`
 	ResolvedGaps     []string `json:"resolved_gap_ids"`
