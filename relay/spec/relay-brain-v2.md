@@ -28,9 +28,9 @@ Use this section like a Linear checklist for implementing v2.
 - [x] Add `update_learnings.propose` support end-to-end (validator + executor).
 - [x] Update context dump rules (include all open gaps + last 10 closed gaps).
 - [x] Implement gap close semantics (`answered|inferred|not_relevant`) + store closure notes (answered=verbatim; inferred=assumption+rationale).
-- [ ] Update learnings to two types only (`domain_learnings`, `code_learnings`) and capture learnings from humans only (v0).
-- [x] Update validators/executors/action schemas to match v2 contracts (`update_gaps.close`, `ready_for_plan.closed_gap_ids`).
-- [ ] Add eval hooks/metrics for Planner quality (focus: spec acceptance rate by devs).
+- [x] Update learnings to two types only (`domain_learnings`, `code_learnings`) and capture learnings from humans only (v0).
+- [x] Update validators/executors/action schemas to match v2 contracts (`update_gaps.close`, `ready_for_spec_generation.closed_gap_ids`).
+- [x] Add eval hooks/metrics for Planner quality (focus: spec acceptance rate by devs).
 
 ---
 
@@ -151,6 +151,7 @@ Goal: be able to state, in plain language:
 - key constraints (timelines, UX constraints, compatibility)
 
 If the intent is unclear: ask high-signal questions to the **reporter** first.
+If intent is clear: a quick existence check is allowed to avoid redundant questions, but keep it narrow.
 
 ### Phase 2 — Verify Reality (Code + Prior Learnings)
 
@@ -422,13 +423,13 @@ Adds learnings derived from human messages.
 }
 ```
 
-### `ready_for_plan` (renamed output fields)
+### `ready_for_spec_generation` (renamed output fields)
 
 Signals that Planner is ready for spec generation (when implemented).
 
 ```json
 {
-  "type": "ready_for_plan",
+  "type": "ready_for_spec_generation",
   "data": {
     "context_summary": "…",
     "relevant_finding_ids": ["…"],
@@ -441,6 +442,15 @@ Signals that Planner is ready for spec generation (when implemented).
 Rules:
 - Must only happen after a proceed-signal.
 - If there were open gaps at proceed time, they must have been closed via `inferred` with assumptions surfaced.
+
+### Spec Generator Behavior (when implemented)
+
+When spec generation starts, the spec generator should:
+1. Post an acknowledgment comment (e.g., "Got it — drafting the implementation approach now.")
+2. Generate the spec
+3. Post the spec as a separate comment
+
+The acknowledgment ensures the user knows their proceed-signal was received. This is owned by the spec generator, not the planner.
 
 ---
 
@@ -569,12 +579,12 @@ Already implemented (current branch):
 - `relay/internal/brain/context_builder.go` prints gaps as `[gap <id>]` and tags `reporter (@…)` / `assignee (@…)` when available.
 - `relay/internal/brain/action.go`, `relay/internal/brain/action_validator.go`, and `relay/internal/brain/action_executor.go` support `update_learnings.propose`.
 - `relay/internal/brain/context_builder.go` now includes last 10 closed gaps in the context dump.
-- `relay/internal/brain/action.go` and prompt use `ready_for_plan.closed_gap_ids` (renamed from resolved).
+- `relay/internal/brain/action.go` and prompt use `ready_for_spec_generation.closed_gap_ids` (renamed from resolved).
 
 Planned code changes required to implement this v2 spec:
 - Update `update_gaps` action schema to support `close[{gap_id, reason, note?}]` and map reasons to stored status/fields.
 - Store gap closure metadata (`closed_reason`, `closed_note`, and optionally “who/where answered”) for future learning quality and auditability.
 - Update learning types to two values (`domain_learnings`, `code_learnings`) across DB constraint, models, validators, and prompts.
-- Update `ready_for_plan` payload to use `closed_gap_ids` (and align validation logic).
+- Update `ready_for_spec_generation` payload to use `closed_gap_ids` (and align validation logic).
 - Update Planner system prompt in `relay/internal/brain/planner.go` to enforce proceed-gate behavior and the “separate final comment” rule.
 - Update action validator/executor to validate and apply the new gap close semantics (and to keep “proceed-signal ⇒ close remaining gaps as inferred” consistent end-to-end).
