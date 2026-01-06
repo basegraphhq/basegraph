@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/store"
@@ -33,7 +34,9 @@ var (
 	ErrMissingLearning       = errors.New("learning missing content")
 	ErrInvalidLearningType   = errors.New("invalid learning type")
 	ErrOpenBlockingGaps      = errors.New("open blocking gaps exist")
+	ErrOpenGaps              = errors.New("open gaps exist")
 	ErrNoResolvedContext     = errors.New("no resolved gaps or findings")
+	ErrMissingProceedSignal  = errors.New("proceed signal not provided")
 )
 
 type actionValidator struct {
@@ -49,8 +52,8 @@ func (v *actionValidator) Validate(ctx context.Context, issue model.Issue, input
 		return ErrEmptyActions
 	}
 
-	// Track gap IDs that will be closed (resolved or skipped) anywhere in this batch.
-	// This allows ready_for_plan to pass validation when blocking gaps are closed in the same batch,
+	// Track gap IDs that will be closed anywhere in this batch.
+	// This allows ready_for_spec_generation to pass validation when blocking gaps are closed in the same batch,
 	// regardless of action ordering.
 	pendingClosures := make(map[string]struct{})
 	for _, action := range input.Actions {
@@ -61,14 +64,8 @@ func (v *actionValidator) Validate(ctx context.Context, issue model.Issue, input
 		if err != nil {
 			continue
 		}
-		for _, id := range data.Resolve {
-			pendingClosures[id] = struct{}{}
-		}
-		for _, id := range data.Skip {
-			pendingClosures[id] = struct{}{}
-		}
 		for _, close := range data.Close {
-			pendingClosures[close.GapID] = struct{}{}
+			pendingClosures[string(close.GapID)] = struct{}{}
 		}
 	}
 
@@ -83,8 +80,8 @@ func (v *actionValidator) Validate(ctx context.Context, issue model.Issue, input
 			err = v.validateUpdateGaps(ctx, action)
 		case ActionTypeUpdateLearnings:
 			err = v.validateUpdateLearnings(action)
-		case ActionTypeReadyForPlan:
-			err = v.validateReadyForPlan(ctx, issue, action, pendingClosures)
+		case ActionTypeReadyForSpecGeneration:
+			err = v.validateReadyForSpecGeneration(ctx, issue, action, pendingClosures)
 		default:
 			err = fmt.Errorf("%w: %s", ErrUnknownActionType, action.Type)
 		}
@@ -153,28 +150,8 @@ func (v *actionValidator) validateUpdateGaps(ctx context.Context, action Action)
 		}
 	}
 
-	for i, idStr := range data.Resolve {
-		_, err := v.lookupGapByAnyID(ctx, idStr)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return fmt.Errorf("resolve[%d]: %w: %s", i, ErrGapNotFound, idStr)
-			}
-			return fmt.Errorf("resolve[%d]: %w", i, err)
-		}
-	}
-
-	for i, idStr := range data.Skip {
-		_, err := v.lookupGapByAnyID(ctx, idStr)
-		if err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return fmt.Errorf("skip[%d]: %w: %s", i, ErrGapNotFound, idStr)
-			}
-			return fmt.Errorf("skip[%d]: %w", i, err)
-		}
-	}
-
 	for i, close := range data.Close {
-		if close.GapID == "" {
+		if string(close.GapID) == "" {
 			return fmt.Errorf("close[%d]: %w", i, ErrGapNotFound)
 		}
 		if !isValidGapCloseReason(close.Reason) {
@@ -187,9 +164,9 @@ func (v *actionValidator) validateUpdateGaps(ctx context.Context, action Action)
 			}
 		}
 
-		if _, err := v.lookupGapByAnyID(ctx, close.GapID); err != nil {
+		if _, err := v.lookupGapByAnyID(ctx, string(close.GapID)); err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				return fmt.Errorf("close[%d]: %w: %s", i, ErrGapNotFound, close.GapID)
+				return fmt.Errorf("close[%d]: %w: %s", i, ErrGapNotFound, string(close.GapID))
 			}
 			return fmt.Errorf("close[%d]: %w", i, err)
 		}
@@ -216,11 +193,15 @@ func (v *actionValidator) validateUpdateLearnings(action Action) error {
 	return nil
 }
 
-func (v *actionValidator) validateReadyForPlan(ctx context.Context, issue model.Issue, action Action, pendingClosures map[string]struct{}) error {
-	data, err := ParseActionData[ReadyForSpecAction](action)
+func (v *actionValidator) validateReadyForSpecGeneration(ctx context.Context, issue model.Issue, action Action, pendingClosures map[string]struct{}) error {
+	data, err := ParseActionData[ReadyForSpecGenerationAction](action)
 	if err != nil {
 		return err
 	}
+	if strings.TrimSpace(data.ProceedSignal) == "" {
+		return ErrMissingProceedSignal
+	}
+	// Trust model's judgment - proceed_signal is for audit trail only
 
 	// Get all open gaps and filter for blocking severity
 	openGaps, err := v.gaps.ListOpenByIssue(ctx, issue.ID)
@@ -246,6 +227,23 @@ func (v *actionValidator) validateReadyForPlan(ctx context.Context, issue model.
 
 	if remainingBlocking > 0 {
 		return fmt.Errorf("%w: %d blocking", ErrOpenBlockingGaps, remainingBlocking)
+	}
+
+	remainingOpen := 0
+	for _, gap := range openGaps {
+		primaryIDStr := strconv.FormatInt(gap.ID, 10)
+		shortIDStr := strconv.FormatInt(gap.ShortID, 10)
+		if _, willBeClosed := pendingClosures[primaryIDStr]; willBeClosed {
+			continue
+		}
+		if _, willBeClosed := pendingClosures[shortIDStr]; willBeClosed {
+			continue
+		}
+		remainingOpen++
+	}
+
+	if remainingOpen > 0 {
+		return fmt.Errorf("%w: %d open", ErrOpenGaps, remainingOpen)
 	}
 
 	hasContext := len(data.ClosedGaps) > 0 || len(data.RelevantFindings) > 0
@@ -291,7 +289,7 @@ func isValidRespondent(r Respondent) bool {
 
 func isValidLearningType(t string) bool {
 	switch t {
-	case model.LearningTypeProjectStandards, model.LearningTypeCodebaseStandards, model.LearningTypeDomainKnowledge:
+	case model.LearningTypeDomainLearnings, model.LearningTypeCodeLearnings:
 		return true
 	}
 	return false

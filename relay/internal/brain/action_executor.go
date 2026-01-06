@@ -50,8 +50,8 @@ func (e *actionExecutor) Execute(ctx context.Context, issue model.Issue, action 
 		return e.executeUpdateGaps(ctx, issue, action)
 	case ActionTypeUpdateLearnings:
 		return e.executeUpdateLearnings(ctx, issue, action)
-	case ActionTypeReadyForPlan:
-		return e.executeReadyForPlan(ctx, issue, action)
+	case ActionTypeReadyForSpecGeneration:
+		return e.executeReadyForSpecGeneration(ctx, issue, action)
 	}
 	return nil
 }
@@ -72,16 +72,21 @@ func (e *actionExecutor) executePostComment(ctx context.Context, issue model.Iss
 		return err
 	}
 
+	content, stripped := SanitizeComment(data.Content)
+	if stripped > 0 {
+		slog.WarnContext(ctx, "stripped gap IDs from comment", "count", stripped, "issue_id", issue.ID)
+	}
+
 	if data.ReplyToID == "" {
 		_, err = e.issueTracker.CreateDiscussion(ctx, issue_tracker.CreateDiscussionParams{
 			Issue:   issue,
-			Content: data.Content,
+			Content: content,
 		})
 	} else {
 		_, err = e.issueTracker.ReplyToThread(ctx, issue_tracker.ReplyToThreadParams{
 			Issue:        issue,
 			DiscussionID: data.ReplyToID,
-			Content:      data.Content,
+			Content:      content,
 		})
 	}
 
@@ -160,30 +165,10 @@ func (e *actionExecutor) executeUpdateGaps(ctx context.Context, issue model.Issu
 		}
 	}
 
-	for _, idStr := range data.Resolve {
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			return fmt.Errorf("parsing gap id %s: %w", idStr, err)
-		}
-		if err := e.resolveGapByAnyID(ctx, id); err != nil {
-			return err
-		}
-	}
-
-	for _, idStr := range data.Skip {
-		id, err := strconv.ParseInt(idStr, 10, 64)
-		if err != nil {
-			return fmt.Errorf("parsing gap id %s: %w", idStr, err)
-		}
-		if err := e.skipGapByAnyID(ctx, id); err != nil {
-			return err
-		}
-	}
-
 	for _, close := range data.Close {
-		id, err := strconv.ParseInt(close.GapID, 10, 64)
+		id, err := strconv.ParseInt(string(close.GapID), 10, 64)
 		if err != nil {
-			return fmt.Errorf("parsing gap id %s: %w", close.GapID, err)
+			return fmt.Errorf("parsing gap id %s: %w", string(close.GapID), err)
 		}
 		if err := e.closeGapByAnyID(ctx, id, close.Reason, close.Note); err != nil {
 			return err
@@ -193,46 +178,8 @@ func (e *actionExecutor) executeUpdateGaps(ctx context.Context, issue model.Issu
 	return nil
 }
 
-func (e *actionExecutor) resolveGapByAnyID(ctx context.Context, id int64) error {
-	_, err := e.gaps.Resolve(ctx, id)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("resolving gap %d: %w", id, err)
-	}
-
-	gap, err := e.gaps.GetByShortID(ctx, id)
-	if err != nil {
-		return fmt.Errorf("resolving gap %d: %w", id, err)
-	}
-	if _, err := e.gaps.Resolve(ctx, gap.ID); err != nil {
-		return fmt.Errorf("resolving gap %d: %w", id, err)
-	}
-	return nil
-}
-
-func (e *actionExecutor) skipGapByAnyID(ctx context.Context, id int64) error {
-	_, err := e.gaps.Skip(ctx, id)
-	if err == nil {
-		return nil
-	}
-	if !errors.Is(err, store.ErrNotFound) {
-		return fmt.Errorf("skipping gap %d: %w", id, err)
-	}
-
-	gap, err := e.gaps.GetByShortID(ctx, id)
-	if err != nil {
-		return fmt.Errorf("skipping gap %d: %w", id, err)
-	}
-	if _, err := e.gaps.Skip(ctx, gap.ID); err != nil {
-		return fmt.Errorf("skipping gap %d: %w", id, err)
-	}
-	return nil
-}
-
 func (e *actionExecutor) closeGapByAnyID(ctx context.Context, id int64, reason GapCloseReason, note string) error {
-	status := model.GapStatusResolved
+	var status model.GapStatus
 	switch reason {
 	case GapCloseAnswered, GapCloseInferred:
 		status = model.GapStatusResolved
@@ -298,20 +245,21 @@ func (e *actionExecutor) executeUpdateLearnings(ctx context.Context, issue model
 	return nil
 }
 
-func (e *actionExecutor) executeReadyForPlan(ctx context.Context, issue model.Issue, action Action) error {
-	data, err := ParseActionData[ReadyForSpecAction](action)
+func (e *actionExecutor) executeReadyForSpecGeneration(ctx context.Context, issue model.Issue, action Action) error {
+	data, err := ParseActionData[ReadyForSpecGenerationAction](action)
 	if err != nil {
 		return err
 	}
 
 	// Spec generation is intentionally separate and not yet implemented.
 	// For now, acknowledge receipt so the action isn't silently dropped.
-	slog.InfoContext(ctx, "ready_for_plan received",
+	slog.InfoContext(ctx, "ready_for_spec_generation received",
 		"issue_id", issue.ID,
 		"closed_gaps", data.ClosedGaps,
 		"relevant_findings", data.RelevantFindings,
 		"learning_ids", data.LearningsApplied,
-		"context_summary", data.ContextSummary)
+		"context_summary", data.ContextSummary,
+		"proceed_signal", data.ProceedSignal)
 
 	return nil
 }
