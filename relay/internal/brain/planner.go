@@ -16,12 +16,12 @@ import (
 )
 
 const (
-	maxParallelExplorers = 1 // Parallel exploration with non-overlapping scopes
+	maxParallelExplorers = 3 // Parallel exploration with non-overlapping scopes
 )
 
 type ExploreParams struct {
 	Query        string `json:"query" jsonschema:"required,description=Specific question about the codebase. Ask ONE thing, not multiple."`
-	Thoroughness string `json:"thoroughness" jsonschema:"required,enum=quick|medium|thorough,description=Search depth: quick (first good match), medium (check a few locations), thorough (comprehensive search)"`
+	Thoroughness string `json:"thoroughness" jsonschema:"required,enum=quick,enum=medium,enum=thorough,description=Search depth: quick (first good match), medium (check a few locations), thorough (comprehensive search)"`
 }
 
 // SubmitActionsParams defines the schema for the submit_actions tool.
@@ -33,7 +33,7 @@ type SubmitActionsParams struct {
 
 // ActionParam is the JSON schema for a single action in submit_actions.
 type ActionParam struct {
-	Type string          `json:"type" jsonschema:"required,enum=post_comment|update_findings|update_gaps|update_learnings|ready_for_plan"`
+	Type string          `json:"type" jsonschema:"required,enum=post_comment,enum=update_findings,enum=update_gaps,enum=update_learnings,enum=ready_for_spec_generation"`
 	Data json.RawMessage `json:"data" jsonschema:"required"`
 }
 
@@ -42,6 +42,34 @@ type ActionParam struct {
 type PlannerOutput struct {
 	Actions   []Action // Actions to execute (post_comment, update_gaps, etc.)
 	Reasoning string   // Brief explanation (for debugging/logging)
+}
+
+// PlannerMetrics captures structured data about a planning session for eval.
+// Focus: track leading indicators of spec quality before human feedback is available.
+type PlannerMetrics struct {
+	SessionID             string    `json:"session_id"`
+	IssueID               int64     `json:"issue_id"`
+	StartTime             time.Time `json:"start_time"`
+	EndTime               time.Time `json:"end_time"`
+	DurationMs            int64     `json:"duration_ms"`
+	Iterations            int       `json:"iterations"`
+	TotalPromptTokens     int       `json:"total_prompt_tokens"`
+	TotalCompletionTokens int       `json:"total_completion_tokens"`
+
+	// Action metrics - what did planner decide to do?
+	ActionCounts    map[string]int `json:"action_counts"`     // count by action type
+	GapsOpened      int            `json:"gaps_opened"`       // new gaps created
+	GapsClosed      int            `json:"gaps_closed"`       // gaps closed this session
+	GapCloseReasons map[string]int `json:"gap_close_reasons"` // answered/inferred/not_relevant
+	LearningsAdded  int            `json:"learnings_added"`   // new learnings proposed
+	FindingsAdded   int            `json:"findings_added"`    // new code findings
+
+	// Outcome - did we reach spec generation?
+	ReachedSpecGeneration bool   `json:"reached_spec_generation"`
+	ProceedSignal         string `json:"proceed_signal,omitempty"` // excerpt of human approval
+
+	// Explore usage - how much code exploration?
+	ExploreCallCount int `json:"explore_call_count"`
 }
 
 // Planner gathers code context for issue scoping.
@@ -89,6 +117,14 @@ func (p *Planner) Plan(ctx context.Context, messages []llm.Message) (PlannerOutp
 	}
 	debugLog.WriteString("\n")
 
+	// Initialize metrics for evaluation
+	metrics := PlannerMetrics{
+		SessionID:       sessionID,
+		StartTime:       start,
+		ActionCounts:    make(map[string]int),
+		GapCloseReasons: make(map[string]int),
+	}
+
 	var accumulatedContext strings.Builder
 	iterations := 0
 	totalPromptTokens := 0
@@ -134,6 +170,13 @@ func (p *Planner) Plan(ctx context.Context, messages []llm.Message) (PlannerOutp
 		// Log assistant response
 		debugLog.WriteString(fmt.Sprintf("--- ITERATION %d ---\n", iterations))
 		debugLog.WriteString(fmt.Sprintf("[ASSISTANT]\n%s\n\n", resp.Content))
+		if len(resp.ToolCalls) > 0 {
+			debugLog.WriteString("[TOOL_CALLS]\n")
+			for _, tc := range resp.ToolCalls {
+				debugLog.WriteString(fmt.Sprintf("- %s: %s\n", tc.Name, logger.Truncate(tc.Arguments, 2000)))
+			}
+			debugLog.WriteString("\n")
+		}
 
 		// Check for submit_actions - terminates the loop
 		for _, tc := range resp.ToolCalls {
@@ -155,6 +198,15 @@ func (p *Planner) Plan(ctx context.Context, messages []llm.Message) (PlannerOutp
 				debugLog.WriteString("=== PLANNER COMPLETED (submit_actions) ===\n")
 				debugLog.WriteString(fmt.Sprintf("Actions: %d, Reasoning: %s\n", len(actions), params.Reasoning))
 				p.writeDebugLog(sessionID, debugLog.String())
+
+				// Collect and write metrics
+				metrics.EndTime = time.Now()
+				metrics.DurationMs = time.Since(start).Milliseconds()
+				metrics.Iterations = iterations
+				metrics.TotalPromptTokens = totalPromptTokens
+				metrics.TotalCompletionTokens = totalCompletionTokens
+				p.collectActionMetrics(actions, &metrics)
+				p.writeMetricsLog(metrics)
 
 				slog.InfoContext(ctx, "planner submitted actions",
 					"iterations", iterations,
@@ -196,6 +248,13 @@ func (p *Planner) Plan(ctx context.Context, messages []llm.Message) (PlannerOutp
 			Content:   resp.Content,
 			ToolCalls: resp.ToolCalls,
 		})
+
+		// Count explore calls for metrics
+		for _, tc := range resp.ToolCalls {
+			if tc.Name == "explore" {
+				metrics.ExploreCallCount++
+			}
+		}
 
 		results := p.executeExploresParallel(ctx, resp.ToolCalls)
 
@@ -239,6 +298,71 @@ func (p *Planner) writeDebugLog(sessionID, content string) {
 		slog.WarnContext(ctx, "failed to write debug log", "file", filename, "error", err)
 	} else {
 		slog.InfoContext(ctx, "debug log written", "file", filename)
+	}
+}
+
+// writeMetricsLog writes structured JSON metrics for planner evaluation.
+func (p *Planner) writeMetricsLog(metrics PlannerMetrics) {
+	if p.debugDir == "" {
+		return
+	}
+
+	if err := os.MkdirAll(p.debugDir, 0o755); err != nil {
+		slog.Warn("failed to create debug dir", "dir", p.debugDir, "error", err)
+		return
+	}
+
+	metricsFile := filepath.Join(p.debugDir, fmt.Sprintf("planner_metrics_%s.json", metrics.SessionID))
+	data, err := json.MarshalIndent(metrics, "", "  ")
+	if err != nil {
+		slog.Warn("failed to marshal planner metrics", "error", err)
+		return
+	}
+
+	if err := os.WriteFile(metricsFile, data, 0o644); err != nil {
+		slog.Warn("failed to write planner metrics", "file", metricsFile, "error", err)
+	}
+}
+
+// collectActionMetrics analyzes submitted actions to populate metrics.
+func (p *Planner) collectActionMetrics(actions []Action, metrics *PlannerMetrics) {
+	for _, action := range actions {
+		metrics.ActionCounts[string(action.Type)]++
+
+		switch action.Type {
+		case ActionTypeUpdateGaps:
+			data, err := ParseActionData[UpdateGapsAction](action)
+			if err != nil {
+				continue
+			}
+			metrics.GapsOpened += len(data.Add)
+			metrics.GapsClosed += len(data.Close)
+			for _, c := range data.Close {
+				metrics.GapCloseReasons[string(c.Reason)]++
+			}
+
+		case ActionTypeUpdateLearnings:
+			data, err := ParseActionData[UpdateLearningsAction](action)
+			if err != nil {
+				continue
+			}
+			metrics.LearningsAdded += len(data.Propose)
+
+		case ActionTypeUpdateFindings:
+			data, err := ParseActionData[UpdateFindingsAction](action)
+			if err != nil {
+				continue
+			}
+			metrics.FindingsAdded += len(data.Add)
+
+		case ActionTypeReadyForSpecGeneration:
+			data, err := ParseActionData[ReadyForSpecGenerationAction](action)
+			if err != nil {
+				continue
+			}
+			metrics.ReachedSpecGeneration = true
+			metrics.ProceedSignal = data.ProceedSignal
+		}
 	}
 }
 
@@ -353,6 +477,7 @@ RETURNS: Prose report with file:line references and confidence rating (high/medi
 			Name:        "submit_actions",
 			Description: "Submit actions for the orchestrator to execute. Call this when you've gathered enough context and are ready to respond.",
 			Parameters:  llm.GenerateSchemaFrom(SubmitActionsParams{}),
+			Strict:      true,
 		},
 	}
 }
@@ -445,13 +570,21 @@ If a proceed-signal arrives while gaps are still open:
   - inferred: store “Assumption: …” + “Rationale: …” (each one line).
   - not_relevant: just close it (no note).
 - Use the gap IDs shown in the context (short numeric IDs).
+- Gap IDs are internal references for update_gaps actions only. Never include [gap X] notation in post_comment content — number questions naturally (1., 2., etc.).
 
 # Learnings discipline (v0)
-- Learnings are reusable tribal knowledge for future tickets.
+- Learnings are reusable tribal knowledge for FUTURE tickets (not this one).
 - Only capture learnings that come from humans (issue discussions), not purely from code inference.
 - Only two learning types:
-  - domain_learnings
-  - code_learnings
+  - domain_learnings: domain rules, constraints, definitions, customer-visible behavior, tribal domain knowledge
+    Example: "Batch operations must be idempotent for retry safety"
+  - code_learnings: architecture patterns, conventions, quirks/nuances, tribal codebase knowledge
+    Example: "Use JobQueue for operations processing >100 items"
+- Do NOT capture as learnings:
+  - Product requirements/decisions specific to THIS ticket (e.g., "feature X should do Y")
+  - Implementation choices being made for THIS ticket
+  - Answers to scoping questions that only apply to THIS ticket
+- Test: Would this knowledge help someone working on a DIFFERENT ticket? If no, don't capture it.
 
 # Output discipline (actions vs prose)
 - When you ask explicit questions in a comment, you must also create matching gaps (one gap per question).
@@ -490,9 +623,10 @@ End your turn. Reasoning is for logs only.
 ## update_learnings
 - propose: [{type, content}]
 
-## ready_for_plan
+## ready_for_spec_generation
 Signal readiness for spec generation. Requires at least one resolved gap or relevant finding.
 - context_summary: what's been clarified
 - relevant_finding_ids: findings informing the plan
 - closed_gap_ids: answered gaps
+- proceed_signal: brief excerpt of the human proceed approval you observed
 `

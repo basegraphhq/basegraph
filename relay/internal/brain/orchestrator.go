@@ -76,7 +76,7 @@ func NewOrchestrator(
 	learnings store.LearningStore,
 	issueTrackers map[model.Provider]issue_tracker.IssueTrackerService,
 ) *Orchestrator {
-	tools := NewExploreTools(cfg.RepoRoot, arango)
+	tools := NewExploreTools(cfg.RepoRoot)
 	explore := NewExploreAgent(agentClient, tools, cfg.ModulePath)
 	planner := NewPlanner(agentClient, explore)
 	ctxBuilder := NewContextBuilder(integrations, configs, learnings, gaps)
