@@ -1,126 +1,120 @@
 package brain
 
 import (
+	"bufio"
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 
-	"basegraph.app/relay/common/arangodb"
 	"basegraph.app/relay/common/llm"
 )
 
 const (
-	defaultCodeDepth = 1
-	maxCodeResults   = 20    // Limit code tool results
 	bashTimeout      = 10    // Bash command timeout in seconds
-	maxBashOutput    = 10000 // Max bash output bytes (10KB - forces focused queries)
+	maxBashOutput    = 10000 // Max bash output bytes (10KB)
+	maxGlobResults   = 100   // Max files returned by glob
+	maxGrepMatches   = 50    // Max matches returned by grep
+	maxReadLines     = 500   // Max lines returned by read
+	defaultReadLines = 200   // Default lines if not specified
+	maxLineLength    = 2000  // Truncate lines longer than this
 )
 
-// Supported languages for CodeGraph.
-var supportedLanguages = []string{"Go", "Python"}
+// Tool parameter structs - Claude Code style
 
-// languageByExt maps file extensions to language names.
-var languageByExt = map[string]string{
-	".go":    "Go",
-	".py":    "Python",
-	".ts":    "TypeScript",
-	".tsx":   "TypeScript",
-	".js":    "JavaScript",
-	".jsx":   "JavaScript",
-	".rs":    "Rust",
-	".java":  "Java",
-	".rb":    "Ruby",
-	".cpp":   "C++",
-	".c":     "C",
-	".cs":    "C#",
-	".php":   "PHP",
-	".kt":    "Kotlin",
-	".swift": "Swift",
+// GlobParams for file pattern matching.
+type GlobParams struct {
+	Pattern string `json:"pattern" jsonschema:"required,description=Glob pattern to match files (e.g. '**/*.go', 'internal/**/*.ts')"`
+	Path    string `json:"path,omitempty" jsonschema:"description=Directory to search in. Defaults to repo root."`
 }
 
-// CodegraphParams for the Codegraph tool.
-type CodegraphParams struct {
-	Operation string `json:"operation" jsonschema:"required,enum=find,enum=callers,enum=callees,enum=implementations,enum=methods,enum=usages,enum=symbols,description=Operation to perform"`
-	Symbol    string `json:"symbol,omitempty" jsonschema:"description=Symbol name or pattern (e.g. 'Plan', '*Service*', 'Planner.Execute'). Required for all operations except 'symbols'."`
-	File      string `json:"file,omitempty" jsonschema:"description=File path. Required for 'symbols' operation, optional filter for others."`
-	Kind      string `json:"kind,omitempty" jsonschema:"description=Filter by kind: function, method, struct, interface"`
+// GrepParams for content search.
+type GrepParams struct {
+	Pattern    string `json:"pattern" jsonschema:"required,description=Regex pattern to search for in file contents"`
+	Path       string `json:"path,omitempty" jsonschema:"description=File or directory to search. Defaults to repo root."`
+	Glob       string `json:"glob,omitempty" jsonschema:"description=Filter files by glob pattern (e.g. '*.go', '*.ts')"`
+	IgnoreCase bool   `json:"ignore_case,omitempty" jsonschema:"description=Case insensitive search"`
+	Context    int    `json:"context,omitempty" jsonschema:"description=Lines of context around matches (default 0)"`
 }
 
-// BashParams for the Bash tool.
+// ReadParams for reading files.
+type ReadParams struct {
+	FilePath string `json:"file_path" jsonschema:"required,description=Path to the file to read (relative to repo root)"`
+	Offset   int    `json:"offset,omitempty" jsonschema:"description=Line number to start reading from (1-indexed)"`
+	Limit    int    `json:"limit,omitempty" jsonschema:"description=Number of lines to read (default 200, max 500)"`
+}
+
+// BashParams for shell commands.
 type BashParams struct {
-	Command string `json:"command" jsonschema:"required,description=Bash command to execute (read-only commands only)"`
+	Command string `json:"command" jsonschema:"required,description=Bash command to execute (read-only: git log/diff/blame, ls, find)"`
 }
 
-// ExploreTools provides bash and codegraph tools for the ExploreAgent.
+// ExploreTools provides Claude Code-style tools for the ExploreAgent.
 type ExploreTools struct {
 	repoRoot    string
-	arango      arangodb.Client
 	definitions []llm.Tool
 }
 
-// NewExploreTools creates tools for code exploration.
-func NewExploreTools(repoRoot string, arango arangodb.Client) *ExploreTools {
+// NewExploreTools creates tools for code exploration (Claude Code style).
+func NewExploreTools(repoRoot string) *ExploreTools {
 	t := &ExploreTools{
 		repoRoot: repoRoot,
-		arango:   arango,
 	}
 
 	t.definitions = []llm.Tool{
 		{
-			Name: "bash",
-			Description: `Execute read-only bash commands. Use ONLY when codegraph cannot help.
+			Name: "glob",
+			Description: `Find files by pattern. Returns file paths sorted by modification time (newest first).
 
-WHEN TO USE BASH:
-  ✓ Reading specific code sections:  head -50 file.go, sed -n '100,150p' file.go
-  ✓ Git history:                     git log --oneline -10, git blame file.go
-  ✓ Quick text search:               rg -n "TODO" | head -20
+Examples:
+  glob(pattern="**/*.go")                    # All Go files
+  glob(pattern="internal/**/*.go")           # Go files in internal/
+  glob(pattern="*_test.go", path="pkg/")     # Test files in pkg/
 
-WHEN TO USE CODEGRAPH INSTEAD:
-  ✗ File overview        → codegraph(symbols, file="...")  NOT  head -200 file.go
-  ✗ Finding symbols      → codegraph(find, symbol="...")   NOT  rg -n "SymbolName"
-  ✗ Call graph           → codegraph(callers, symbol="...") ONLY codegraph can do this
-  ✗ Type relationships   → codegraph(implementations/methods/usages)
-
-ALWAYS limit bash output:
-  rg -n "pattern" | head -30
-  sed -n '1,50p' file.go  (NOT sed -n '1,500p')
-
-Output limited to 10KB. Write operations blocked.`,
-			Parameters: llm.GenerateSchemaFrom(BashParams{}),
+Use this to discover files before reading them.`,
+			Parameters: llm.GenerateSchemaFrom(GlobParams{}),
 		},
 		{
-			Name: "codegraph",
-			Description: `Query the code graph for semantic relationships. Compiler-level accuracy.
+			Name: "grep",
+			Description: `Search file contents with regex. Returns matching lines with file:line references.
 
-OPERATIONS:
-  find             - Find symbols by name/pattern
-  callers          - Who calls this function?
-  callees          - What does this function call?
-  implementations  - What types implement this interface?
-  methods          - What methods does this type have?
-  usages           - Where is this type used as param/return?
-  symbols          - All symbols in a file (with optional kind filter)
+Examples:
+  grep(pattern="func.*Plan")                      # Find Plan functions
+  grep(pattern="TODO|FIXME", glob="*.go")         # TODOs in Go files
+  grep(pattern="error", path="internal/", context=2)  # Errors with context
 
-USE WHEN:
-  - You need call graph traversal (bash can't do this)
-  - You need type hierarchy (implementations, methods)
-  - You need semantic understanding, not just text matching
+Use this to find where patterns occur in code.`,
+			Parameters: llm.GenerateSchemaFrom(GrepParams{}),
+		},
+		{
+			Name: "read",
+			Description: `Read a file with optional line range. Returns numbered lines.
 
-EXAMPLES:
-  codegraph(operation="callers", symbol="Execute")
-  codegraph(operation="implementations", symbol="Store")
-  codegraph(operation="symbols", file="internal/brain/planner.go")
-  codegraph(operation="symbols", file="internal/model/issue.go", kind="struct")
-  codegraph(operation="find", symbol="*Service*", kind="struct")
+Examples:
+  read(file_path="internal/brain/planner.go")              # First 200 lines
+  read(file_path="pkg/api/handler.go", offset=50, limit=100)  # Lines 50-149
 
-Supported languages: Go, Python. More coming soon.
-Returns structured XML with hints for next steps.`,
-			Parameters: llm.GenerateSchemaFrom(CodegraphParams{}),
+Use this after glob/grep to examine specific code.`,
+			Parameters: llm.GenerateSchemaFrom(ReadParams{}),
+		},
+		{
+			Name: "bash",
+			Description: `Execute read-only bash commands. Use for git history and directory listing.
+
+Allowed:
+  git log --oneline -10 file.go    # Recent commits
+  git diff HEAD~5 file.go          # Recent changes
+  git blame -L 50,70 file.go       # Line history
+  ls -la internal/                 # Directory contents
+
+NOT allowed: rm, mv, cp, echo, write operations.`,
+			Parameters: llm.GenerateSchemaFrom(BashParams{}),
 		},
 	}
 
@@ -135,34 +129,371 @@ func (t *ExploreTools) Definitions() []llm.Tool {
 // Execute runs a tool by name and returns output.
 func (t *ExploreTools) Execute(ctx context.Context, name, arguments string) (string, error) {
 	switch name {
+	case "glob":
+		return t.executeGlob(ctx, arguments)
+	case "grep":
+		return t.executeGrep(ctx, arguments)
+	case "read":
+		return t.executeRead(ctx, arguments)
 	case "bash":
 		return t.executeBash(ctx, arguments)
-	case "codegraph":
-		return t.executeCodegraph(ctx, arguments)
 	default:
 		return "", fmt.Errorf("unknown tool: %s", name)
 	}
 }
 
+// executeGlob finds files matching a glob pattern using fd (fast find).
+func (t *ExploreTools) executeGlob(ctx context.Context, arguments string) (string, error) {
+	params, err := llm.ParseToolArguments[GlobParams](arguments)
+	if err != nil {
+		return "", fmt.Errorf("parse glob params: %w", err)
+	}
+
+	if params.Pattern == "" {
+		return "Error: pattern is required", nil
+	}
+
+	searchPath := t.repoRoot
+	if params.Path != "" {
+		searchPath = filepath.Join(t.repoRoot, params.Path)
+	}
+
+	// Validate path is within repo
+	if !pathWithinRoot(t.repoRoot, searchPath) {
+		return "Error: path outside repository", nil
+	}
+
+	// Use fd for fast glob matching (falls back to find if fd not available)
+	var matches []fileMatch
+
+	// Try fd first (much faster)
+	args := []string{
+		"--type", "f",
+		"--hidden",
+		"--no-ignore",
+		"--exclude", ".git",
+		"--exclude", "node_modules",
+		"--exclude", "vendor",
+		"--exclude", "__pycache__",
+		"--glob", params.Pattern,
+	}
+
+	timeoutCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, "fd", args...)
+	cmd.Dir = searchPath
+	output, err := cmd.Output()
+	if err != nil {
+		// Fall back to find command
+		findArgs := []string{
+			searchPath,
+			"-type", "f",
+			"-name", params.Pattern,
+			"-not", "-path", "*/.git/*",
+			"-not", "-path", "*/node_modules/*",
+			"-not", "-path", "*/vendor/*",
+		}
+		cmd = exec.CommandContext(timeoutCtx, "find", findArgs...)
+		output, err = cmd.Output()
+		if err != nil {
+			if timeoutCtx.Err() == context.DeadlineExceeded {
+				return "Search timed out. Use more specific pattern.", nil
+			}
+			return fmt.Sprintf("Error: glob failed: %s", err), nil
+		}
+	}
+
+	// Parse output and get file info
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		fullPath := line
+		if !filepath.IsAbs(fullPath) {
+			fullPath = filepath.Join(searchPath, line)
+		}
+
+		info, err := os.Stat(fullPath)
+		if err != nil {
+			continue
+		}
+
+		relPath, _ := filepath.Rel(t.repoRoot, fullPath)
+		if shouldSkipFile(relPath) {
+			continue
+		}
+
+		matches = append(matches, fileMatch{
+			path:    relPath,
+			modTime: info.ModTime(),
+		})
+
+		if len(matches) >= maxGlobResults*2 {
+			break
+		}
+	}
+
+	if len(matches) == 0 {
+		return fmt.Sprintf("No files match pattern: %s", params.Pattern), nil
+	}
+
+	// Sort by modification time (newest first)
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].modTime.After(matches[j].modTime)
+	})
+
+	// Truncate to max results
+	truncated := len(matches) > maxGlobResults
+	if truncated {
+		matches = matches[:maxGlobResults]
+	}
+
+	var result strings.Builder
+	for _, m := range matches {
+		result.WriteString(m.path)
+		result.WriteString("\n")
+	}
+
+	if truncated {
+		result.WriteString(fmt.Sprintf("\n[Showing %d of %d+ matches. Refine pattern for more specific results.]", maxGlobResults, len(matches)))
+	}
+
+	return withTokenEstimate(result.String()), nil
+}
+
+type fileMatch struct {
+	path    string
+	modTime time.Time
+}
+
+// shouldSkipFile returns true for files that should be excluded from glob results.
+func shouldSkipFile(path string) bool {
+	// Skip hidden files/dirs
+	parts := strings.Split(path, string(filepath.Separator))
+	for _, p := range parts {
+		if strings.HasPrefix(p, ".") && p != "." && p != ".." {
+			return true
+		}
+	}
+
+	// Skip common noise directories
+	skipDirs := []string{"node_modules", "vendor", "__pycache__", ".git", "dist", "build"}
+	for _, skip := range skipDirs {
+		if strings.Contains(path, string(filepath.Separator)+skip+string(filepath.Separator)) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// executeGrep searches file contents with ripgrep.
+func (t *ExploreTools) executeGrep(ctx context.Context, arguments string) (string, error) {
+	params, err := llm.ParseToolArguments[GrepParams](arguments)
+	if err != nil {
+		return "", fmt.Errorf("parse grep params: %w", err)
+	}
+
+	if params.Pattern == "" {
+		return "Error: pattern is required", nil
+	}
+
+	// Build ripgrep command
+	args := []string{
+		"-n",           // Line numbers
+		"--no-heading", // File:line format
+		"--color=never",
+	}
+
+	if params.IgnoreCase {
+		args = append(args, "-i")
+	}
+
+	if params.Context > 0 {
+		args = append(args, fmt.Sprintf("-C%d", params.Context))
+	}
+
+	if params.Glob != "" {
+		args = append(args, "-g", params.Glob)
+	}
+
+	// Add pattern
+	args = append(args, params.Pattern)
+
+	// Add path
+	searchPath := t.repoRoot
+	if params.Path != "" {
+		searchPath = filepath.Join(t.repoRoot, params.Path)
+	}
+	if !pathWithinRoot(t.repoRoot, searchPath) {
+		return "Error: path outside repository", nil
+	}
+	args = append(args, searchPath)
+
+	// Execute ripgrep with timeout
+	timeoutCtx, cancel := context.WithTimeout(ctx, time.Duration(bashTimeout)*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(timeoutCtx, "rg", args...)
+	output, err := cmd.Output()
+
+	if timeoutCtx.Err() == context.DeadlineExceeded {
+		return "Search timed out. Use more specific pattern or path.", nil
+	}
+
+	// ripgrep returns exit code 1 for no matches
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+			return fmt.Sprintf("No matches for pattern: %s", params.Pattern), nil
+		}
+		// Other errors might still have useful output
+		if len(output) == 0 {
+			return fmt.Sprintf("Search error: %s", err), nil
+		}
+	}
+
+	// Truncate results
+	lines := strings.Split(string(output), "\n")
+	truncated := len(lines) > maxGrepMatches
+	if truncated {
+		lines = lines[:maxGrepMatches]
+	}
+
+	// Make paths relative
+	var result strings.Builder
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		// Convert absolute paths to relative
+		if strings.HasPrefix(line, t.repoRoot) {
+			line = strings.TrimPrefix(line, t.repoRoot+"/")
+		}
+		result.WriteString(line)
+		result.WriteString("\n")
+	}
+
+	if truncated {
+		result.WriteString(fmt.Sprintf("\n[Showing %d matches. Add glob filter or refine pattern.]", maxGrepMatches))
+	}
+
+	return withTokenEstimate(result.String()), nil
+}
+
+// executeRead reads a file with optional line range.
+func (t *ExploreTools) executeRead(ctx context.Context, arguments string) (string, error) {
+	params, err := llm.ParseToolArguments[ReadParams](arguments)
+	if err != nil {
+		return "", fmt.Errorf("parse read params: %w", err)
+	}
+
+	if params.FilePath == "" {
+		return "Error: file_path is required", nil
+	}
+
+	// Resolve and validate path
+	fullPath := filepath.Join(t.repoRoot, params.FilePath)
+	if !pathWithinRoot(t.repoRoot, fullPath) {
+		return "Error: path outside repository", nil
+	}
+
+	// Open file
+	file, err := os.Open(fullPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Sprintf("Error: file not found: %s", params.FilePath), nil
+		}
+		return fmt.Sprintf("Error: cannot read file: %s", err), nil
+	}
+	defer file.Close()
+
+	// Set defaults
+	offset := params.Offset
+	if offset < 1 {
+		offset = 1
+	}
+	limit := params.Limit
+	if limit < 1 {
+		limit = defaultReadLines
+	}
+	if limit > maxReadLines {
+		limit = maxReadLines
+	}
+
+	// Read lines
+	scanner := bufio.NewScanner(file)
+	var result strings.Builder
+	lineNum := 0
+	linesRead := 0
+
+	for scanner.Scan() {
+		lineNum++
+
+		// Skip until offset
+		if lineNum < offset {
+			continue
+		}
+
+		// Stop at limit
+		if linesRead >= limit {
+			break
+		}
+
+		line := scanner.Text()
+		// Truncate long lines
+		if len(line) > maxLineLength {
+			line = line[:maxLineLength] + "..."
+		}
+
+		// Format with line number (cat -n style)
+		result.WriteString(fmt.Sprintf("%6d\t%s\n", lineNum, line))
+		linesRead++
+	}
+
+	if err := scanner.Err(); err != nil {
+		return fmt.Sprintf("Error reading file: %s", err), nil
+	}
+
+	if linesRead == 0 {
+		if lineNum == 0 {
+			return "File is empty", nil
+		}
+		return fmt.Sprintf("No lines at offset %d (file has %d lines)", offset, lineNum), nil
+	}
+
+	// Add info about what was read
+	info := fmt.Sprintf("\n[Read lines %d-%d of %s", offset, offset+linesRead-1, params.FilePath)
+	if lineNum > offset+linesRead-1 {
+		info += fmt.Sprintf(". File continues to line %d.]", lineNum)
+	} else {
+		info += ". End of file.]"
+	}
+	result.WriteString(info)
+
+	return withTokenEstimate(result.String()), nil
+}
+
 // bashAllowedPrefixes defines read-only commands that are allowed.
 var bashAllowedPrefixes = []string{
-	// File reading
-	"cat ", "head ", "tail ", "less ", "sed ",
-	// Search
-	"grep ", "rg ", "find ", "fd ", "ag ",
-	// File info
-	"wc ", "ls ", "ls", "file ", "stat ", "tree ",
 	// Git read-only
 	"git log", "git show", "git diff", "git blame", "git status",
-	"git branch", "git tag", "git remote", "git grep",
+	"git branch", "git tag", "git remote", "git grep", "git rev-parse",
+	// File info
+	"ls ", "ls", "wc ", "file ", "stat ", "tree ",
+	// Find (useful for complex searches)
+	"find ",
 }
 
 // bashBlockedPrefixes defines write operations that are always blocked.
 var bashBlockedPrefixes = []string{
 	"rm ", "mv ", "cp ", "mkdir ", "touch ", "chmod ", "chown ",
 	"git push", "git commit", "git checkout", "git reset", "git rebase",
-	"git merge", "git pull", "git stash", "git clean",
-	"echo ", "printf ",
+	"git merge", "git pull", "git stash", "git clean", "git add",
+	"echo ", "printf ", "cat ", "head ", "tail ", "sed ", "awk ",
+	"grep ", "rg ", // Use the grep tool instead
 	">", ">>",
 }
 
@@ -183,7 +514,7 @@ func (t *ExploreTools) executeBash(ctx context.Context, arguments string) (strin
 		slog.DebugContext(ctx, "bash command blocked",
 			"command", command,
 			"reason", reason)
-		return fmt.Sprintf("Command blocked: %s\nAllowed: cat, head, tail, rg, grep, find, ls, tree, wc, git log/show/diff/blame/status", reason), nil
+		return fmt.Sprintf("Command blocked: %s\n\nAllowed: git log/show/diff/blame/status, ls, tree, find\nUse 'read' tool for file contents, 'grep' tool for searching.", reason), nil
 	}
 
 	// Create timeout context
@@ -198,52 +529,50 @@ func (t *ExploreTools) executeBash(ctx context.Context, arguments string) (strin
 
 	// Handle timeout
 	if timeoutCtx.Err() == context.DeadlineExceeded {
-		return fmt.Sprintf("Command timed out after %d seconds. Use more specific patterns or add | head -N", bashTimeout), nil
+		return fmt.Sprintf("Command timed out after %d seconds.", bashTimeout), nil
 	}
 
 	// Handle other errors (but still return output if available)
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			// Non-zero exit code - might just be "no matches" for grep
-			if exitErr.ExitCode() == 1 && (strings.HasPrefix(command, "grep") || strings.HasPrefix(command, "rg")) {
+			// Non-zero exit code - might just be "no matches" for find
+			if exitErr.ExitCode() == 1 && strings.HasPrefix(command, "find") {
 				return "No matches found", nil
 			}
 		}
-		// Return both error and any output
 		if len(output) > 0 {
-			return fmt.Sprintf("Command failed: %s\nOutput:\n%s", err, t.truncateBashOutput(output)), nil
+			return fmt.Sprintf("Command failed: %s\nOutput:\n%s", err, t.truncateOutput(output)), nil
 		}
 		return fmt.Sprintf("Command failed: %s", err), nil
 	}
 
-	result := t.truncateBashOutput(output)
+	result := t.truncateOutput(output)
 
 	slog.DebugContext(ctx, "bash executed",
 		"command", command,
 		"output_len", len(output))
 
-	return result, nil
+	return withTokenEstimate(result), nil
 }
 
-// isBashCommandAllowed checks if a command is allowed based on prefix matching.
+// isBashCommandAllowed checks if a command is allowed.
 func (t *ExploreTools) isBashCommandAllowed(command string) (bool, string) {
 	cmd := strings.TrimSpace(command)
 
-	// Check blocked prefixes first (higher priority)
+	// Check blocked prefixes first
 	for _, prefix := range bashBlockedPrefixes {
 		if strings.HasPrefix(cmd, prefix) {
-			return false, fmt.Sprintf("write operation '%s' not allowed", prefix)
+			return false, fmt.Sprintf("'%s' not allowed - use dedicated tools", strings.TrimSpace(prefix))
 		}
 	}
 
-	// Check for blocked patterns anywhere in command (redirects)
+	// Check for blocked patterns
 	if strings.Contains(cmd, " > ") || strings.Contains(cmd, " >> ") {
 		return false, "output redirection not allowed"
 	}
 
-	// Validate paths in command stay within repo root
-	if !t.validateBashPaths(cmd) {
-		return false, "path outside repository"
+	if ok, reason := t.areBashPathsAllowed(cmd); !ok {
+		return false, reason
 	}
 
 	// Check allowed prefixes
@@ -256,410 +585,63 @@ func (t *ExploreTools) isBashCommandAllowed(command string) (bool, string) {
 	return false, "command not in allowed list"
 }
 
-// validateBashPaths checks that any absolute paths in the command are within repo root.
-func (t *ExploreTools) validateBashPaths(command string) bool {
-	absRoot, _ := filepath.Abs(t.repoRoot)
+var absPathPattern = regexp.MustCompile(`(?:^|[\s'"])(/[^\\s'"]+)`)
 
-	parts := strings.Fields(command)
-	for _, part := range parts {
-		if strings.HasPrefix(part, "-") {
+func (t *ExploreTools) areBashPathsAllowed(command string) (bool, string) {
+	if strings.HasPrefix(command, "..") || strings.Contains(command, "../") {
+		return false, "path traversal outside repository not allowed"
+	}
+
+	matches := absPathPattern.FindAllStringSubmatch(command, -1)
+	for _, match := range matches {
+		if len(match) < 2 {
 			continue
 		}
-		if strings.HasPrefix(part, "/") {
-			absPath, err := filepath.Abs(part)
-			if err != nil {
-				continue
-			}
-			if !strings.HasPrefix(absPath, absRoot) {
-				return false
-			}
+		pathToken := strings.TrimRight(match[1], ".,;:")
+		if !pathWithinRoot(t.repoRoot, pathToken) {
+			return false, "absolute path outside repository not allowed"
 		}
+	}
+
+	return true, ""
+}
+
+func pathWithinRoot(root, path string) bool {
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return false
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(absRoot, absPath)
+	if err != nil {
+		return false
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return false
 	}
 	return true
 }
 
-// truncateBashOutput limits output size and adds truncation message if needed.
-// Also adds token estimate to help the model understand context cost.
-func (t *ExploreTools) truncateBashOutput(output []byte) string {
-	lineCount := strings.Count(string(output), "\n")
-
+// truncateOutput limits output size.
+func (t *ExploreTools) truncateOutput(output []byte) string {
 	if len(output) <= maxBashOutput {
-		// Add token estimate even for non-truncated output
-		tokenEstimate := len(output) / 4 // ~4 chars per token
-		return string(output) + fmt.Sprintf("\n\n[~%d tokens added to context (%d lines)]", tokenEstimate, lineCount)
+		return string(output)
 	}
 
 	truncated := output[:maxBashOutput]
-	// Try to truncate at a newline for cleaner output
 	if lastNewline := strings.LastIndex(string(truncated), "\n"); lastNewline > maxBashOutput/2 {
 		truncated = truncated[:lastNewline]
 	}
 
-	truncatedLineCount := strings.Count(string(truncated), "\n")
-	tokenEstimate := len(truncated) / 4 // ~4 chars per token
-
-	return string(truncated) + fmt.Sprintf("\n\n[Output truncated: showing %d of ~%d lines. ~%d tokens added. Use | head -N or more specific patterns.]",
-		truncatedLineCount, lineCount, tokenEstimate)
+	return string(truncated) + "\n\n[Output truncated]"
 }
 
-// executeCodegraph handles the codegraph tool with XML output.
-func (t *ExploreTools) executeCodegraph(ctx context.Context, arguments string) (string, error) {
-	params, err := llm.ParseToolArguments[CodegraphParams](arguments)
-	if err != nil {
-		return "", fmt.Errorf("parse codegraph params: %w", err)
-	}
-
-	switch params.Operation {
-	case "symbols":
-		return t.executeSymbols(ctx, params)
-	case "find":
-		if params.Symbol == "" {
-			return t.xmlError("missing_param", "'symbol' parameter required for find.", "Example: codegraph(operation=\"find\", symbol=\"Plan\")"), nil
-		}
-		return t.executeFind(ctx, params)
-	case "callers", "callees", "implementations", "methods", "usages":
-		if params.Symbol == "" {
-			return t.xmlError("missing_param", fmt.Sprintf("'symbol' parameter required for %s.", params.Operation),
-				fmt.Sprintf("Example: codegraph(operation=\"%s\", symbol=\"Execute\")", params.Operation)), nil
-		}
-		return t.executeRelationship(ctx, params)
-	default:
-		return t.xmlError("invalid_operation", fmt.Sprintf("Unknown operation \"%s\".", params.Operation),
-			"Valid operations: find, callers, callees, implementations, methods, usages, symbols"), nil
-	}
-}
-
-// executeFind handles the find operation.
-func (t *ExploreTools) executeFind(ctx context.Context, params CodegraphParams) (string, error) {
-	opts := arangodb.SearchOptions{
-		Name: params.Symbol,
-		Kind: params.Kind,
-		File: params.File,
-	}
-
-	results, total, err := t.arango.SearchSymbols(ctx, opts)
-	if err != nil {
-		return t.xmlError("query_error", err.Error(), ""), nil
-	}
-
-	if total == 0 {
-		return t.xmlSymbolNotFound(params.Symbol, params.File), nil
-	}
-
-	truncated := total > maxCodeResults
-	if len(results) > maxCodeResults {
-		results = results[:maxCodeResults]
-	}
-
-	var xml strings.Builder
-	xml.WriteString(fmt.Sprintf("<code_result operation=\"find\" symbol=\"%s\">\n", escapeXML(params.Symbol)))
-	xml.WriteString(fmt.Sprintf("  <results count=\"%d\"", len(results)))
-	if truncated {
-		xml.WriteString(fmt.Sprintf(" total=\"%d\" truncated=\"true\"", total))
-	}
-	xml.WriteString(">\n")
-
-	for _, r := range results {
-		xml.WriteString(fmt.Sprintf("    <symbol name=\"%s\" kind=\"%s\" file=\"%s\" line=\"%d\" qname=\"%s\"",
-			escapeXML(r.Name), escapeXML(r.Kind), escapeXML(r.Filepath), r.Pos, escapeXML(r.QName)))
-		if r.Signature != "" {
-			xml.WriteString(fmt.Sprintf(" signature=\"%s\"", escapeXML(r.Signature)))
-		}
-		xml.WriteString(" />\n")
-	}
-
-	xml.WriteString("  </results>\n")
-
-	if truncated {
-		xml.WriteString(fmt.Sprintf("  <hint>Showing %d of %d results. Add kind or file filter to narrow.</hint>\n", len(results), total))
-	}
-
-	xml.WriteString("</code_result>")
-
-	slog.DebugContext(ctx, "codegraph find executed",
-		"symbol", params.Symbol,
-		"results", len(results),
-		"total", total)
-
-	return withTokenEstimate(xml.String()), nil
-}
-
-// executeRelationship handles callers, callees, implementations, methods, usages.
-func (t *ExploreTools) executeRelationship(ctx context.Context, params CodegraphParams) (string, error) {
-	opts := arangodb.SearchOptions{
-		Name: params.Symbol,
-		Kind: params.Kind,
-		File: params.File,
-	}
-
-	resolved, err := t.arango.ResolveSymbol(ctx, opts)
-	if err != nil {
-		var ambigErr arangodb.AmbiguousSymbolError
-		if errors.As(err, &ambigErr) {
-			return t.xmlAmbiguousSymbol(params.Symbol, ambigErr.Candidates), nil
-		}
-		if errors.Is(err, arangodb.ErrNotFound) {
-			return t.xmlSymbolNotFound(params.Symbol, params.File), nil
-		}
-		return t.xmlError("query_error", err.Error(), ""), nil
-	}
-
-	// Execute the relationship query
-	var nodes []arangodb.GraphNode
-	var opErr error
-
-	switch params.Operation {
-	case "callers":
-		nodes, opErr = t.arango.GetCallers(ctx, resolved.QName, defaultCodeDepth)
-	case "callees":
-		nodes, opErr = t.arango.GetCallees(ctx, resolved.QName, defaultCodeDepth)
-	case "implementations":
-		nodes, opErr = t.arango.GetImplementations(ctx, resolved.QName)
-	case "methods":
-		nodes, opErr = t.arango.GetMethods(ctx, resolved.QName)
-	case "usages":
-		nodes, opErr = t.arango.GetUsages(ctx, resolved.QName)
-	}
-
-	if opErr != nil {
-		return t.xmlError("query_error", opErr.Error(), ""), nil
-	}
-
-	// Build XML output
-	var xml strings.Builder
-	xml.WriteString(fmt.Sprintf("<code_result operation=\"%s\" symbol=\"%s\">\n", params.Operation, escapeXML(params.Symbol)))
-
-	// Resolved symbol
-	xml.WriteString(fmt.Sprintf("  <resolved name=\"%s\" kind=\"%s\" file=\"%s\" line=\"%d\" qname=\"%s\"",
-		escapeXML(resolved.Name), escapeXML(resolved.Kind), escapeXML(resolved.Filepath), resolved.Pos, escapeXML(resolved.QName)))
-	if resolved.Signature != "" {
-		xml.WriteString(fmt.Sprintf(" signature=\"%s\"", escapeXML(resolved.Signature)))
-	}
-	xml.WriteString(" />\n")
-
-	// Results
-	truncated := len(nodes) > maxCodeResults
-	if truncated {
-		nodes = nodes[:maxCodeResults]
-	}
-
-	xml.WriteString(fmt.Sprintf("  <results count=\"%d\"", len(nodes)))
-	if truncated {
-		xml.WriteString(" truncated=\"true\"")
-	}
-	xml.WriteString(">\n")
-
-	for _, n := range nodes {
-		xml.WriteString(fmt.Sprintf("    <symbol name=\"%s\" kind=\"%s\" file=\"%s\" line=\"%d\" qname=\"%s\"",
-			escapeXML(n.Name), escapeXML(n.Kind), escapeXML(n.Filepath), n.Pos, escapeXML(n.QName)))
-		if n.Signature != "" {
-			xml.WriteString(fmt.Sprintf(" signature=\"%s\"", escapeXML(n.Signature)))
-		}
-		xml.WriteString(" />\n")
-	}
-
-	xml.WriteString("  </results>\n")
-
-	// Hints
-	if len(nodes) == 0 {
-		xml.WriteString(fmt.Sprintf("  <hint>No %s found. This may be unused or called via reflection/external code.</hint>\n", params.Operation))
-	} else if truncated {
-		xml.WriteString(fmt.Sprintf("  <hint>Results truncated to %d. Add file filter to narrow.</hint>\n", maxCodeResults))
-	}
-
-	xml.WriteString("</code_result>")
-
-	slog.DebugContext(ctx, "codegraph relationship executed",
-		"operation", params.Operation,
-		"symbol", params.Symbol,
-		"resolved_qname", resolved.QName,
-		"results", len(nodes))
-
-	return withTokenEstimate(xml.String()), nil
-}
-
-// executeSymbols returns all symbols in a file.
-func (t *ExploreTools) executeSymbols(ctx context.Context, params CodegraphParams) (string, error) {
-	if params.File == "" {
-		return t.xmlError("missing_param", "'file' parameter required for symbols.", "Example: codegraph(operation=\"symbols\", file=\"internal/brain/planner.go\")"), nil
-	}
-
-	// Check for unsupported language
-	ext := strings.ToLower(filepath.Ext(params.File))
-	if lang, ok := languageByExt[ext]; ok {
-		supported := false
-		for _, sl := range supportedLanguages {
-			if sl == lang {
-				supported = true
-				break
-			}
-		}
-		if !supported {
-			return t.xmlUnsupportedLanguage(params.File, lang), nil
-		}
-	}
-
-	symbols, err := t.arango.GetFileSymbols(ctx, arangodb.FileSymbolsOptions{
-		Filepath: params.File,
-		Kind:     params.Kind,
-	})
-	if err != nil {
-		return t.xmlError("query_error", err.Error(), ""), nil
-	}
-
-	if len(symbols) == 0 {
-		// Could be unsupported language or file not indexed
-		return t.xmlEmptySymbols(params.File), nil
-	}
-
-	var xml strings.Builder
-	if params.Kind != "" {
-		xml.WriteString(fmt.Sprintf("<code_result operation=\"symbols\" file=\"%s\" kind=\"%s\">\n", escapeXML(params.File), escapeXML(params.Kind)))
-	} else {
-		xml.WriteString(fmt.Sprintf("<code_result operation=\"symbols\" file=\"%s\">\n", escapeXML(params.File)))
-	}
-	xml.WriteString(fmt.Sprintf("  <results count=\"%d\">\n", len(symbols)))
-
-	for _, s := range symbols {
-		xml.WriteString(fmt.Sprintf("    <symbol name=\"%s\" kind=\"%s\" line=\"%d\" qname=\"%s\"",
-			escapeXML(s.Name), escapeXML(s.Kind), s.Pos, escapeXML(s.QName)))
-		if s.Signature != "" {
-			xml.WriteString(fmt.Sprintf(" signature=\"%s\"", escapeXML(s.Signature)))
-		}
-		xml.WriteString(" />\n")
-	}
-
-	xml.WriteString("  </results>\n")
-	xml.WriteString("</code_result>")
-
-	slog.DebugContext(ctx, "codegraph symbols executed",
-		"file", params.File,
-		"kind", params.Kind,
-		"count", len(symbols))
-
-	return withTokenEstimate(xml.String()), nil
-}
-
-// XML helper functions
-
-func (t *ExploreTools) xmlError(errType, message, hint string) string {
-	var xml strings.Builder
-	xml.WriteString("<code_result>\n")
-	xml.WriteString(fmt.Sprintf("  <error type=\"%s\">%s</error>\n", errType, escapeXML(message)))
-	if hint != "" {
-		xml.WriteString(fmt.Sprintf("  <hint>%s</hint>\n", escapeXML(hint)))
-	}
-	xml.WriteString("</code_result>")
-	return xml.String()
-}
-
-func (t *ExploreTools) xmlSymbolNotFound(symbol, file string) string {
-	var xml strings.Builder
-	xml.WriteString("<code_result>\n")
-	xml.WriteString(fmt.Sprintf("  <error type=\"symbol_not_found\">No symbol \"%s\" found.</error>\n", escapeXML(symbol)))
-	xml.WriteString("  <hint>\n")
-	xml.WriteString(fmt.Sprintf("    CodeGraph supports: %s. More languages coming soon.\n", strings.Join(supportedLanguages, ", ")))
-	xml.WriteString(fmt.Sprintf("    Use bash for text search: rg -n \"%s\"\n", escapeXML(symbol)))
-	xml.WriteString("  </hint>\n")
-	xml.WriteString("</code_result>")
-	return xml.String()
-}
-
-func (t *ExploreTools) xmlAmbiguousSymbol(symbol string, candidates []arangodb.SearchResult) string {
-	var xml strings.Builder
-	xml.WriteString(fmt.Sprintf("<code_result symbol=\"%s\">\n", escapeXML(symbol)))
-	xml.WriteString(fmt.Sprintf("  <error type=\"ambiguous_symbol\">Multiple symbols match \"%s\".</error>\n", escapeXML(symbol)))
-	xml.WriteString(fmt.Sprintf("  <candidates count=\"%d\">\n", len(candidates)))
-
-	for _, c := range candidates {
-		xml.WriteString(fmt.Sprintf("    <symbol name=\"%s\" kind=\"%s\" file=\"%s\" line=\"%d\" qname=\"%s\"",
-			escapeXML(c.Name), escapeXML(c.Kind), escapeXML(c.Filepath), c.Pos, escapeXML(c.QName)))
-		if c.Signature != "" {
-			xml.WriteString(fmt.Sprintf(" signature=\"%s\"", escapeXML(c.Signature)))
-		}
-		xml.WriteString(" />\n")
-	}
-
-	xml.WriteString("  </candidates>\n")
-	xml.WriteString("  <hint>Retry with file or kind filter to disambiguate.</hint>\n")
-	xml.WriteString("</code_result>")
-	return xml.String()
-}
-
-func (t *ExploreTools) xmlEmptySymbols(file string) string {
-	ext := strings.ToLower(filepath.Ext(file))
-	lang, known := languageByExt[ext]
-
-	var xml strings.Builder
-	xml.WriteString(fmt.Sprintf("<code_result operation=\"symbols\" file=\"%s\">\n", escapeXML(file)))
-	xml.WriteString("  <results count=\"0\" />\n")
-	xml.WriteString("  <hint>\n")
-
-	if known {
-		supported := false
-		for _, sl := range supportedLanguages {
-			if sl == lang {
-				supported = true
-				break
-			}
-		}
-		if !supported {
-			xml.WriteString(fmt.Sprintf("    CodeGraph does not support %s yet.\n", lang))
-		} else {
-			xml.WriteString("    No symbols found. File may not be indexed.\n")
-		}
-	} else {
-		xml.WriteString("    No symbols found.\n")
-	}
-
-	xml.WriteString(fmt.Sprintf("    Supported: %s. More coming soon.\n", strings.Join(supportedLanguages, ", ")))
-	xml.WriteString(fmt.Sprintf("    Use bash: rg -n \"func\\|type\\|class\" %s\n", escapeXML(file)))
-	xml.WriteString("  </hint>\n")
-	xml.WriteString("</code_result>")
-	return xml.String()
-}
-
-func (t *ExploreTools) xmlUnsupportedLanguage(file, lang string) string {
-	var xml strings.Builder
-	xml.WriteString(fmt.Sprintf("<code_result operation=\"symbols\" file=\"%s\">\n", escapeXML(file)))
-	xml.WriteString(fmt.Sprintf("  <error type=\"unsupported_language\">CodeGraph does not support %s yet.</error>\n", lang))
-	xml.WriteString("  <hint>\n")
-	xml.WriteString(fmt.Sprintf("    Supported: %s. More coming soon.\n", strings.Join(supportedLanguages, ", ")))
-	xml.WriteString(fmt.Sprintf("    Use bash for %s:\n", lang))
-
-	// Language-specific hints
-	switch lang {
-	case "TypeScript", "JavaScript":
-		xml.WriteString(fmt.Sprintf("      rg -n \"function\\|class\\|interface\\|export\" %s\n", escapeXML(file)))
-		xml.WriteString("      rg -n \"pattern\" --type ts\n")
-	case "Rust":
-		xml.WriteString(fmt.Sprintf("      rg -n \"fn\\|struct\\|impl\\|trait\" %s\n", escapeXML(file)))
-		xml.WriteString("      rg -n \"pattern\" --type rust\n")
-	case "Java":
-		xml.WriteString(fmt.Sprintf("      rg -n \"class\\|interface\\|public.*void\\|public.*static\" %s\n", escapeXML(file)))
-		xml.WriteString("      rg -n \"pattern\" --type java\n")
-	default:
-		xml.WriteString(fmt.Sprintf("      rg -n \"func\\|class\\|def\" %s\n", escapeXML(file)))
-	}
-
-	xml.WriteString("  </hint>\n")
-	xml.WriteString("</code_result>")
-	return xml.String()
-}
-
-// escapeXML escapes special characters for XML attributes and content.
-func escapeXML(s string) string {
-	s = strings.ReplaceAll(s, "&", "&amp;")
-	s = strings.ReplaceAll(s, "<", "&lt;")
-	s = strings.ReplaceAll(s, ">", "&gt;")
-	s = strings.ReplaceAll(s, "\"", "&quot;")
-	s = strings.ReplaceAll(s, "'", "&apos;")
-	return s
-}
-
-// withTokenEstimate appends a token cost estimate to codegraph output.
-// Helps the model understand the context cost of each tool call.
-func withTokenEstimate(xmlOutput string) string {
-	tokenEstimate := len(xmlOutput) / 4 // ~4 chars per token
-	return xmlOutput + fmt.Sprintf("\n\n[~%d tokens added to context]", tokenEstimate)
+// withTokenEstimate appends a token cost estimate.
+func withTokenEstimate(output string) string {
+	tokenEstimate := len(output) / 4 // ~4 chars per token
+	lineCount := strings.Count(output, "\n")
+	return output + fmt.Sprintf("\n\n[~%d tokens, %d lines]", tokenEstimate, lineCount)
 }

@@ -25,8 +25,8 @@ const (
 type Thoroughness string
 
 const (
-	ThoroughnessQuick  Thoroughness = "quick"    // Fast lookup, ~15 iterations, ~40k tokens
-	ThoughnessMedium   Thoroughness = "medium"   // Balanced exploration, ~25 iterations, ~100k tokens
+	ThoroughnessQuick  Thoroughness = "quick"    // Fast lookup, ~30 iterations, ~40k tokens
+	ThoughnessMedium   Thoroughness = "medium"   // Balanced exploration, ~50 iterations, ~100k tokens
 	ThoughnessThorough Thoroughness = "thorough" // Comprehensive search, ~100 iterations, ~200k tokens
 )
 
@@ -43,19 +43,19 @@ func thoroughnessConfig(t Thoroughness) ThoroughnessConfig {
 	switch t {
 	case ThoroughnessQuick:
 		return ThoroughnessConfig{
-			MaxIterations:   10,
+			MaxIterations:   30,
 			SoftTokenTarget: 15000,
 			HardTokenLimit:  25000,
 		}
 	case ThoughnessMedium:
 		return ThoroughnessConfig{
-			MaxIterations:   20,
+			MaxIterations:   50,
 			SoftTokenTarget: 25000,
 			HardTokenLimit:  40000,
 		}
 	case ThoughnessThorough:
 		return ThoroughnessConfig{
-			MaxIterations:   50,
+			MaxIterations:   120,
 			SoftTokenTarget: 60000,
 			HardTokenLimit:  100000,
 		}
@@ -530,98 +530,89 @@ func (e *ExploreAgent) writeMetricsLog(metrics ExploreMetrics) {
 }
 
 // systemPrompt returns the system prompt for the explore agent.
-// Optimized for deterministic code graph queries with bash as fallback.
+// Claude Code-style tools: glob, grep, read, bash.
 func (e *ExploreAgent) systemPrompt() string {
-	return fmt.Sprintf(`Explore this codebase to answer a question. Return a concise report with evidence.
+	return fmt.Sprintf(`You are a code exploration agent. Answer the question with evidence from this codebase.
 
-## Two Tools: codegraph (PRIMARY) and bash (FALLBACK)
+# Decision Framework
 
-### codegraph - Use THIS FIRST for code exploration
-Compiler-level accuracy. Deterministic. Returns structured XML with qnames and signatures.
+Before EVERY tool call, answer: "What specific question does this answer?"
+If you cannot articulate the question → STOP and write your report.
 
-ALWAYS use codegraph for:
-  • File overview:      codegraph(operation="symbols", file="path.go")
-  • Just structs:       codegraph(operation="symbols", file="path.go", kind="struct")
-  • Finding symbols:    codegraph(operation="find", symbol="*Pattern*")
-  • Call graph:         codegraph(operation="callers", symbol="FuncName")
-  • Type hierarchy:     codegraph(operation="implementations", symbol="Interface")
-  • Type methods:       codegraph(operation="methods", symbol="TypeName")
-  • Type usage:         codegraph(operation="usages", symbol="TypeName")
-  • What func calls:    codegraph(operation="callees", symbol="FuncName")
+## Tool Selection (use the first that applies)
 
-Example workflow:
-  1. codegraph(operation="symbols", file="internal/brain/planner.go", kind="function")
-     → See all functions with signatures (filter reduces noise)
-  2. codegraph(operation="callers", symbol="Plan")
-     → See who calls Plan() - bash cannot do this!
-  3. bash(sed -n '45,90p' internal/brain/planner.go)
-     → Read the specific Plan() implementation
+| I need to...                          | Use    | Example                                    |
+|---------------------------------------|--------|--------------------------------------------|
+| Find files by name/path               | glob   | glob(pattern="**/*handler*.go")            |
+| Find where a string/pattern appears   | grep   | grep(pattern="func NewPlanner")            |
+| Read code at a known location         | read   | read(file_path="x.go", offset=50, limit=40)|
+| Understand git history                | bash   | git log --oneline -5 -- file.go            |
 
-Supported: Go, Python. Returns XML with qnames, signatures, line numbers.
+## Strategy: Narrow Fast, Read Small
 
-### bash - Use ONLY when codegraph cannot help
-For git history, reading specific line ranges, quick text searches.
+1. **Name search first** - If the question mentions a concept, glob for files with that name
+2. **Pattern search second** - grep for function/type definitions, not usages
+3. **Surgical reads** - Read 30-50 lines around grep hits, never full files
+4. **Stop at first sufficient evidence** - You don't need exhaustive proof
 
-  sed -n '100,150p' file.go      # Read lines 100-150
-  git log --oneline -10          # Recent commits
-  git blame file.go              # Line history
-  rg -n "TODO" | head -20        # Text search
+## Token Budget
 
-DO NOT use bash for:
-  ✗ head -200 file.go            → Use codegraph(symbols) instead!
-  ✗ rg -n "SymbolName"           → Use codegraph(find) instead!
-  ✗ Understanding call graphs    → ONLY codegraph can do this!
+Every tool call costs tokens. Typical costs:
+- glob: 10 tokens/file path
+- grep: 50 tokens/match line
+- read: 30 tokens/line (100 lines = 3000 tokens)
 
-## Decision Tree
+Budget mindset: You have ~15-20 effective tool calls. Spend wisely.
 
-Question: "What's in this file?"
-  → codegraph(symbols, file="...") - gives structured overview
-  → codegraph(symbols, file="...", kind="struct") - only structs/types
+## Anti-Patterns (immediate red flags)
 
-Question: "Who calls function X?"
-  → codegraph(callers, symbol="X") - only tool that can answer this
+❌ Reading a full file "to understand context" - read the specific function
+❌ grep for common words (error, return, if) - too many matches
+❌ Multiple globs for same concept - combine patterns: "**/*{plan,schedule}*.go"
+❌ Reading same file twice - scroll your context, the data is already there
+❌ "Let me search for X to be thorough" - if you have the answer, stop
 
-Question: "Where is type Y defined?"
-  → codegraph(find, symbol="Y") - AST-precise, not text match
+## Tools Reference
 
-Question: "Read lines 50-100 of file.go"
-  → bash(sed -n '50,100p' file.go) - specific code reading
+### glob(pattern, path?)
+Find files. Pattern supports ** (recursive), * (wildcard), {a,b} (alternatives).
+Returns: paths sorted by modification time (newest first).
 
-Question: "Find TODO comments"
-  → bash(rg -n "TODO" | head -20) - text search
+### grep(pattern, glob?, context?)
+Search contents. Pattern is regex. glob filters files. context adds surrounding lines.
+Returns: file:line matches with content.
 
-Question: "Recent changes to file.go"
-  → bash(git log --oneline file.go) - git history
+### read(file_path, offset?, limit?)
+Read file. offset is 0-indexed line to start. limit is line count (default 200).
+Returns: numbered lines.
 
-## Module: %s
+### bash(command)
+Git commands only: log, diff, blame, show. Also ls for directory structure.
+Blocked: cat, head, tail (use read tool instead).
 
-## Resource Constraints (IMPORTANT)
-
-Each tool call adds tokens to context. Be efficient:
-- File reads (sed): ~30 tokens per line. Reading 100 lines = ~3000 tokens.
-- Search results (rg): ~50 tokens per match.
-- You have LIMITED iterations. Make each one count.
-
-## Efficiency Rules
-
-- NEVER search for the same pattern twice. You already have those results above.
-- NEVER read the same file region twice. Reference your earlier findings.
-- If codegraph found a symbol at file:line, read ONLY that region (±20 lines).
-- Use sed ranges of 50-80 lines max, not 200. Chain reads if needed.
-
-## When to Stop
-
-Write your report immediately when:
-- You found the answer with evidence (file:line references)
-- You've checked 2-3 approaches with no new info
-- You're about to search for something you already searched
-
-Don't keep searching "to be thorough." Quality over quantity.
+## Module Context
+Go module: %s
+Use this for understanding import paths and package structure.
 
 ## Output Format
 
-Concise report with:
-- Direct answer to the question
-- Key locations with file:line references
-- Code snippets where helpful (use bash to read after codegraph gives locations)`, e.modulePath)
+<report>
+## Answer
+[1-2 sentence direct answer]
+
+## Evidence
+- file.go:42 - [what this shows]
+- file.go:87-95 - [what this shows]
+
+## Key Code
+`+"```"+`go
+// file.go:42-50 - [description]
+[relevant snippet]
+`+"```"+`
+
+## Confidence
+[high/medium/low] - [why]
+</report>
+
+Stop exploring when you can write this report. More searching ≠ better answers.`, e.modulePath)
 }
