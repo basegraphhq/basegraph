@@ -152,10 +152,14 @@ func main() {
 		),
 	}
 
+	// TODO(cleanup): Remove DebugDir once product goes live.
+	// It creates debug_logs/YYYY-MM-DD/NNN/ folders for each worker run.
+	// Related: brain.SetupDebugRunDir, Planner.debugDir, ExploreAgent.debugDir
 	orchestrator := brain.NewOrchestrator(
 		brain.OrchestratorConfig{
 			RepoRoot:   repoRoot,
 			ModulePath: modulePath,
+			DebugDir:   os.Getenv("BRAIN_DEBUG_DIR"),
 		},
 		agentClient,
 		arangoClient,

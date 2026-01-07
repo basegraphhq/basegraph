@@ -81,11 +81,11 @@ type Planner struct {
 }
 
 // NewPlanner creates a Planner with an ExploreAgent sub-agent.
-func NewPlanner(llmClient llm.AgentClient, explore *ExploreAgent) *Planner {
+func NewPlanner(llmClient llm.AgentClient, explore *ExploreAgent, debugDir string) *Planner {
 	return &Planner{
 		llm:      llmClient,
 		explore:  explore,
-		debugDir: os.Getenv("BRAIN_DEBUG_DIR"),
+		debugDir: debugDir,
 	}
 }
 

@@ -6,7 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"basegraph.app/relay/common/arangodb"
 	"basegraph.app/relay/common/llm"
@@ -50,6 +54,46 @@ func NewFatalError(err error) *EngagementError {
 type OrchestratorConfig struct {
 	RepoRoot   string
 	ModulePath string
+	DebugDir   string // Base directory for debug logs (empty = no logging)
+}
+
+// SetupDebugRunDir creates a new debug run directory under baseDir/YYYY-MM-DD/NNN.
+// Returns the path to the new run directory, or empty string if baseDir is empty.
+// This is a development feature - remove once product goes live.
+func SetupDebugRunDir(baseDir string) string {
+	if baseDir == "" {
+		return ""
+	}
+
+	date := time.Now().Format("2006-01-02")
+	dateDir := filepath.Join(baseDir, date)
+
+	if err := os.MkdirAll(dateDir, 0o755); err != nil {
+		slog.Warn("failed to create debug date dir", "dir", dateDir, "error", err)
+		return baseDir // fallback to base
+	}
+
+	// Find next run number
+	runNum := 1
+	entries, err := os.ReadDir(dateDir)
+	if err == nil {
+		for _, e := range entries {
+			if e.IsDir() {
+				if n, err := strconv.Atoi(e.Name()); err == nil && n >= runNum {
+					runNum = n + 1
+				}
+			}
+		}
+	}
+
+	runDir := filepath.Join(dateDir, fmt.Sprintf("%03d", runNum))
+	if err := os.MkdirAll(runDir, 0o755); err != nil {
+		slog.Warn("failed to create debug run dir", "dir", runDir, "error", err)
+		return dateDir // fallback to date dir
+	}
+
+	slog.Info("debug run directory created", "path", runDir)
+	return runDir
 }
 
 type Orchestrator struct {
@@ -79,9 +123,11 @@ func NewOrchestrator(
 	learnings store.LearningStore,
 	issueTrackers map[model.Provider]issue_tracker.IssueTrackerService,
 ) *Orchestrator {
+	debugDir := SetupDebugRunDir(cfg.DebugDir)
+
 	tools := NewExploreTools(cfg.RepoRoot)
-	explore := NewExploreAgent(agentClient, tools, cfg.ModulePath)
-	planner := NewPlanner(agentClient, explore)
+	explore := NewExploreAgent(agentClient, tools, cfg.ModulePath, debugDir)
+	planner := NewPlanner(agentClient, explore, debugDir)
 	ctxBuilder := NewContextBuilder(integrations, configs, learnings, gaps)
 	validator := NewActionValidator(gaps)
 

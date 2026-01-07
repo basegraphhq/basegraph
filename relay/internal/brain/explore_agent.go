@@ -96,12 +96,12 @@ type ExploreAgent struct {
 }
 
 // NewExploreAgent creates an ExploreAgent sub-agent.
-func NewExploreAgent(llmClient llm.AgentClient, tools *ExploreTools, modulePath string) *ExploreAgent {
+func NewExploreAgent(llmClient llm.AgentClient, tools *ExploreTools, modulePath, debugDir string) *ExploreAgent {
 	return &ExploreAgent{
 		llm:        llmClient,
 		tools:      tools,
 		modulePath: modulePath,
-		debugDir:   os.Getenv("BRAIN_DEBUG_DIR"),
+		debugDir:   debugDir,
 	}
 }
 
@@ -538,6 +538,10 @@ func (e *ExploreAgent) systemPrompt() string {
 
 Before EVERY tool call, answer: "What specific question does this answer?"
 If you cannot articulate the question → STOP and write your report.
+
+## Codebase Index
+
+.basegraph/index.md contains a directory overview and file descriptions for this codebase.
 
 ## Tool Selection (use the first that applies)
 
