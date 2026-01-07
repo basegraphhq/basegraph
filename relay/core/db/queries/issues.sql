@@ -107,3 +107,12 @@ SET processing_status = 'idle',
     updated_at = now()
 WHERE id = $1
   AND processing_status = 'processing';
+
+-- name: ResetIssueQueuedToIdle :execrows
+-- Transition issue from 'queued' to 'idle' after enqueue failure.
+UPDATE issues
+SET processing_status = 'idle',
+    processing_started_at = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND processing_status = 'queued';

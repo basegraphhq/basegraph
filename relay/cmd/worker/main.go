@@ -87,6 +87,8 @@ func main() {
 		os.Exit(1)
 	}
 
+	producer := queue.NewRedisProducer(redisClient, cfg.Pipeline.RedisStream)
+
 	if !cfg.LLM.Enabled() {
 		slog.ErrorContext(ctx, "LLM_API_KEY is required for pipeline processing")
 		os.Exit(1)
@@ -160,6 +162,7 @@ func main() {
 		stores.Issues(),
 		stores.Gaps(),
 		stores.EventLogs(),
+		producer,
 		stores.Integrations(),
 		stores.IntegrationConfigs(),
 		stores.Learnings(),

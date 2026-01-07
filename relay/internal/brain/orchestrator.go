@@ -12,6 +12,7 @@ import (
 	"basegraph.app/relay/common/llm"
 	"basegraph.app/relay/common/logger"
 	"basegraph.app/relay/internal/model"
+	"basegraph.app/relay/internal/queue"
 	"basegraph.app/relay/internal/service/issue_tracker"
 	"basegraph.app/relay/internal/store"
 )
@@ -61,6 +62,7 @@ type Orchestrator struct {
 	integrations    store.IntegrationStore
 	learnings       store.LearningStore
 	eventLogs       store.EventLogStore
+	queueProducer   queue.Producer
 	issueTrackers   map[model.Provider]issue_tracker.IssueTrackerService
 }
 
@@ -71,6 +73,7 @@ func NewOrchestrator(
 	issues store.IssueStore,
 	gaps store.GapStore,
 	eventLogs store.EventLogStore,
+	queueProducer queue.Producer,
 	integrations store.IntegrationStore,
 	configs store.IntegrationConfigStore,
 	learnings store.LearningStore,
@@ -96,6 +99,7 @@ func NewOrchestrator(
 		integrations:    integrations,
 		learnings:       learnings,
 		eventLogs:       eventLogs,
+		queueProducer:   queueProducer,
 		issueTrackers:   issueTrackers,
 	}
 }
@@ -138,33 +142,129 @@ func (o *Orchestrator) HandleEngagement(ctx context.Context, input EngagementInp
 		return nil
 	}
 
+	const maxCycles = 8 // Drain until empty, then requeue if we're still seeing new events.
+	var (
+		needsFollowUp     bool
+		followUpEventID   int64
+		followUpEventType string
+	)
+
 	// Ensure we release the issue back to idle when done (success or failure)
 	defer func() {
 		if setIdleErr := o.issues.SetIdle(ctx, input.IssueID); setIdleErr != nil {
 			slog.ErrorContext(ctx, "failed to set issue idle", "error", setIdleErr)
+			return
+		}
+
+		if !needsFollowUp {
+			return
+		}
+
+		queued, err := o.issues.QueueIfIdle(ctx, input.IssueID)
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to requeue issue for follow-up", "error", err)
+			return
+		}
+		if !queued {
+			slog.InfoContext(ctx, "issue already queued or processing, skipping follow-up enqueue")
+			return
+		}
+
+		if err := o.queueProducer.Enqueue(ctx, queue.Event{
+			EventLogID:      followUpEventID,
+			IssueID:         input.IssueID,
+			EventType:       followUpEventType,
+			Attempt:         1,
+			TriggerThreadID: input.TriggerThreadID,
+		}); err != nil {
+			slog.ErrorContext(ctx, "failed to enqueue follow-up event", "error", err)
+			if resetErr := o.issues.ResetQueuedToIdle(ctx, input.IssueID); resetErr != nil {
+				slog.ErrorContext(ctx, "failed to reset queued issue after enqueue failure", "error", resetErr)
+			}
 		}
 	}()
 
+	// First contact ack (only once, before any planner cycles)
 	firstContact, err := o.isFirstContact(ctx, *issue)
 	if err != nil {
-		slog.WarnContext(ctx, "failed to detect first contact, proceeding without ack",
-			"error", err)
+		slog.WarnContext(ctx, "failed to detect first contact, proceeding without ack", "error", err)
 		firstContact = false
 	}
-
 	if firstContact {
 		if err := o.postInstantAck(ctx, *issue, input.TriggerThreadID); err != nil {
 			slog.WarnContext(ctx, "failed to post instant ack", "error", err)
 		}
 	}
 
-	messages, err := o.contextBuilder.BuildPlannerMessages(ctx, *issue, input.TriggerThreadID)
+	for cycle := 1; cycle <= maxCycles; cycle++ {
+		// Get all unprocessed events for this issue (to mark them after cycle)
+		pendingEvents, err := o.eventLogs.ListUnprocessedByIssue(ctx, issue.ID)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to list pending events", "error", err)
+		}
+
+		// Run planner cycle (5-60s for LLM + actions)
+		if err := o.runPlannerCycle(ctx, issue, input.TriggerThreadID); err != nil {
+			return err
+		}
+
+		// Mark all pending events as processed
+		if len(pendingEvents) > 0 {
+			eventIDs := make([]int64, len(pendingEvents))
+			for i, e := range pendingEvents {
+				eventIDs[i] = e.ID
+			}
+			if err := o.eventLogs.MarkBatchProcessed(ctx, eventIDs); err != nil {
+				slog.WarnContext(ctx, "failed to mark events processed", "error", err)
+			}
+		}
+
+		// Check for NEW unprocessed events (arrived during this cycle)
+		newEvents, err := o.eventLogs.ListUnprocessedByIssue(ctx, issue.ID)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to check for new events", "error", err)
+			break
+		}
+
+		if len(newEvents) == 0 {
+			break // No new events, we're done
+		}
+
+		if cycle == maxCycles {
+			needsFollowUp = true
+			followUpEventID = newEvents[0].ID
+			followUpEventType = newEvents[0].EventType
+			slog.WarnContext(ctx, "max planner cycles reached with pending events, scheduling follow-up",
+				"cycle", cycle,
+				"max_cycles", maxCycles,
+				"pending_event_count", len(newEvents))
+			break
+		}
+
+		slog.InfoContext(ctx, "new events arrived during processing, re-running planner",
+			"cycle", cycle,
+			"max_cycles", maxCycles,
+			"new_event_count", len(newEvents))
+
+		// Refresh issue state (discussions updated by webhook handler)
+		issue, err = o.issues.GetByID(ctx, issue.ID)
+		if err != nil {
+			return NewRetryableError(fmt.Errorf("refreshing issue: %w", err))
+		}
+	}
+
+	slog.InfoContext(ctx, "engagement completed successfully")
+	return nil
+}
+
+// runPlannerCycle runs a single planner iteration: build context → plan → validate → execute.
+func (o *Orchestrator) runPlannerCycle(ctx context.Context, issue *model.Issue, triggerThreadID string) error {
+	messages, err := o.contextBuilder.BuildPlannerMessages(ctx, *issue, triggerThreadID)
 	if err != nil {
 		return NewRetryableError(fmt.Errorf("building planner context: %w", err))
 	}
 
-	slog.InfoContext(ctx, "context built",
-		"message_count", len(messages))
+	slog.InfoContext(ctx, "context built", "message_count", len(messages))
 
 	output, err := o.planner.Plan(ctx, messages)
 	if err != nil {
@@ -175,33 +275,32 @@ func (o *Orchestrator) HandleEngagement(ctx context.Context, input EngagementInp
 		"action_count", len(output.Actions),
 		"reasoning", logger.Truncate(output.Reasoning, 200))
 
-	if len(output.Actions) > 0 {
-		// Validate actions before execution to catch LLM output errors early
-		validationInput := SubmitActionsInput(output)
-		if err := o.actionValidator.Validate(ctx, *issue, validationInput); err != nil {
-			slog.ErrorContext(ctx, "action validation failed", "error", err)
-			return NewFatalError(fmt.Errorf("validating actions: %w", err))
-		}
-
-		tracker, ok := o.issueTrackers[issue.Provider]
-		if !ok {
-			return NewFatalError(fmt.Errorf("no issue tracker for provider: %s", issue.Provider))
-		}
-
-		executor := NewActionExecutor(tracker, o.issues, o.gaps, o.integrations, o.learnings)
-		errs := executor.ExecuteBatch(ctx, *issue, output.Actions)
-		if len(errs) > 0 {
-			for _, e := range errs {
-				slog.ErrorContext(ctx, "action failed",
-					"action_type", e.Action.Type,
-					"error", e.Error,
-					"recoverable", e.Recoverable)
-			}
-			return NewRetryableError(fmt.Errorf("executing actions: %d failed", len(errs)))
-		}
+	if len(output.Actions) == 0 {
+		return nil
 	}
 
-	slog.InfoContext(ctx, "engagement completed successfully")
+	validationInput := SubmitActionsInput(output)
+	if err := o.actionValidator.Validate(ctx, *issue, validationInput); err != nil {
+		slog.ErrorContext(ctx, "action validation failed", "error", err)
+		return NewFatalError(fmt.Errorf("validating actions: %w", err))
+	}
+
+	tracker, ok := o.issueTrackers[issue.Provider]
+	if !ok {
+		return NewFatalError(fmt.Errorf("no issue tracker for provider: %s", issue.Provider))
+	}
+
+	executor := NewActionExecutor(tracker, o.issues, o.gaps, o.integrations, o.learnings)
+	errs := executor.ExecuteBatch(ctx, *issue, output.Actions)
+	if len(errs) > 0 {
+		for _, e := range errs {
+			slog.ErrorContext(ctx, "action failed",
+				"action_type", e.Action.Type,
+				"error", e.Error,
+				"recoverable", e.Recoverable)
+		}
+		return NewRetryableError(fmt.Errorf("executing actions: %d failed", len(errs)))
+	}
 
 	return nil
 }

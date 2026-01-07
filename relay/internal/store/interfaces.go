@@ -114,6 +114,8 @@ type IssueStore interface {
 	ClaimQueued(ctx context.Context, issueID int64) (claimed bool, issue *model.Issue, err error)
 	// SetIdle transitions an issue from 'processing' to 'idle'.
 	SetIdle(ctx context.Context, issueID int64) error
+	// ResetQueuedToIdle transitions an issue from 'queued' to 'idle'.
+	ResetQueuedToIdle(ctx context.Context, issueID int64) error
 }
 
 type EventLogStore interface {
