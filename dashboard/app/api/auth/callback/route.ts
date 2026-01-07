@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { type NextRequest, NextResponse } from "next/server";
+import { validateSession } from "@/lib/auth";
 import { RELAY_API_URL } from "@/lib/config";
 
 const STATE_COOKIE = "relay_oauth_state";
@@ -74,7 +75,13 @@ export async function GET(request: NextRequest) {
 			path: "/",
 		});
 
-		return NextResponse.redirect(new URL("/dashboard", baseUrl));
+		const validateData = await validateSession(data.session_id);
+		const redirectPath =
+			validateData?.has_organization === false
+				? "/dashboard/onboarding"
+				: "/dashboard";
+
+		return NextResponse.redirect(new URL(redirectPath, baseUrl));
 	} catch (error) {
 		console.error("Error exchanging code:", error);
 		return NextResponse.redirect(

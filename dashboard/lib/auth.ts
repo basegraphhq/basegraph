@@ -9,6 +9,7 @@ export type User = {
 
 export type Session = {
 	user: User;
+	has_organization: boolean;
 };
 
 export async function getSession(): Promise<Session | null> {
@@ -22,7 +23,7 @@ export async function getSession(): Promise<Session | null> {
 		}
 
 		const data = await res.json();
-		return { user: data.user };
+		return { user: data.user, has_organization: data.has_organization };
 	} catch {
 		return null;
 	}

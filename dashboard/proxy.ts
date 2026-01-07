@@ -2,8 +2,6 @@ import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { SESSION_COOKIE, validateSession } from "@/lib/auth";
 
-const ONBOARDING_COOKIE = "relay_onboarding_complete";
-
 /**
  * Unified proxy - Handles both page routing and API auth
  */
@@ -82,7 +80,6 @@ async function handleApiAuth(request: NextRequest) {
 async function handlePageAuth(request: NextRequest) {
 	const { pathname } = request.nextUrl;
 	const sessionId = request.cookies.get(SESSION_COOKIE)?.value;
-	const hasOrgCookie = request.cookies.get(ONBOARDING_COOKIE)?.value === "true";
 
 	// Redirect to login if not authenticated
 	if (!sessionId) {
@@ -93,59 +90,45 @@ async function handlePageAuth(request: NextRequest) {
 	}
 
 	// Check organization status
-	let hasOrganization = hasOrgCookie;
-	let responseToSetCookie: NextResponse | undefined;
-
-	if (!hasOrgCookie) {
-		const validateData = await validateSession(sessionId);
-		if (!validateData) {
-			return NextResponse.redirect(new URL("/", request.url));
-		}
-		hasOrganization = validateData.has_organization;
+	const validateData = await validateSession(sessionId);
+	if (!validateData) {
+		const res = pathname.startsWith("/dashboard")
+			? NextResponse.redirect(new URL("/", request.url))
+			: NextResponse.next();
+		res.cookies.delete(SESSION_COOKIE);
+		return res;
 	}
+
+	const hasOrganization = validateData.has_organization;
+	let response: NextResponse | undefined;
 
 	// Redirect authenticated users from root
 	if (pathname === "/") {
 		const target = hasOrganization ? "/dashboard" : "/dashboard/onboarding";
-		responseToSetCookie = NextResponse.redirect(new URL(target, request.url));
+		response = NextResponse.redirect(new URL(target, request.url));
 	}
 
 	// Redirect users without org to onboarding
 	if (
-		!responseToSetCookie &&
+		!response &&
 		pathname.startsWith("/dashboard") &&
 		pathname !== "/dashboard/onboarding"
 	) {
 		if (!hasOrganization) {
-			responseToSetCookie = NextResponse.redirect(
+			response = NextResponse.redirect(
 				new URL("/dashboard/onboarding", request.url),
 			);
 		}
 	}
 
 	// Redirect users with org away from onboarding
-	if (!responseToSetCookie && pathname === "/dashboard/onboarding") {
+	if (!response && pathname === "/dashboard/onboarding") {
 		if (hasOrganization) {
-			responseToSetCookie = NextResponse.redirect(
-				new URL("/dashboard", request.url),
-			);
+			response = NextResponse.redirect(new URL("/dashboard", request.url));
 		}
 	}
 
-	const res = responseToSetCookie ?? NextResponse.next();
-
-	// Cache organization status in cookie
-	if (!hasOrgCookie) {
-		res.cookies.set(ONBOARDING_COOKIE, String(hasOrganization), {
-			httpOnly: true,
-			secure: process.env.NODE_ENV === "production",
-			sameSite: "lax",
-			maxAge: 60 * 60 * 24 * 365,
-			path: "/",
-		});
-	}
-
-	return res;
+	return response ?? NextResponse.next();
 }
 
 export const config = {
