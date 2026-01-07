@@ -194,6 +194,24 @@ func (q *Queries) QueueIssueIfIdle(ctx context.Context, id int64) (Issue, error)
 	return i, err
 }
 
+const resetIssueQueuedToIdle = `-- name: ResetIssueQueuedToIdle :execrows
+UPDATE issues
+SET processing_status = 'idle',
+    processing_started_at = NULL,
+    updated_at = now()
+WHERE id = $1
+  AND processing_status = 'queued'
+`
+
+// Transition issue from 'queued' to 'idle' after enqueue failure.
+func (q *Queries) ResetIssueQueuedToIdle(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, resetIssueQueuedToIdle, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setIssueIdle = `-- name: SetIssueIdle :execrows
 UPDATE issues
 SET processing_status = 'idle',

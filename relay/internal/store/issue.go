@@ -124,6 +124,17 @@ func (s *issueStore) SetIdle(ctx context.Context, issueID int64) error {
 	return nil
 }
 
+func (s *issueStore) ResetQueuedToIdle(ctx context.Context, issueID int64) error {
+	rowsAffected, err := s.queries.ResetIssueQueuedToIdle(ctx, issueID)
+	if err != nil {
+		return err
+	}
+	if rowsAffected == 0 {
+		return errors.New("issue was not in queued state")
+	}
+	return nil
+}
+
 func toIssueModel(row sqlc.Issue) (*model.Issue, error) {
 	var keywords []model.Keyword
 	if len(row.Keywords) > 0 {
