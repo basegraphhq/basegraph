@@ -44,10 +44,29 @@ var _ = Describe("Engagement Detector Mention Logic", func() {
 			Expect(result).To(Equal([]string{"alice"}))
 		})
 
-		It("handles email-like patterns correctly", func() {
-			// Should NOT match the part after @ in emails when there's no space
+		It("ignores email addresses", func() {
 			result := service.ExtractMentions("email me at test@example.com")
-			Expect(result).To(Equal([]string{"example"})) // Only gets the domain part after @
+			Expect(result).To(BeEmpty())
+		})
+
+		It("handles mixed emails and mentions", func() {
+			result := service.ExtractMentions("contact test@example.com or ask @alice")
+			Expect(result).To(Equal([]string{"alice"}))
+		})
+
+		It("handles mentions after punctuation", func() {
+			result := service.ExtractMentions("Hey (@alice) can you help?")
+			Expect(result).To(Equal([]string{"alice"}))
+		})
+
+		It("handles mention at start of text", func() {
+			result := service.ExtractMentions("@alice please help")
+			Expect(result).To(Equal([]string{"alice"}))
+		})
+
+		It("handles multiple emails without mentions", func() {
+			result := service.ExtractMentions("Contact admin@company.com or support@company.com")
+			Expect(result).To(BeEmpty())
 		})
 	})
 
@@ -82,6 +101,15 @@ var _ = Describe("Engagement Detector Mention Logic", func() {
 				false),
 			Entry("partial match should not count - directed at others",
 				"@relay-bot-admin can you help?",
+				true),
+			Entry("email address only - not directed at others",
+				"Contact me at test@example.com for details",
+				false),
+			Entry("email with mention of relay - not directed at others",
+				"Email test@example.com or ask @relay-bot",
+				false),
+			Entry("email with mention of others - directed at others",
+				"Email test@example.com or ask @alice",
 				true),
 		)
 	})

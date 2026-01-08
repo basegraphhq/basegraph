@@ -14,7 +14,10 @@ import (
 	"basegraph.app/relay/internal/store"
 )
 
-var mentionPattern = regexp.MustCompile(`@([a-zA-Z0-9_-]+)`)
+// mentionPattern matches @username mentions but not email addresses.
+// It requires @ to be at the start of text or preceded by a non-alphanumeric character.
+// Group 1 captures the preceding character (or empty at start), Group 2 captures the username.
+var mentionPattern = regexp.MustCompile(`(?:^|[^a-zA-Z0-9])@([a-zA-Z0-9_-]+)`)
 
 // extractMentions returns all @mentioned usernames from text (lowercase, deduplicated).
 func extractMentions(text string) []string {
