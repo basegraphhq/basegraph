@@ -99,8 +99,10 @@ async function handlePageAuth(request: NextRequest) {
 	}
 
 	// Check organization status
-	const validateData = await validateSession(sessionId);
-	if (!validateData) {
+	const result = await validateSession(sessionId);
+
+	if (result.status === ValidationStatus.Invalid) {
+		// Session truly invalid - clear cookie and redirect to login
 		const res = pathname.startsWith("/dashboard")
 			? NextResponse.redirect(new URL("/", request.url))
 			: NextResponse.next();
@@ -108,7 +110,15 @@ async function handlePageAuth(request: NextRequest) {
 		return res;
 	}
 
-	const hasOrganization = validateData.has_organization;
+	if (result.status === ValidationStatus.Error) {
+		// Transient error - show error page without logging user out
+		return new NextResponse("Service temporarily unavailable", {
+			status: 503,
+			headers: { "Content-Type": "text/plain" },
+		});
+	}
+
+	const hasOrganization = result.data.has_organization;
 	let response: NextResponse | undefined;
 
 	// Redirect authenticated users from root

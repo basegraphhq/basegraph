@@ -1,6 +1,6 @@
 import { cookies } from "next/headers";
 import { type NextRequest, NextResponse } from "next/server";
-import { validateSession } from "@/lib/auth";
+import { ValidationStatus, validateSession } from "@/lib/auth";
 import { RELAY_API_URL } from "@/lib/config";
 
 const STATE_COOKIE = "relay_oauth_state";
@@ -75,9 +75,11 @@ export async function GET(request: NextRequest) {
 			path: "/",
 		});
 
-		const validateData = await validateSession(data.session_id);
+		const result = await validateSession(data.session_id);
+		// Default to dashboard - if validation fails, middleware will handle redirect
 		const redirectPath =
-			validateData?.has_organization === false
+			result.status === ValidationStatus.Valid &&
+			result.data.has_organization === false
 				? "/dashboard/onboarding"
 				: "/dashboard";
 
