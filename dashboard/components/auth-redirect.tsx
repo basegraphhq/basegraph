@@ -10,7 +10,10 @@ export function AuthRedirect() {
 
 	useEffect(() => {
 		if (!isPending && session) {
-			router.push("/dashboard");
+			const target = session.has_organization
+				? "/dashboard"
+				: "/dashboard/onboarding";
+			router.push(target);
 		}
 	}, [isPending, session, router]);
 
