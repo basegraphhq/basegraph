@@ -210,4 +210,6 @@ playwright-report/
 playwright/.cache/
 
 opencode/
+read-only/
 .gocache/
+

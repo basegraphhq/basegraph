@@ -6,12 +6,48 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strings"
 
 	"basegraph.app/relay/internal/model"
 	tracker "basegraph.app/relay/internal/service/issue_tracker"
 	"basegraph.app/relay/internal/store"
 )
+
+var mentionPattern = regexp.MustCompile(`@([a-zA-Z0-9_-]+)`)
+
+// extractMentions returns all @mentioned usernames from text (lowercase, deduplicated).
+func extractMentions(text string) []string {
+	matches := mentionPattern.FindAllStringSubmatch(text, -1)
+	seen := make(map[string]struct{})
+	var result []string
+	for _, match := range matches {
+		if len(match) > 1 {
+			username := strings.ToLower(match[1])
+			if _, ok := seen[username]; !ok {
+				seen[username] = struct{}{}
+				result = append(result, username)
+			}
+		}
+	}
+	return result
+}
+
+// isCommentDirectedAtOthers returns true if the comment has @mentions but none are the relay user.
+// Used to avoid engaging when someone in the thread is asking a question to another human.
+func isCommentDirectedAtOthers(commentBody, relayUsername string) bool {
+	mentions := extractMentions(commentBody)
+	if len(mentions) == 0 {
+		return false // No mentions = not directed at others
+	}
+	relayLower := strings.ToLower(relayUsername)
+	for _, mention := range mentions {
+		if mention == relayLower {
+			return false // Relay is mentioned
+		}
+	}
+	return true // Has mentions but none are Relay
+}
 
 type EngagementResult struct {
 	ShouldEngage bool
@@ -71,7 +107,7 @@ func (d *engagementDetector) ShouldEngage(ctx context.Context, integrationID int
 	// For reply detection, we need to fetch discussions
 	var discussions []model.Discussion
 	if req.DiscussionID != "" {
-		isReply, fetchedDiscussions, err := d.checkReplyWithDiscussions(ctx, integrationID, sa.UserID, req)
+		isReply, fetchedDiscussions, err := d.checkReplyWithDiscussions(ctx, integrationID, sa.UserID, sa.Username, req)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to check reply detection, falling back to @mention only",
 				"error", err,
@@ -110,6 +146,7 @@ func (d *engagementDetector) checkReplyWithDiscussions(
 	ctx context.Context,
 	integrationID int64,
 	serviceAccountUserID int64,
+	serviceAccountUsername string,
 	req EngagementRequest,
 ) (bool, []model.Discussion, error) {
 	discussions, err := d.fetchDiscussions(ctx, integrationID, req)
@@ -119,16 +156,30 @@ func (d *engagementDetector) checkReplyWithDiscussions(
 
 	// Check if relay user has commented in the target thread
 	expectedAuthor := fmt.Sprintf("id:%d", serviceAccountUserID)
+	relayInThread := false
 	for _, disc := range discussions {
 		if disc.ThreadID == nil || *disc.ThreadID != req.DiscussionID {
 			continue
 		}
 		if disc.Author == expectedAuthor {
-			return true, discussions, nil
+			relayInThread = true
+			break
 		}
 	}
 
-	return false, discussions, nil
+	if !relayInThread {
+		return false, discussions, nil
+	}
+
+	// Check if comment is directed at someone else (has @mentions but not @relay)
+	if isCommentDirectedAtOthers(req.CommentBody, serviceAccountUsername) {
+		slog.DebugContext(ctx, "skipping engagement: comment directed at others",
+			"discussion_id", req.DiscussionID,
+		)
+		return false, discussions, nil
+	}
+
+	return true, discussions, nil
 }
 
 func (d *engagementDetector) fetchDiscussions(
