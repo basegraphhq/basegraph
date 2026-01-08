@@ -1,6 +1,6 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
-import { SESSION_COOKIE, validateSession } from "@/lib/auth";
+import { SESSION_COOKIE, ValidationStatus, validateSession } from "@/lib/auth";
 
 const ONBOARDING_COOKIE = "relay_onboarding_complete";
 
@@ -32,11 +32,11 @@ async function handleApiAuth(request: NextRequest) {
 	// Validate session once (not in every route!)
 	const result = await validateSession(sessionId);
 
-	if (result.status === "invalid") {
+	if (result.status === ValidationStatus.Invalid) {
 		return NextResponse.json({ error: "Session invalid" }, { status: 401 });
 	}
 
-	if (result.status === "error") {
+	if (result.status === ValidationStatus.Error) {
 		return NextResponse.json(
 			{ error: "Service temporarily unavailable" },
 			{ status: 503 },
@@ -108,12 +108,12 @@ async function handlePageAuth(request: NextRequest) {
 	if (!hasOrgCookie) {
 		const result = await validateSession(sessionId);
 
-		if (result.status === "invalid") {
+		if (result.status === ValidationStatus.Invalid) {
 			// Session truly invalid - redirect to login
 			return NextResponse.redirect(new URL("/", request.url));
 		}
 
-		if (result.status === "error") {
+		if (result.status === ValidationStatus.Error) {
 			// Transient error - show error page without logging user out
 			return new NextResponse("Service temporarily unavailable", {
 				status: 503,

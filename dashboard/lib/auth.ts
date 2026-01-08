@@ -54,10 +54,16 @@ export type ValidateResponse = {
 	workspace_id?: string;
 };
 
+export enum ValidationStatus {
+	Valid = "valid", // Session is good, proceed
+	Invalid = "invalid", // 401 - session truly invalid, clear cookie
+	Error = "error", // 5xx, network issues - transient, don't clear cookie
+}
+
 export type ValidationResult =
-	| { status: "valid"; data: ValidateResponse }
-	| { status: "invalid" } // 401/403 - session is truly invalid, clear cookie
-	| { status: "error" }; // 5xx, network issues - transient, don't clear cookie
+	| { status: ValidationStatus.Valid; data: ValidateResponse }
+	| { status: ValidationStatus.Invalid }
+	| { status: ValidationStatus.Error };
 
 /**
  * Server-side session validation (used by middleware)
@@ -81,19 +87,19 @@ export async function validateSession(
 
 		if (res.ok) {
 			const data: ValidateResponse = await res.json();
-			return { status: "valid", data };
+			return { status: ValidationStatus.Valid, data };
 		}
 
 		// 401 = session truly invalid, clear cookie
 		// Everything else (5xx, 403, 429, etc.) = transient, keep session
 		if (res.status === 401) {
-			return { status: "invalid" };
+			return { status: ValidationStatus.Invalid };
 		}
 
-		return { status: "error" };
+		return { status: ValidationStatus.Error };
 	} catch (error) {
 		console.error("Session validation network error:", error);
-		return { status: "error" };
+		return { status: ValidationStatus.Error };
 	}
 }
 
