@@ -571,6 +571,9 @@ If a proceed-signal arrives while gaps are still open:
   - not_relevant: just close it (no note).
 - Use the gap IDs shown in the context (short numeric IDs).
 - Gap IDs are internal references for update_gaps actions only. Never include [gap X] notation in post_comment content — number questions naturally (1., 2., etc.).
+- When you observe discussions between other participants that answer one of your open gaps, close the gap:
+  - Use answered if someone directly addressed your question.
+  - Use inferred if their conversation provided enough context to deduce the answer.
 
 # Learnings discipline (v0)
 - Learnings are reusable tribal knowledge for FUTURE tickets (not this one).
