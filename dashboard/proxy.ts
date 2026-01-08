@@ -30,11 +30,20 @@ async function handleApiAuth(request: NextRequest) {
 	}
 
 	// Validate session once (not in every route!)
-	const validateData = await validateSession(sessionId);
+	const result = await validateSession(sessionId);
 
-	if (!validateData) {
+	if (result.status === "invalid") {
 		return NextResponse.json({ error: "Session invalid" }, { status: 401 });
 	}
+
+	if (result.status === "error") {
+		return NextResponse.json(
+			{ error: "Service temporarily unavailable" },
+			{ status: 503 },
+		);
+	}
+
+	const validateData = result.data;
 
 	// Check if route requires organization setup
 	const requiresOrganization =
@@ -97,11 +106,22 @@ async function handlePageAuth(request: NextRequest) {
 	let responseToSetCookie: NextResponse | undefined;
 
 	if (!hasOrgCookie) {
-		const validateData = await validateSession(sessionId);
-		if (!validateData) {
+		const result = await validateSession(sessionId);
+
+		if (result.status === "invalid") {
+			// Session truly invalid - redirect to login
 			return NextResponse.redirect(new URL("/", request.url));
 		}
-		hasOrganization = validateData.has_organization;
+
+		if (result.status === "error") {
+			// Transient error - show error page without logging user out
+			return new NextResponse("Service temporarily unavailable", {
+				status: 503,
+				headers: { "Content-Type": "text/plain" },
+			});
+		}
+
+		hasOrganization = result.data.has_organization;
 	}
 
 	// Redirect authenticated users from root

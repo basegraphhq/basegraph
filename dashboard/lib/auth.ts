@@ -54,13 +54,23 @@ export type ValidateResponse = {
 	workspace_id?: string;
 };
 
+export type ValidationResult =
+	| { status: "valid"; data: ValidateResponse }
+	| { status: "invalid" } // 401/403 - session is truly invalid, clear cookie
+	| { status: "error" }; // 5xx, network issues - transient, don't clear cookie
+
 /**
  * Server-side session validation (used by middleware)
  * Always uses cache: 'no-store' to prevent stale auth data
+ *
+ * Returns discriminated union to distinguish:
+ * - valid: session is good, proceed
+ * - invalid: session is truly bad (401/403), clear cookie
+ * - error: transient issue (5xx, network), don't clear cookie
  */
 export async function validateSession(
 	sessionId: string,
-): Promise<ValidateResponse | null> {
+): Promise<ValidationResult> {
 	try {
 		const res = await fetch(`${RELAY_API_URL}/auth/validate`, {
 			headers: {
@@ -69,14 +79,21 @@ export async function validateSession(
 			cache: "no-store", // Critical: Always fresh for auth!
 		});
 
-		if (!res.ok) {
-			return null;
+		if (res.ok) {
+			const data: ValidateResponse = await res.json();
+			return { status: "valid", data };
 		}
 
-		return await res.json();
+		// 401 = session truly invalid, clear cookie
+		// Everything else (5xx, 403, 429, etc.) = transient, keep session
+		if (res.status === 401) {
+			return { status: "invalid" };
+		}
+
+		return { status: "error" };
 	} catch (error) {
-		console.error("Error validating session:", error);
-		return null;
+		console.error("Session validation network error:", error);
+		return { status: "error" };
 	}
 }
 
