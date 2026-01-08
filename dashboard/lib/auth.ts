@@ -57,7 +57,7 @@ export type ValidateResponse = {
 
 export enum ValidationStatus {
 	Valid = "valid", // Session is good, proceed
-	Invalid = "invalid", // 401 - session truly invalid, clear cookie
+	Invalid = "invalid", // 400/401 - session truly invalid, clear cookie
 	Error = "error", // 5xx, network issues - transient, don't clear cookie
 }
 
@@ -72,7 +72,7 @@ export type ValidationResult =
  *
  * Returns discriminated union to distinguish:
  * - valid: session is good, proceed
- * - invalid: session is truly bad (401/403), clear cookie
+ * - invalid: session is truly bad (400/401), clear cookie
  * - error: transient issue (5xx, network), don't clear cookie
  */
 export async function validateSession(
