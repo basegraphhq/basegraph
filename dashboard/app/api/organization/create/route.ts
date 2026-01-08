@@ -41,17 +41,7 @@ export async function POST(req: Request) {
 		}
 
 		const orgData = await createOrgResponse.json();
-
-		const res = NextResponse.json(orgData);
-		res.cookies.set("relay_onboarding_complete", "true", {
-			httpOnly: true,
-			secure: process.env.NODE_ENV === "production",
-			sameSite: "lax",
-			maxAge: 60 * 60 * 24 * 365,
-			path: "/",
-		});
-
-		return res;
+		return NextResponse.json(orgData);
 	} catch (error) {
 		console.error("Error creating organization:", error);
 		return NextResponse.json(
