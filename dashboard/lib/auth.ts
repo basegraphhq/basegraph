@@ -90,9 +90,11 @@ export async function validateSession(
 			return { status: ValidationStatus.Valid, data };
 		}
 
-		// 401 = session truly invalid, clear cookie
+		// 400/401 = session truly invalid, clear cookie
+		// 400: malformed/tampered session ID (relay returns this on parse failure)
+		// 401: session not found or expired
 		// Everything else (5xx, 403, 429, etc.) = transient, keep session
-		if (res.status === 401) {
+		if (res.status === 400 || res.status === 401) {
 			return { status: ValidationStatus.Invalid };
 		}
 
