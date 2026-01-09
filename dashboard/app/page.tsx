@@ -46,9 +46,9 @@ export default function Home() {
 			/>
 
 			{/* Login Button */}
-			<div className="fixed-top-right-offset flex items-center gap-3">
+			{/* <div className="fixed-top-right-offset flex items-center gap-3">
 				<LoginButton />
-			</div>
+			</div> */}
 
 			{/* Theme Toggle */}
 			<ThemeToggle />
