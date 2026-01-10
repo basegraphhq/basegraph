@@ -72,6 +72,15 @@ func (g *GoExtractor) Extract(pkgstr string, dir string) (extract.ExtractNodesRe
 			return
 		}
 
+		// Skip packages with type errors (e.g., unresolved imports)
+		if len(pkg.Errors) > 0 {
+			slog.Warn("Skipping package with errors", "package", pkg.PkgPath, "errors", len(pkg.Errors))
+			for _, e := range pkg.Errors {
+				slog.Debug("Package error", "package", pkg.PkgPath, "error", e.Error())
+			}
+			return
+		}
+
 		slog.Info("Constructing implementors map", "package", pkg.PkgPath)
 
 		fi := satisfy.Finder{Result: make(map[satisfy.Constraint]bool)}
@@ -86,6 +95,11 @@ func (g *GoExtractor) Extract(pkgstr string, dir string) (extract.ExtractNodesRe
 	packages.Visit(pkgs, nil, func(pkg *packages.Package) {
 		// Process nodes of given package only.
 		if pkgstr != "" && !strings.HasPrefix(pkg.PkgPath, pkgstr) {
+			return
+		}
+
+		// Skip packages with type errors (e.g., unresolved imports)
+		if len(pkg.Errors) > 0 {
 			return
 		}
 
