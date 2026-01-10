@@ -76,13 +76,23 @@ type ExploreMetrics struct {
 	ContextWindowTokens   int            `json:"context_window_tokens"`   // Final context window size
 	TotalCompletionTokens int            `json:"total_completion_tokens"` // Sum of all completion tokens
 	ToolCalls             map[string]int `json:"tool_calls"`
-	Confidence            string         `json:"confidence"`
-	HitSoftLimit          bool           `json:"hit_soft_limit"`
-	HitHardLimit          bool           `json:"hit_hard_limit"`
-	HitIterLimit          bool           `json:"hit_iteration_limit"`
-	DoomLoopDetected      bool           `json:"doom_loop_detected"`
-	FinalReportLen        int            `json:"final_report_length"`
-	TerminationReason     string         `json:"termination_reason"`
+
+	// Codegraph effectiveness metrics
+	CodegraphOps            map[string]int `json:"codegraph_ops,omitempty"`
+	CodegraphCallsWithQName int            `json:"codegraph_calls_with_qname"`
+	CodegraphCallsWithName  int            `json:"codegraph_calls_with_name"`
+	CodegraphInvalidKind    int            `json:"codegraph_invalid_kind"`
+	CodegraphAmbiguous      int            `json:"codegraph_ambiguous"`
+	CodegraphTraceFound     int            `json:"codegraph_trace_found"`
+	CodegraphTraceNotFound  int            `json:"codegraph_trace_not_found"`
+
+	Confidence        string `json:"confidence"`
+	HitSoftLimit      bool   `json:"hit_soft_limit"`
+	HitHardLimit      bool   `json:"hit_hard_limit"`
+	HitIterLimit      bool   `json:"hit_iteration_limit"`
+	DoomLoopDetected  bool   `json:"doom_loop_detected"`
+	FinalReportLen    int    `json:"final_report_length"`
+	TerminationReason string `json:"termination_reason"`
 }
 
 // ExploreAgent is a sub-agent that explores the codebase.
@@ -131,6 +141,7 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string, thoroughness T
 		Thoroughness: string(thoroughness),
 		StartTime:    start,
 		ToolCalls:    make(map[string]int),
+		CodegraphOps: make(map[string]int),
 	}
 
 	// Enrich context with explorer component
@@ -322,6 +333,33 @@ Stop exploring. Start synthesizing.`,
 		// Track tool calls for metrics
 		for _, tc := range resp.ToolCalls {
 			metrics.ToolCalls[tc.Name]++
+			if tc.Name != "codegraph" {
+				continue
+			}
+
+			params, err := llm.ParseToolArguments[CodegraphParams](tc.Arguments)
+			if err != nil {
+				continue
+			}
+			op := strings.ToLower(strings.TrimSpace(params.Operation))
+			if op != "" {
+				metrics.CodegraphOps[op]++
+			}
+
+			switch op {
+			case "callers", "callees", "implementations", "usages":
+				if params.QName != "" {
+					metrics.CodegraphCallsWithQName++
+				} else if params.Name != "" {
+					metrics.CodegraphCallsWithName++
+				}
+			case "trace":
+				if params.FromQName != "" && params.ToQName != "" {
+					metrics.CodegraphCallsWithQName++
+				} else if params.FromName != "" || params.ToName != "" {
+					metrics.CodegraphCallsWithName++
+				}
+			}
 		}
 
 		// Check for doom loop (same tool called repeatedly with same args)
@@ -382,6 +420,28 @@ Stop exploring. Start synthesizing.`,
 			// Log tool result
 			debugLog.WriteString(fmt.Sprintf("[TOOL RESULT] %s\n", resp.ToolCalls[i].Name))
 			debugLog.WriteString(fmt.Sprintf("%s\n\n", res.result))
+
+			// Codegraph effectiveness signals (parse tool output)
+			if resp.ToolCalls[i].Name == "codegraph" {
+				if strings.Contains(res.result, "Error: invalid kind") {
+					metrics.CodegraphInvalidKind++
+				}
+				if strings.Contains(res.result, "Error: ambiguous symbol") {
+					metrics.CodegraphAmbiguous++
+				}
+
+				params, err := llm.ParseToolArguments[CodegraphParams](resp.ToolCalls[i].Arguments)
+				if err == nil {
+					op := strings.ToLower(strings.TrimSpace(params.Operation))
+					if op == "trace" {
+						if strings.HasPrefix(res.result, "Trace path") {
+							metrics.CodegraphTraceFound++
+						} else if strings.HasPrefix(res.result, "No call path found") {
+							metrics.CodegraphTraceNotFound++
+						}
+					}
+				}
+			}
 
 			messages = append(messages, llm.Message{
 				Role:       "tool",
@@ -530,93 +590,107 @@ func (e *ExploreAgent) writeMetricsLog(metrics ExploreMetrics) {
 }
 
 // systemPrompt returns the system prompt for the explore agent.
-// Claude Code-style tools: glob, grep, read, bash.
 func (e *ExploreAgent) systemPrompt() string {
-	return fmt.Sprintf(`You are a code exploration agent. Answer the question with evidence from this codebase.
+	return fmt.Sprintf(`You are a code exploration agent. Answer questions with evidence from this codebase.
 
-# Decision Framework
+# Your Tools
 
-Before EVERY tool call, answer: "What specific question does this answer?"
-If you cannot articulate the question → STOP and write your report.
+You have three types of tools:
 
-## Codebase Index
+**STRUCTURE tools** - Understand code relationships (Go/Python only)
+- codegraph: Call chains, interface implementations, type usages
 
-.basegraph/index.md contains a directory overview and file descriptions for this codebase.
+**TEXT tools** - Find patterns in files
+- glob: Find files by name/path
+- grep: Find string patterns in content
+- read: View code at specific locations
 
-## Tool Selection (use the first that applies)
+**HISTORY tools** - Track changes over time
+- bash: Git log, diff, blame
 
-| I need to...                          | Use    | Example                                    |
-|---------------------------------------|--------|--------------------------------------------|
-| Find files by name/path               | glob   | glob(pattern="**/*handler*.go")            |
-| Find where a string/pattern appears   | grep   | grep(pattern="func NewPlanner")            |
-| Read code at a known location         | read   | read(file_path="x.go", offset=50, limit=40)|
-| Understand git history                | bash   | git log --oneline -5 -- file.go            |
+# Decision Tree
 
-## Strategy: Narrow Fast, Read Small
+Ask yourself: "What am I looking for?"
 
-1. **Name search first** - If the question mentions a concept, glob for files with that name
-2. **Pattern search second** - grep for function/type definitions, not usages
-3. **Surgical reads** - Read 30-50 lines around grep hits, never full files
-4. **Stop at first sufficient evidence** - You don't need exhaustive proof
+→ "Who calls function X?" or "What implements interface Y?"
+  USE: codegraph (if Go/Python) — gives exact structural answers
 
-## Token Budget
+→ "How does A flow to B?" or "Trace the path from X to Y"
+  USE: codegraph(operation="trace", ...) — returns an actual call path if it exists
+  Example: codegraph(operation="trace", from_name="HandleWebhook", to_name="Plan", to_kind="method", max_depth=6)
 
-Every tool call costs tokens. Typical costs:
-- glob: 10 tokens/file path
-- grep: 50 tokens/match line
-- read: 30 tokens/line (100 lines = 3000 tokens)
+→ "Where does string/pattern appear?" or "What files contain X?"
+  USE: grep — text pattern matching
 
-Budget mindset: You have ~15-20 effective tool calls. Spend wisely.
+→ "What files exist matching a name?"
+  USE: glob — file discovery
 
-## Anti-Patterns (immediate red flags)
+→ "What does this code do?" (after finding location)
+  USE: read — view the actual code
 
-❌ Reading a full file "to understand context" - read the specific function
-❌ grep for common words (error, return, if) - too many matches
-❌ Multiple globs for same concept - combine patterns: "**/*{plan,schedule}*.go"
-❌ Reading same file twice - scroll your context, the data is already there
-❌ "Let me search for X to be thorough" - if you have the answer, stop
+→ "How did this change?" or "Who wrote this?"
+  USE: bash — git history
 
-## Tools Reference
+# Codegraph Workflow
 
-### glob(pattern, path?)
-Find files. Pattern supports ** (recursive), * (wildcard), {a,b} (alternatives).
-Returns: paths sorted by modification time (newest first).
+Supported kinds (strict): function, method, struct, interface, class.
 
-### grep(pattern, glob?, context?)
-Search contents. Pattern is regex. glob filters files. context adds surrounding lines.
-Returns: file:line matches with content.
+For structural questions in Go/Python:
+1. Prefer relationship ops with name — the tool resolves qname internally
+   Example: codegraph(operation="callers", name="Plan", kind="method", depth=2)
+2. Use resolve when you need the exact qname or to disambiguate
+   Example: codegraph(operation="resolve", name="Plan", kind="method")
+3. Use trace for flow questions (fast + graph-accurate)
+   Example: codegraph(operation="trace", from_name="HandleWebhook", to_name="Plan", to_kind="method", max_depth=6)
+4. Use read() only to confirm specific code locations
 
-### read(file_path, offset?, limit?)
-Read file. offset is 0-indexed line to start. limit is line count (default 200).
-Returns: numbered lines.
+# Strategy
 
-### bash(command)
-Git commands only: log, diff, blame, show. Also ls for directory structure.
-Blocked: cat, head, tail (use read tool instead).
+1. **Structure before text** — For Go/Python, codegraph gives precise answers; grep gives noisy matches
+2. **Narrow fast** — Start specific, broaden only if needed
+3. **Surgical reads** — Read 30-50 lines around the target, never full files
+4. **Stop at sufficient evidence** — You don't need exhaustive proof
 
-## Module Context
+# Anti-Patterns
+
+❌ grep for "who calls X" in Go/Python — codegraph gives exact answer
+❌ codegraph for .js/.ts/other files — unsupported, use grep
+❌ Manually constructing qnames — use codegraph(resolve) or pass name
+❌ Reading full files "for context" — read the specific function
+❌ Multiple searches for same thing — your context already has the data
+❌ "One more search to be thorough" — if you can answer, stop
+
+# Tools Reference
+
+glob(pattern, path?) — Find files. Supports **, *, {a,b}. Returns paths by recency.
+grep(pattern, glob?, context?) — Search contents. Regex pattern. Returns file:line matches.
+codegraph(operation, ...) — Query code graph. Operations: search, resolve, file_symbols, callers, callees, implementations, usages, trace.
+read(file_path, offset?, limit?) — Read file. Default 200 lines. Returns numbered lines.
+bash(command) — Git only: log, diff, blame, show, status. Also: ls.
+
+# Context
+
 Go module: %s
-Use this for understanding import paths and package structure.
+Codebase index: .basegraph/index.md
 
-## Output Format
+# Output
+
+When you have sufficient evidence, write:
 
 <report>
 ## Answer
-[1-2 sentence direct answer]
+[Direct 1-2 sentence answer]
 
 ## Evidence
-- file.go:42 - [what this shows]
-- file.go:87-95 - [what this shows]
+- file.go:42 — [what this shows]
+- file.go:87 — [what this shows]
 
 ## Key Code
-`+"```"+`go
-// file.go:42-50 - [description]
-[relevant snippet]
-`+"```"+`
+[Most relevant snippet with file:line]
 
 ## Confidence
-[high/medium/low] - [why]
+[high/medium/low] — [reasoning]
 </report>
 
-Stop exploring when you can write this report. More searching ≠ better answers.`, e.modulePath)
+Stop exploring when you can write this report.`, e.modulePath)
 }

@@ -30,6 +30,7 @@ type Client interface {
 	// Read operations (for explore agent)
 	GetCallers(ctx context.Context, qname string, depth int) ([]GraphNode, error)
 	GetCallees(ctx context.Context, qname string, depth int) ([]GraphNode, error)
+	FindCallPath(ctx context.Context, fromQName string, toQName string, maxDepth int) ([]GraphNode, error)
 	GetChildren(ctx context.Context, qname string) ([]GraphNode, error)
 	GetImplementations(ctx context.Context, qname string) ([]GraphNode, error)
 	GetMethods(ctx context.Context, qname string) ([]GraphNode, error)
@@ -420,7 +421,7 @@ func (c *client) GetCallers(ctx context.Context, qname string, depth int) ([]Gra
 		FOR v IN 1..@depth INBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["calls"] }
 			LIMIT 30
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
+			RETURN { qname: v.qname, name: v.name, kind: v.is_method ? "method" : v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversal(ctx, query, qname, depth)
@@ -435,17 +436,87 @@ func (c *client) GetCallees(ctx context.Context, qname string, depth int) ([]Gra
 		FOR v IN 1..@depth OUTBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["calls"] }
 			LIMIT 30
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
+			RETURN { qname: v.qname, name: v.name, kind: v.is_method ? "method" : v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversal(ctx, query, qname, depth)
+}
+
+func (c *client) FindCallPath(ctx context.Context, fromQName string, toQName string, maxDepth int) ([]GraphNode, error) {
+	if c.db == nil {
+		return nil, fmt.Errorf("database not initialized")
+	}
+
+	if fromQName == "" || toQName == "" {
+		return nil, nil
+	}
+
+	depth := maxDepth
+	if depth <= 0 {
+		depth = 4
+	}
+
+	start := time.Now()
+
+	startVertex := fmt.Sprintf("functions/%s", makeKey(fromQName))
+	targetVertex := fmt.Sprintf("functions/%s", makeKey(toQName))
+
+	query := `
+		FOR v, e, p IN 0..@depth OUTBOUND @start GRAPH "codegraph"
+			OPTIONS { edgeCollections: ["calls"], bfs: true, uniqueVertices: "path" }
+			FILTER v._id == @target
+			LIMIT 1
+			RETURN p.vertices[* RETURN {
+				qname: CURRENT.qname,
+				name: CURRENT.name,
+				kind: CURRENT.is_method ? "method" : CURRENT.kind,
+				filepath: CURRENT.filepath,
+				pos: CURRENT.pos,
+				signature: CURRENT.signature
+			}]
+	`
+
+	cursor, err := c.db.Query(ctx, query, &arangodb.QueryOptions{BindVars: map[string]any{
+		"start":  startVertex,
+		"target": targetVertex,
+		"depth":  depth,
+	}})
+	if err != nil {
+		return nil, fmt.Errorf("execute query: %w", err)
+	}
+	defer cursor.Close()
+
+	var path []GraphNode
+	if cursor.HasMore() {
+		_, err := cursor.ReadDocument(ctx, &path)
+		if err != nil {
+			return nil, fmt.Errorf("read document: %w", err)
+		}
+	}
+
+	results := make([]GraphNode, 0, len(path))
+	for _, node := range path {
+		if node.QName == "" {
+			continue
+		}
+		results = append(results, node)
+	}
+
+	slog.DebugContext(ctx, "arangodb call path query completed",
+		"from", fromQName,
+		"to", toQName,
+		"depth", depth,
+		"nodes", len(results),
+		"duration_ms", time.Since(start).Milliseconds())
+
+	return results, nil
 }
 
 func (c *client) GetChildren(ctx context.Context, qname string) ([]GraphNode, error) {
 	query := `
 		FOR v IN 1..1 INBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["parent"] }
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
+			RETURN { qname: v.qname, name: v.name, kind: v.is_method ? "method" : v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversalFrom(ctx, query, "types", qname, 1)
@@ -455,7 +526,7 @@ func (c *client) GetImplementations(ctx context.Context, qname string) ([]GraphN
 	query := `
 		FOR v IN 1..1 INBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["implements"] }
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
+			RETURN { qname: v.qname, name: v.name, kind: v.is_method ? "method" : v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversalFrom(ctx, query, "types", qname, 1)
@@ -465,7 +536,7 @@ func (c *client) GetMethods(ctx context.Context, qname string) ([]GraphNode, err
 	query := `
 		FOR v IN 1..1 INBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["parent"] }
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
+			RETURN { qname: v.qname, name: v.name, kind: v.is_method ? "method" : v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversalFrom(ctx, query, "types", qname, 1)
@@ -475,7 +546,7 @@ func (c *client) GetUsages(ctx context.Context, qname string) ([]GraphNode, erro
 	query := `
 		FOR v IN 1..1 INBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["param_of", "returns"] }
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
+			RETURN { qname: v.qname, name: v.name, kind: v.is_method ? "method" : v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversalFrom(ctx, query, "types", qname, 1)
@@ -485,7 +556,7 @@ func (c *client) GetInheritors(ctx context.Context, qname string) ([]GraphNode, 
 	query := `
 		FOR v IN 1..1 INBOUND @start GRAPH "codegraph"
 			OPTIONS { edgeCollections: ["inherits"] }
-			RETURN { qname: v.qname, name: v.name, kind: v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
+			RETURN { qname: v.qname, name: v.name, kind: v.is_method ? "method" : v.kind, filepath: v.filepath, pos: v.pos, signature: v.signature }
 	`
 
 	return c.executeTraversalFrom(ctx, query, "types", qname, 1)
@@ -594,7 +665,7 @@ func (c *client) TraverseFrom(ctx context.Context, qnames []string, opts Travers
 	query := fmt.Sprintf(`
 		FOR startV IN @starts
 			FOR v, e IN 1..@depth %s startV GRAPH "codegraph" %s
-				RETURN { vertex: { qname: v.qname, name: v.name, kind: v.kind }, edge: e }
+				RETURN { vertex: { qname: v.qname, name: v.name, kind: v.is_method ? "method" : v.kind }, edge: e }
 	`, direction, edgeFilter)
 
 	cursor, err := c.db.Query(ctx, query, &arangodb.QueryOptions{

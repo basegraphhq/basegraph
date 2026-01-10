@@ -1,4 +1,4 @@
-.PHONY: build build-server build-worker run-server run-worker run-worker-testdata test test-unit test-bdd test-integration clean sqlc-generate migrate-up migrate-down format lint install-tools reindex-codegraph reset reset-redis reset-db tidy
+.PHONY: build build-server build-worker build-explore run-server run-worker run-worker-testdata run-explore test test-unit test-bdd test-integration clean sqlc-generate migrate-up migrate-down format lint install-tools reindex-codegraph reset reset-redis reset-db tidy create-fixture
 
 PKGS := $(shell go list ./... | grep -v '/testdata/')
 
@@ -26,6 +26,20 @@ run-worker-testdata:
 	REPO_ROOT=$(CURDIR)/testdata/fixtures/relay-without-ack \
 	MODULE_PATH=basegraph.app/relay-without-ack \
 	go run ./cmd/worker
+
+# Explore CLI - interactive code exploration
+# Reads from .env file automatically
+build-explore:
+	go build -o bin/explore ./cmd/explore
+
+# Usage: make run-explore
+# Loads .env file automatically. Required vars:
+#   REPO_ROOT, MODULE_PATH, ANTHROPIC_API_KEY (or OPENAI_API_KEY)
+# Optional:
+#   ARANGO_URL, ARANGO_USERNAME, ARANGO_PASSWORD, ARANGO_DATABASE (codegraph)
+#   BRAIN_DEBUG_DIR (debug logs), THOROUGHNESS (quick/medium/thorough)
+run-explore:
+	go run ./cmd/explore
 
 # Testing
 test: test-unit test-bdd test-integration
@@ -84,6 +98,15 @@ dev-down:
 # Codegraph operations
 reindex-codegraph:
 	@./scripts/reindex-codegraph.sh
+
+# Fixture operations
+# Usage: NAME=my-fixture make create-fixture
+NAME ?=
+create-fixture:
+ifndef NAME
+	$(error NAME is not set. Usage: NAME=my-fixture make create-fixture)
+endif
+	@./scripts/create-fixture.sh $(NAME)
 
 # Testing reset operations
 reset:

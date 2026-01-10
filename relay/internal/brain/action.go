@@ -55,7 +55,6 @@ type CodeFindingInput struct {
 type CodeSourceInput struct {
 	Location string `json:"location"`
 	Snippet  string `json:"snippet"`
-	QName    string `json:"qname,omitempty"`
 	Kind     string `json:"kind,omitempty"`
 }
 

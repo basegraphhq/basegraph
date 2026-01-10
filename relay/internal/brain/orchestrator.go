@@ -23,6 +23,8 @@ import (
 
 var ErrIssueNotFound = errors.New("issue not found")
 
+const maxValidationRetries = 2 // Allow 2 retries after initial attempt (3 total)
+
 type EngagementInput struct {
 	IssueID         int64
 	EventLogID      int64
@@ -125,7 +127,7 @@ func NewOrchestrator(
 ) *Orchestrator {
 	debugDir := SetupDebugRunDir(cfg.DebugDir)
 
-	tools := NewExploreTools(cfg.RepoRoot)
+	tools := NewExploreTools(cfg.RepoRoot, arango)
 	explore := NewExploreAgent(agentClient, tools, cfg.ModulePath, debugDir)
 	planner := NewPlanner(agentClient, explore, debugDir)
 	ctxBuilder := NewContextBuilder(integrations, configs, learnings, gaps)
@@ -304,6 +306,8 @@ func (o *Orchestrator) HandleEngagement(ctx context.Context, input EngagementInp
 }
 
 // runPlannerCycle runs a single planner iteration: build context → plan → validate → execute.
+// If validation fails, the error is sent back to the Planner as a tool result, giving the model
+// a chance to fix the issue (up to maxValidationRetries attempts).
 func (o *Orchestrator) runPlannerCycle(ctx context.Context, issue *model.Issue, triggerThreadID string) error {
 	messages, err := o.contextBuilder.BuildPlannerMessages(ctx, *issue, triggerThreadID)
 	if err != nil {
@@ -312,23 +316,62 @@ func (o *Orchestrator) runPlannerCycle(ctx context.Context, issue *model.Issue, 
 
 	slog.InfoContext(ctx, "context built", "message_count", len(messages))
 
-	output, err := o.planner.Plan(ctx, messages)
-	if err != nil {
-		return NewRetryableError(fmt.Errorf("running planner: %w", err))
+	var output PlannerOutput
+	var validationErr error
+
+	for attempt := 0; attempt <= maxValidationRetries; attempt++ {
+		if attempt == 0 {
+			output, err = o.planner.Plan(ctx, messages)
+		} else {
+			// Inject validation error as tool result and let the model decide what to do
+			feedback := FormatValidationErrorForLLM(validationErr)
+			slog.WarnContext(ctx, "retrying planner with validation feedback",
+				"attempt", attempt,
+				"error", validationErr)
+
+			feedbackMessages := append(output.Messages, llm.Message{
+				Role:       "tool",
+				Content:    feedback,
+				ToolCallID: output.LastToolCallID,
+			})
+			output, err = o.planner.Plan(ctx, feedbackMessages)
+		}
+
+		if err != nil {
+			return NewRetryableError(fmt.Errorf("running planner: %w", err))
+		}
+
+		slog.InfoContext(ctx, "planner completed",
+			"action_count", len(output.Actions),
+			"attempt", attempt+1,
+			"reasoning", logger.Truncate(output.Reasoning, 200))
+
+		// Model may decide not to submit actions after seeing the error
+		if len(output.Actions) == 0 {
+			return nil
+		}
+
+		validationInput := SubmitActionsInput{
+			Actions:   output.Actions,
+			Reasoning: output.Reasoning,
+		}
+		validationErr = o.actionValidator.Validate(ctx, *issue, validationInput)
+
+		if validationErr == nil {
+			break // Validation passed
+		}
+
+		slog.WarnContext(ctx, "action validation failed",
+			"attempt", attempt+1,
+			"error", validationErr)
 	}
 
-	slog.InfoContext(ctx, "planner completed",
-		"action_count", len(output.Actions),
-		"reasoning", logger.Truncate(output.Reasoning, 200))
-
-	if len(output.Actions) == 0 {
-		return nil
-	}
-
-	validationInput := SubmitActionsInput(output)
-	if err := o.actionValidator.Validate(ctx, *issue, validationInput); err != nil {
-		slog.ErrorContext(ctx, "action validation failed", "error", err)
-		return NewFatalError(fmt.Errorf("validating actions: %w", err))
+	if validationErr != nil {
+		slog.ErrorContext(ctx, "validation failed after retries",
+			"attempts", maxValidationRetries+1,
+			"error", validationErr)
+		return NewFatalError(fmt.Errorf("validating actions after %d attempts: %w",
+			maxValidationRetries+1, validationErr))
 	}
 
 	tracker, ok := o.issueTrackers[issue.Provider]

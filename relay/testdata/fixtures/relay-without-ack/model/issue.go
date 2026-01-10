@@ -37,10 +37,9 @@ const (
 // CodeSource provides evidence grounding for a code finding.
 // These are the actual code locations that support the synthesis.
 type CodeSource struct {
-	Location string `json:"location"`        // e.g., "internal/billing/service.go:42"
-	Snippet  string `json:"snippet"`         // Actual code snippet
-	QName    string `json:"qname,omitempty"` // Qualified name for graph lookup
-	Kind     string `json:"kind,omitempty"`  // function, struct, interface, etc.
+	Location string `json:"location"`       // e.g., "internal/billing/service.go:42"
+	Snippet  string `json:"snippet"`        // Actual code snippet
+	Kind     string `json:"kind,omitempty"` // function, struct, interface, etc.
 }
 
 // CodeFinding represents the ExploreAgent's understanding of code context.

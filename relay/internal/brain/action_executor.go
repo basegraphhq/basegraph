@@ -121,7 +121,6 @@ func (e *actionExecutor) executeUpdateFindings(ctx context.Context, issue model.
 			sources[i] = model.CodeSource{
 				Location: s.Location,
 				Snippet:  s.Snippet,
-				QName:    s.QName,
 				Kind:     s.Kind,
 			}
 		}
