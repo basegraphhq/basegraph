@@ -302,3 +302,51 @@ func isValidGapCloseReason(r GapCloseReason) bool {
 	}
 	return false
 }
+
+// FormatValidationErrorForLLM converts a validation error into an actionable
+// message that helps the LLM understand and fix the issue.
+func FormatValidationErrorForLLM(err error) string {
+	var sb strings.Builder
+	sb.WriteString("Action validation failed. Fix the issues and call submit_actions again:\n\n")
+	sb.WriteString(err.Error())
+	sb.WriteString("\n\nHints:\n")
+
+	errStr := err.Error()
+
+	if strings.Contains(errStr, "gap not found") {
+		sb.WriteString("- Gap IDs must match existing gaps from 'Open Gaps' section\n")
+		sb.WriteString("- Use short numeric IDs shown in [gap N] format\n")
+	}
+	if strings.Contains(errStr, "content too short") || strings.Contains(errStr, "content too long") {
+		sb.WriteString("- Comment content must be 1-65000 characters\n")
+	}
+	if strings.Contains(errStr, "missing question") {
+		sb.WriteString("- Each gap must have a non-empty question field\n")
+	}
+	if strings.Contains(errStr, "invalid gap severity") {
+		sb.WriteString("- Valid severity values: blocking, high, medium, low\n")
+	}
+	if strings.Contains(errStr, "invalid gap respondent") {
+		sb.WriteString("- Valid respondent values: reporter, assignee\n")
+	}
+	if strings.Contains(errStr, "invalid gap close reason") {
+		sb.WriteString("- Valid close reasons: answered, inferred, not_relevant\n")
+	}
+	if strings.Contains(errStr, "gap close missing note") {
+		sb.WriteString("- Closing with 'answered' or 'inferred' requires a note\n")
+	}
+	if strings.Contains(errStr, "proceed signal") {
+		sb.WriteString("- ready_for_spec_generation requires a proceed_signal from the human\n")
+	}
+	if strings.Contains(errStr, "open gaps") || strings.Contains(errStr, "blocking gaps") {
+		sb.WriteString("- Close all open gaps before signaling ready_for_spec_generation\n")
+	}
+	if strings.Contains(errStr, "finding missing") {
+		sb.WriteString("- Each finding needs synthesis and at least one source with location\n")
+	}
+	if strings.Contains(errStr, "learning missing") || strings.Contains(errStr, "invalid learning type") {
+		sb.WriteString("- Learnings need content and valid type (domain_learnings or code_learnings)\n")
+	}
+
+	return sb.String()
+}

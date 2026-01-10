@@ -40,8 +40,10 @@ type ActionParam struct {
 // PlannerOutput contains the structured actions returned by Planner.
 // The Orchestrator executes these actions.
 type PlannerOutput struct {
-	Actions   []Action // Actions to execute (post_comment, update_gaps, etc.)
-	Reasoning string   // Brief explanation (for debugging/logging)
+	Actions        []Action      // Actions to execute (post_comment, update_gaps, etc.)
+	Reasoning      string        // Brief explanation (for debugging/logging)
+	Messages       []llm.Message // Conversation history (for validation feedback retry)
+	LastToolCallID string        // ID of submit_actions call (for injecting feedback)
 }
 
 // PlannerMetrics captures structured data about a planning session for eval.
@@ -214,9 +216,18 @@ func (p *Planner) Plan(ctx context.Context, messages []llm.Message) (PlannerOutp
 					"total_duration_ms", time.Since(start).Milliseconds(),
 					"reasoning", logger.Truncate(params.Reasoning, 200))
 
+				// Include assistant message in history for potential validation feedback
+				messagesWithResponse := append(messages, llm.Message{
+					Role:      "assistant",
+					Content:   resp.Content,
+					ToolCalls: resp.ToolCalls,
+				})
+
 				return PlannerOutput{
-					Actions:   actions,
-					Reasoning: params.Reasoning,
+					Actions:        actions,
+					Reasoning:      params.Reasoning,
+					Messages:       messagesWithResponse,
+					LastToolCallID: tc.ID,
 				}, nil
 			}
 		}
@@ -616,7 +627,7 @@ End your turn. Reasoning is for logs only.
 - reply_to_id: thread to reply to (omit for new thread)
 
 ## update_findings
-- add: [{synthesis, sources: [{location, snippet, kind?, qname?}]}]
+- add: [{synthesis, sources: [{location, snippet, kind?}]}]
 - remove: ["finding_id"]
 
 ## update_gaps
