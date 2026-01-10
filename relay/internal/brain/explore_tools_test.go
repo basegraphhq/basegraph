@@ -39,8 +39,8 @@ var _ = Describe("ExploreTools", func() {
 		Expect(os.WriteFile(filepath.Join(tempDir, "src", "util", "helper.go"), []byte("package util\n\nfunc Helper() string {\n\treturn \"help\"\n}\n"), 0o644)).To(Succeed())
 		Expect(os.WriteFile(filepath.Join(tempDir, "README.md"), []byte("# Test Project\n\nThis is a test.\n"), 0o644)).To(Succeed())
 
-		// Create tools for testing
-		tools = brain.NewExploreTools(tempDir)
+		// Create tools for testing (nil arango client since we're only testing file tools)
+		tools = brain.NewExploreTools(tempDir, nil)
 	})
 
 	AfterEach(func() {
@@ -438,10 +438,10 @@ var _ = Describe("ExploreTools", func() {
 	Describe("Unknown Tool", func() {
 		It("returns error for unknown tool", func() {
 			args, _ := json.Marshal(map[string]any{
-				"operation": "find",
+				"foo": "bar",
 			})
 
-			_, err := tools.Execute(ctx, "codegraph", string(args))
+			_, err := tools.Execute(ctx, "nonexistent_tool", string(args))
 
 			Expect(err).To(HaveOccurred())
 			Expect(err.Error()).To(ContainSubstring("unknown tool"))
