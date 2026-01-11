@@ -685,8 +685,8 @@ When you have sufficient evidence, write:
 - file.go:42 — [what this shows]
 - file.go:87 — [what this shows]
 
-## Key Code
-[Most relevant snippet with file:line]
+## Snippets
+[Most relevant snippets with file:line]
 
 ## Confidence
 [high/medium/low] — [reasoning]

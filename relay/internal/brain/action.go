@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"basegraph.app/relay/internal/model"
 )
@@ -127,6 +128,22 @@ const (
 	GapSeverityMedium   GapSeverity = "medium"
 	GapSeverityLow      GapSeverity = "low"
 )
+
+func (g *GapSeverity) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		*g = ""
+		return nil
+	}
+
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return fmt.Errorf("severity must be a string: %w", err)
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(s))
+	*g = GapSeverity(normalized)
+	return nil
+}
 
 type Respondent string
 
