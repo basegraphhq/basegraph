@@ -16,6 +16,15 @@ import (
 
 const maxDiscussions = 100
 
+// specStubInfo holds parsed spec metadata for context dump.
+// This is a lightweight representation to avoid injecting full spec into Planner context.
+type specStubInfo struct {
+	Path      string
+	UpdatedAt time.Time
+	SHA256    string
+	Summary   string // TL;DR or first N chars
+}
+
 // contextBuilder constructs the LLM message thread for Planner.
 // It fetches workspace-level learnings and formats discussions as a proper conversation.
 type contextBuilder struct {
@@ -23,6 +32,7 @@ type contextBuilder struct {
 	configs      store.IntegrationConfigStore
 	learnings    store.LearningStore
 	gaps         store.GapStore
+	specStore    store.SpecStore
 }
 
 // NewContextBuilder creates a ContextBuilder with required store dependencies.
@@ -31,12 +41,14 @@ func NewContextBuilder(
 	configs store.IntegrationConfigStore,
 	learnings store.LearningStore,
 	gaps store.GapStore,
+	specStore store.SpecStore,
 ) *contextBuilder {
 	return &contextBuilder{
 		integrations: integrations,
 		configs:      configs,
 		learnings:    learnings,
 		gaps:         gaps,
+		specStore:    specStore,
 	}
 }
 
@@ -68,6 +80,12 @@ func (b *contextBuilder) BuildPlannerMessages(ctx context.Context, issue model.I
 		return nil, err
 	}
 
+	// Fetch spec stub if spec exists (non-blocking: log error but don't fail)
+	var specStub *specStubInfo
+	if issue.Spec != nil && *issue.Spec != "" {
+		specStub = b.fetchSpecStub(ctx, *issue.Spec)
+	}
+
 	messages := make([]llm.Message, 0, 3+len(issue.Discussions))
 
 	// Message 1: System prompt with self-identity
@@ -76,10 +94,10 @@ func (b *contextBuilder) BuildPlannerMessages(ctx context.Context, issue model.I
 		Content: b.buildSystemPrompt(relayUsername),
 	})
 
-	// Message 2: Context dump (issue metadata, participants, learnings, gaps, findings)
+	// Message 2: Context dump (issue metadata, participants, learnings, gaps, findings, spec stub)
 	messages = append(messages, llm.Message{
 		Role:    "user",
-		Content: b.buildContextDump(issue, learnings, gaps, recentClosed, triggerThreadID),
+		Content: b.buildContextDump(issue, learnings, gaps, recentClosed, triggerThreadID, specStub),
 	})
 
 	// Messages 3+: Discussion history as conversation
@@ -151,6 +169,34 @@ func (b *contextBuilder) fetchRecentClosedGaps(ctx context.Context, issueID int6
 	return all, nil
 }
 
+// fetchSpecStub parses the SpecRef JSON and retrieves a summary for context dump.
+// Returns nil if spec doesn't exist or can't be read (non-fatal: Planner can use read_spec tool).
+func (b *contextBuilder) fetchSpecStub(ctx context.Context, specRefJSON string) *specStubInfo {
+	if b.specStore == nil {
+		return nil
+	}
+
+	var ref model.SpecRef
+	if err := json.Unmarshal([]byte(specRefJSON), &ref); err != nil {
+		return nil
+	}
+
+	content, meta, err := b.specStore.Read(ctx, ref)
+	if err != nil {
+		return nil
+	}
+
+	// Extract summary (TL;DR or first 500 chars)
+	summary := store.ExtractSpecSummary(content, 500)
+
+	return &specStubInfo{
+		Path:      ref.Path,
+		UpdatedAt: meta.UpdatedAt,
+		SHA256:    meta.SHA256,
+		Summary:   summary,
+	}
+}
+
 // buildSystemPrompt creates the system message with Relay's identity.
 func (b *contextBuilder) buildSystemPrompt(relayUsername string) string {
 	return fmt.Sprintf(`%s
@@ -160,8 +206,8 @@ func (b *contextBuilder) buildSystemPrompt(relayUsername string) string {
 Your comments appear as @%s. When you see messages from @%s in the discussion history, those are YOUR previous messages.`, plannerSystemPrompt, relayUsername, relayUsername)
 }
 
-// buildContextDump creates the context message with issue metadata, learnings, gaps, and findings.
-func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.Learning, openGaps []model.Gap, recentClosed []model.Gap, triggerThreadID string) string {
+// buildContextDump creates the context message with issue metadata, learnings, gaps, findings, and spec stub.
+func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.Learning, openGaps []model.Gap, recentClosed []model.Gap, triggerThreadID string, specStub *specStubInfo) string {
 	var sb strings.Builder
 
 	// Issue section
@@ -228,6 +274,21 @@ func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.L
 			sb.WriteString(f.Synthesis)
 			sb.WriteString("\n\n")
 		}
+	}
+
+	// Current spec section (stub only - full content via read_spec tool)
+	if specStub != nil {
+		sb.WriteString("# Current Spec\n\n")
+		sb.WriteString(fmt.Sprintf("- **Path:** `%s`\n", specStub.Path))
+		sb.WriteString(fmt.Sprintf("- **Last updated:** %s\n", specStub.UpdatedAt.UTC().Format(time.RFC3339)))
+		sb.WriteString(fmt.Sprintf("- **SHA256:** %s\n\n", specStub.SHA256[:16]+"..."))
+		sb.WriteString("### Summary (excerpt)\n\n")
+		sb.WriteString("> ")
+		// Indent summary lines for blockquote
+		summaryLines := strings.Split(specStub.Summary, "\n")
+		sb.WriteString(strings.Join(summaryLines, "\n> "))
+		sb.WriteString("\n\n")
+		sb.WriteString("Use `read_spec` tool for full content.\n\n")
 	}
 
 	// Reply context - tells planner which thread to reply to

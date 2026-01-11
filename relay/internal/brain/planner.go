@@ -13,6 +13,8 @@ import (
 
 	"basegraph.app/relay/common/llm"
 	"basegraph.app/relay/common/logger"
+	"basegraph.app/relay/internal/model"
+	"basegraph.app/relay/internal/store"
 )
 
 const (
@@ -77,23 +79,38 @@ type PlannerMetrics struct {
 // Planner gathers code context for issue scoping.
 // It spawns ExploreAgent sub-agents to explore the codebase, preserving its own context window.
 type Planner struct {
-	llm      llm.AgentClient
-	explore  *ExploreAgent
-	debugDir string // Directory for debug logs (empty = no logging)
+	llm       llm.AgentClient
+	explore   *ExploreAgent
+	specStore store.SpecStore
+	debugDir  string // Directory for debug logs (empty = no logging)
 }
 
 // NewPlanner creates a Planner with an ExploreAgent sub-agent.
-func NewPlanner(llmClient llm.AgentClient, explore *ExploreAgent, debugDir string) *Planner {
+func NewPlanner(llmClient llm.AgentClient, explore *ExploreAgent, specStore store.SpecStore, debugDir string) *Planner {
 	return &Planner{
-		llm:      llmClient,
-		explore:  explore,
-		debugDir: debugDir,
+		llm:       llmClient,
+		explore:   explore,
+		specStore: specStore,
+		debugDir:  debugDir,
 	}
+}
+
+// PlanContext provides additional context to the planning process.
+type PlanContext struct {
+	Messages    []llm.Message
+	SpecRefJSON string // JSON-serialized SpecRef from issues.spec, empty if no spec exists
+}
+
+// ReadSpecParams defines the schema for the read_spec tool.
+type ReadSpecParams struct {
+	Mode     string `json:"mode" jsonschema:"required,enum=full,enum=summary,default=summary,description=Whether to return the full spec or a summary with TOC and excerpt."`
+	MaxChars int    `json:"max_chars" jsonschema:"required,default=30000,description=Maximum characters to return (for full mode). Use 0 for default."`
 }
 
 // Plan runs the reasoning loop with pre-built messages from ContextBuilder.
 // Returns structured actions for Orchestrator to execute.
-func (p *Planner) Plan(ctx context.Context, messages []llm.Message) (PlannerOutput, error) {
+func (p *Planner) Plan(ctx context.Context, planCtx PlanContext) (PlannerOutput, error) {
+	messages := planCtx.Messages
 	start := time.Now()
 
 	// Enrich context with planner component
@@ -267,7 +284,7 @@ func (p *Planner) Plan(ctx context.Context, messages []llm.Message) (PlannerOutp
 			}
 		}
 
-		results := p.executeExploresParallel(ctx, resp.ToolCalls)
+		results := p.executeToolsParallel(ctx, resp.ToolCalls, planCtx.SpecRefJSON)
 
 		for _, r := range results {
 			// Log tool result (truncated for readability)
@@ -377,80 +394,144 @@ func (p *Planner) collectActionMetrics(actions []Action, metrics *PlannerMetrics
 	}
 }
 
-type exploreResult struct {
+type plannerToolResult struct {
 	callID string
 	report string
 }
 
-// executeExploresParallel runs multiple explore calls concurrently with bounded parallelism.
-func (p *Planner) executeExploresParallel(ctx context.Context, toolCalls []llm.ToolCall) []exploreResult {
-	results := make([]exploreResult, len(toolCalls))
+// executeToolsParallel runs multiple tool calls concurrently with bounded parallelism.
+func (p *Planner) executeToolsParallel(ctx context.Context, toolCalls []llm.ToolCall, specRefJSON string) []plannerToolResult {
+	results := make([]plannerToolResult, len(toolCalls))
 	var wg sync.WaitGroup
 
 	// Semaphore to limit concurrent explore agents
 	sem := make(chan struct{}, maxParallelExplorers)
 
 	for i, tc := range toolCalls {
-		if tc.Name != "explore" {
-			results[i] = exploreResult{
+		switch tc.Name {
+		case "explore":
+			wg.Add(1)
+			go func(idx int, call llm.ToolCall) {
+				defer wg.Done()
+
+				// Acquire semaphore slot
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				params, err := llm.ParseToolArguments[ExploreParams](call.Arguments)
+				if err != nil {
+					results[idx] = plannerToolResult{
+						callID: call.ID,
+						report: fmt.Sprintf("Error parsing arguments: %s", err),
+					}
+					return
+				}
+
+				exploreStart := time.Now()
+				thoroughness := Thoroughness(params.Thoroughness)
+				if thoroughness == "" {
+					thoroughness = ThoughnessMedium
+				}
+
+				slog.InfoContext(ctx, "planner spawning explore agent",
+					"query", logger.Truncate(params.Query, 100),
+					"thoroughness", thoroughness,
+					"slot", idx+1,
+					"total", len(toolCalls))
+
+				report, err := p.explore.Explore(ctx, params.Query, thoroughness)
+				if err != nil {
+					slog.WarnContext(ctx, "explore agent failed",
+						"error", err,
+						"query", logger.Truncate(params.Query, 100),
+						"duration_ms", time.Since(exploreStart).Milliseconds())
+					report = fmt.Sprintf("Explore error: %s", err)
+				} else {
+					slog.DebugContext(ctx, "explore agent completed",
+						"query", logger.Truncate(params.Query, 100),
+						"duration_ms", time.Since(exploreStart).Milliseconds(),
+						"report_length", len(report))
+				}
+
+				results[idx] = plannerToolResult{
+					callID: call.ID,
+					report: report,
+				}
+			}(i, tc)
+
+		case "read_spec":
+			// read_spec is fast, execute synchronously
+			results[i] = plannerToolResult{
+				callID: tc.ID,
+				report: p.executeReadSpec(ctx, tc.Arguments, specRefJSON),
+			}
+
+		default:
+			results[i] = plannerToolResult{
 				callID: tc.ID,
 				report: fmt.Sprintf("Unknown tool: %s", tc.Name),
 			}
-			continue
 		}
-
-		wg.Add(1)
-		go func(idx int, call llm.ToolCall) {
-			defer wg.Done()
-
-			// Acquire semaphore slot
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			params, err := llm.ParseToolArguments[ExploreParams](call.Arguments)
-			if err != nil {
-				results[idx] = exploreResult{
-					callID: call.ID,
-					report: fmt.Sprintf("Error parsing arguments: %s", err),
-				}
-				return
-			}
-
-			exploreStart := time.Now()
-			thoroughness := Thoroughness(params.Thoroughness)
-			if thoroughness == "" {
-				thoroughness = ThoughnessMedium
-			}
-
-			slog.InfoContext(ctx, "planner spawning explore agent",
-				"query", logger.Truncate(params.Query, 100),
-				"thoroughness", thoroughness,
-				"slot", idx+1,
-				"total", len(toolCalls))
-
-			report, err := p.explore.Explore(ctx, params.Query, thoroughness)
-			if err != nil {
-				slog.WarnContext(ctx, "explore agent failed",
-					"error", err,
-					"query", logger.Truncate(params.Query, 100),
-					"duration_ms", time.Since(exploreStart).Milliseconds())
-				report = fmt.Sprintf("Explore error: %s", err)
-			} else {
-				slog.DebugContext(ctx, "explore agent completed",
-					"query", logger.Truncate(params.Query, 100),
-					"duration_ms", time.Since(exploreStart).Milliseconds(),
-					"report_length", len(report))
-			}
-
-			results[idx] = exploreResult{
-				callID: call.ID,
-				report: report,
-			}
-		}(i, tc)
 	}
 
 	wg.Wait()
 	return results
+}
+
+// executeReadSpec reads the spec for the current issue.
+func (p *Planner) executeReadSpec(ctx context.Context, argsJSON, specRefJSON string) string {
+	if specRefJSON == "" {
+		return "No spec exists for this issue."
+	}
+
+	params, err := llm.ParseToolArguments[ReadSpecParams](argsJSON)
+	if err != nil {
+		return fmt.Sprintf("Error parsing read_spec arguments: %s", err)
+	}
+
+	// Parse spec reference
+	var ref model.SpecRef
+	if err := json.Unmarshal([]byte(specRefJSON), &ref); err != nil {
+		return fmt.Sprintf("Error parsing spec reference: %s", err)
+	}
+
+	// Read from store
+	content, meta, err := p.specStore.Read(ctx, ref)
+	if err != nil {
+		if err == store.ErrSpecNotFound {
+			return "No spec exists for this issue."
+		}
+		return fmt.Sprintf("Error reading spec: %s", err)
+	}
+
+	maxChars := params.MaxChars
+	if maxChars <= 0 {
+		maxChars = 30000
+	}
+
+	var result strings.Builder
+	result.WriteString("## Spec Metadata\n\n")
+	result.WriteString(fmt.Sprintf("- **Path:** %s\n", ref.Path))
+	result.WriteString(fmt.Sprintf("- **Last updated:** %s\n", meta.UpdatedAt.UTC().Format(time.RFC3339)))
+	result.WriteString(fmt.Sprintf("- **SHA256:** %s\n\n", meta.SHA256))
+
+	if params.Mode == "full" {
+		result.WriteString("## Full Content\n\n")
+		if len(content) > maxChars {
+			result.WriteString(content[:maxChars])
+			result.WriteString("\n\n... (truncated, spec exceeds max_chars limit)")
+		} else {
+			result.WriteString(content)
+		}
+	} else {
+		// summary mode (default)
+		result.WriteString("## Summary\n\n")
+		summary := store.ExtractSpecSummary(content, 2000)
+		result.WriteString(summary)
+		result.WriteString("\n\n*Use `read_spec` with mode='full' for complete content.*")
+	}
+
+	return result.String()
 }
 
 func (p *Planner) tools() []llm.Tool {
@@ -483,6 +564,22 @@ WHEN NOT TO EXPLORE:
 
 RETURNS: Prose report with file:line references and confidence rating (high/medium/low).`,
 			Parameters: llm.GenerateSchemaFrom(ExploreParams{}),
+		},
+		{
+			Name: "read_spec",
+			Description: `Read the current spec for this issue.
+
+Use this tool when:
+- You need to review the existing spec before proposing updates
+- A follow-up discussion references the spec and you need context
+- You want to check what's already been decided
+
+MODE OPTIONS:
+* summary: Returns metadata + TL;DR excerpt (default, keeps context lean)
+* full: Returns the complete spec content (use when you need full details)
+
+RETURNS: Spec metadata (path, updated_at, sha256) and content based on mode.`,
+			Parameters: llm.GenerateSchemaFrom(ReadSpecParams{}),
 		},
 		{
 			Name:        "submit_actions",
@@ -529,15 +626,23 @@ Prefer human intent first. Use code selectively when it prevents dumb questions,
 # Operating phases (you may loop, but keep it tight)
 Guideline: aim for 1 round of questions; 2 rounds is normal; avoid a 3rd unless something truly new/important appears.
 
-Phase 1 — Intent (human-first):
-- If the ticket is ambiguous, ask the reporter first.
-- Your goal is to be able to state: outcome, success criteria, and key constraints.
-- Do not go deep into code until you have enough intent to know what to verify (a quick existence check is OK if it prevents dumb questions).
+Phase 0 — Quick recon (always):
+- BEFORE asking questions, do a quick explore to understand what exists today.
+- For any non-trivial ticket, call explore 1-2 times with quick/medium thoroughness.
+- Look for: existing implementations, related patterns, data models, logging/observability that touches this area.
+- This prevents dumb questions like "what do you mean by X?" when the codebase already defines X.
+- If learnings/findings already cover this, skip explore.
+
+Phase 1 — Intent (human-first, but grounded):
+- Now that you know what exists, ask only what the code didn't answer.
+- Your goal is to state: outcome, success criteria, and key constraints.
+- Lead with what you found: "I see tokens are logged per-call in AgentResponse. Do you want this aggregated per-issue, or is a log query sufficient?"
+- This shows competence and earns trust. Generic questions signal you didn't do your homework.
 
 Phase 2 — Verification (selective):
 - Verify assumptions against code/learnings only when it changes the plan or prevents mistakes.
 - Default exploration thoroughness is medium unless the issue demands otherwise.
-- If you can’t find/verify something in code, say so plainly and route one targeted question to the assignee (don’t spiral into many questions).
+- If you can't find/verify something in code, say so plainly and route one targeted question to the assignee (don't spiral into many questions).
 
 Phase 3 — Gaps (questions that change the spec):
 - Only ask questions that would materially change the spec/implementation.
@@ -639,7 +744,30 @@ End your turn. Reasoning is for logs only.
 
 ## ready_for_spec_generation
 Signal readiness for spec generation. Requires at least one resolved gap or relevant finding.
-- context_summary: what's been clarified
+- context_summary: COMPREHENSIVE handoff for the spec generator. This is your brain dump.
+  The spec generator should NOT need to explore after reading this. Include:
+
+  SCOPE: What we're building, success criteria, out-of-scope items.
+
+  USER REQUIREMENTS (critical - spec MUST address each):
+  - List EVERY explicit answer the user gave to your questions
+  - Format: "Q: [your question] → A: [user's exact answer]"
+  - Include answers from ALL users (reporter, assignee, others)
+  - These are non-negotiable; missing any = incomplete spec
+
+  CODE LANDSCAPE (from your explores):
+  - File paths: where to add new code, where existing patterns live
+  - Function/method names: exact symbols to call or extend
+  - Data models: struct fields, nullable vs required, existing store methods
+  - Patterns to follow: how similar features are implemented (copy this approach)
+  - What DOESN'T exist: missing middleware, no current API routes, gaps to fill
+
+  GOTCHAS: Auth requirements, missing indexes, integration points, error handling patterns.
+
+  WIRING: How components connect (handler -> service -> store -> db).
+
+  Write 4-8 paragraphs of dense, specific prose. Include file:line references.
+  The spec generator will use this + findings to write the spec without re-exploring.
 - relevant_finding_ids: findings informing the plan
 - closed_gap_ids: answered gaps
 - proceed_signal: brief excerpt of the human proceed approval you observed

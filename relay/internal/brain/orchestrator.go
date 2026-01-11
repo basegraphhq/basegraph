@@ -101,13 +101,16 @@ func SetupDebugRunDir(baseDir string) string {
 type Orchestrator struct {
 	cfg             OrchestratorConfig
 	planner         *Planner
+	specGenerator   *SpecGenerator
 	contextBuilder  *contextBuilder
 	actionValidator ActionValidator
 	issues          store.IssueStore
 	gaps            store.GapStore
 	integrations    store.IntegrationStore
+	configs         store.IntegrationConfigStore
 	learnings       store.LearningStore
 	eventLogs       store.EventLogStore
+	specStore       store.SpecStore
 	queueProducer   queue.Producer
 	issueTrackers   map[model.Provider]issue_tracker.IssueTrackerService
 }
@@ -123,14 +126,16 @@ func NewOrchestrator(
 	integrations store.IntegrationStore,
 	configs store.IntegrationConfigStore,
 	learnings store.LearningStore,
+	specStore store.SpecStore,
 	issueTrackers map[model.Provider]issue_tracker.IssueTrackerService,
 ) *Orchestrator {
 	debugDir := SetupDebugRunDir(cfg.DebugDir)
 
 	tools := NewExploreTools(cfg.RepoRoot, arango)
 	explore := NewExploreAgent(agentClient, tools, cfg.ModulePath, debugDir)
-	planner := NewPlanner(agentClient, explore, debugDir)
-	ctxBuilder := NewContextBuilder(integrations, configs, learnings, gaps)
+	planner := NewPlanner(agentClient, explore, specStore, debugDir)
+	specGenerator := NewSpecGenerator(agentClient, explore, specStore, debugDir)
+	ctxBuilder := NewContextBuilder(integrations, configs, learnings, gaps, specStore)
 	validator := NewActionValidator(gaps)
 
 	slog.InfoContext(context.Background(), "orchestrator initialized",
@@ -140,13 +145,16 @@ func NewOrchestrator(
 	return &Orchestrator{
 		cfg:             cfg,
 		planner:         planner,
+		specGenerator:   specGenerator,
 		contextBuilder:  ctxBuilder,
 		actionValidator: validator,
 		issues:          issues,
 		gaps:            gaps,
 		integrations:    integrations,
+		configs:         configs,
 		learnings:       learnings,
 		eventLogs:       eventLogs,
+		specStore:       specStore,
 		queueProducer:   queueProducer,
 		issueTrackers:   issueTrackers,
 	}
@@ -316,12 +324,23 @@ func (o *Orchestrator) runPlannerCycle(ctx context.Context, issue *model.Issue, 
 
 	slog.InfoContext(ctx, "context built", "message_count", len(messages))
 
+	// Build plan context with spec reference if available
+	specRefJSON := ""
+	if issue.Spec != nil {
+		specRefJSON = *issue.Spec
+	}
+
 	var output PlannerOutput
 	var validationErr error
 
 	for attempt := 0; attempt <= maxValidationRetries; attempt++ {
+		planCtx := PlanContext{
+			Messages:    messages,
+			SpecRefJSON: specRefJSON,
+		}
+
 		if attempt == 0 {
-			output, err = o.planner.Plan(ctx, messages)
+			output, err = o.planner.Plan(ctx, planCtx)
 		} else {
 			// Inject validation error as tool result and let the model decide what to do
 			feedback := FormatValidationErrorForLLM(validationErr)
@@ -334,7 +353,8 @@ func (o *Orchestrator) runPlannerCycle(ctx context.Context, issue *model.Issue, 
 				Content:    feedback,
 				ToolCallID: output.LastToolCallID,
 			})
-			output, err = o.planner.Plan(ctx, feedbackMessages)
+			planCtx.Messages = feedbackMessages
+			output, err = o.planner.Plan(ctx, planCtx)
 		}
 
 		if err != nil {
@@ -379,7 +399,7 @@ func (o *Orchestrator) runPlannerCycle(ctx context.Context, issue *model.Issue, 
 		return NewFatalError(fmt.Errorf("no issue tracker for provider: %s", issue.Provider))
 	}
 
-	executor := NewActionExecutor(tracker, o.issues, o.gaps, o.integrations, o.learnings)
+	executor := NewActionExecutor(tracker, o.issues, o.gaps, o.integrations, o.configs, o.learnings, o.specStore, o.specGenerator)
 	errs := executor.ExecuteBatch(ctx, *issue, output.Actions)
 	if len(errs) > 0 {
 		for _, e := range errs {

@@ -16,6 +16,11 @@ const (
 	minCommentLength = 1
 )
 
+const (
+	maxSpecLength = 200000 // 200KB
+	minSpecLength = 1
+)
+
 var (
 	ErrEmptyActions          = errors.New("no actions provided")
 	ErrUnknownActionType     = errors.New("unknown action type")
@@ -37,6 +42,10 @@ var (
 	ErrOpenGaps              = errors.New("open gaps exist")
 	ErrNoResolvedContext     = errors.New("no resolved gaps or findings")
 	ErrMissingProceedSignal  = errors.New("proceed signal not provided")
+	ErrMissingSpecContent    = errors.New("spec content is required")
+	ErrSpecTooLong           = errors.New("spec content too long")
+	ErrInvalidSpecMode       = errors.New("invalid spec mode")
+	ErrQuestionsWithoutGaps  = errors.New("comment contains questions without matching gaps")
 )
 
 type actionValidator struct {
@@ -82,6 +91,8 @@ func (v *actionValidator) Validate(ctx context.Context, issue model.Issue, input
 			err = v.validateUpdateLearnings(action)
 		case ActionTypeReadyForSpecGeneration:
 			err = v.validateReadyForSpecGeneration(ctx, issue, action, pendingClosures)
+		case ActionTypeUpdateSpec:
+			err = v.validateUpdateSpec(action)
 		default:
 			err = fmt.Errorf("%w: %s", ErrUnknownActionType, action.Type)
 		}
@@ -90,7 +101,72 @@ func (v *actionValidator) Validate(ctx context.Context, issue model.Issue, input
 		}
 	}
 
+	// Batch validation: enforce gap discipline
+	// If post_comment contains numbered questions, matching gaps must be added
+	if err := v.validateGapDiscipline(input.Actions); err != nil {
+		return err
+	}
+
 	return nil
+}
+
+// validateGapDiscipline ensures that numbered questions in comments have matching gaps.
+// This enforces the rule: "Every explicit question you ask MUST be tracked as a gap."
+func (v *actionValidator) validateGapDiscipline(actions []Action) error {
+	questionCount := 0
+	gapsAdded := 0
+
+	for _, action := range actions {
+		switch action.Type {
+		case ActionTypePostComment:
+			data, err := ParseActionData[PostCommentAction](action)
+			if err != nil {
+				continue
+			}
+			questionCount += countNumberedQuestions(data.Content)
+
+		case ActionTypeUpdateGaps:
+			data, err := ParseActionData[UpdateGapsAction](action)
+			if err != nil {
+				continue
+			}
+			gapsAdded += len(data.Add)
+		}
+	}
+
+	// If there are numbered questions but no gaps being added, reject
+	if questionCount > 0 && gapsAdded == 0 {
+		return fmt.Errorf("%w: found %d numbered questions but no gaps added", ErrQuestionsWithoutGaps, questionCount)
+	}
+
+	return nil
+}
+
+// countNumberedQuestions detects numbered question patterns in comment content.
+// Matches patterns like "1.", "1)", "1:", followed by text ending with "?"
+func countNumberedQuestions(content string) int {
+	lines := strings.Split(content, "\n")
+	count := 0
+
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		// Check for numbered patterns: "1.", "1)", "1:"
+		if len(line) < 3 {
+			continue
+		}
+		// Match: starts with digit(s), followed by . or ) or :, and line contains ?
+		for i, c := range line {
+			if c >= '0' && c <= '9' {
+				continue
+			}
+			if i > 0 && (c == '.' || c == ')' || c == ':') && strings.Contains(line, "?") {
+				count++
+			}
+			break
+		}
+	}
+
+	return count
 }
 
 func (v *actionValidator) validatePostComment(action Action) error {
@@ -254,6 +330,25 @@ func (v *actionValidator) validateReadyForSpecGeneration(ctx context.Context, is
 	return nil
 }
 
+func (v *actionValidator) validateUpdateSpec(action Action) error {
+	data, err := ParseActionData[UpdateSpecAction](action)
+	if err != nil {
+		return err
+	}
+
+	if len(data.ContentMarkdown) < minSpecLength {
+		return ErrMissingSpecContent
+	}
+	if len(data.ContentMarkdown) > maxSpecLength {
+		return ErrSpecTooLong
+	}
+	if data.Mode != "" && data.Mode != "overwrite" {
+		return fmt.Errorf("%w: %s (only 'overwrite' supported in v1)", ErrInvalidSpecMode, data.Mode)
+	}
+
+	return nil
+}
+
 func (v *actionValidator) lookupGapByAnyID(ctx context.Context, idStr string) (model.Gap, error) {
 	id, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -346,6 +441,19 @@ func FormatValidationErrorForLLM(err error) string {
 	}
 	if strings.Contains(errStr, "learning missing") || strings.Contains(errStr, "invalid learning type") {
 		sb.WriteString("- Learnings need content and valid type (domain_learnings or code_learnings)\n")
+	}
+	if strings.Contains(errStr, "spec content") {
+		sb.WriteString("- update_spec requires non-empty content_markdown field\n")
+	}
+	if strings.Contains(errStr, "spec") && strings.Contains(errStr, "too long") {
+		sb.WriteString("- Spec content must be less than 200KB\n")
+	}
+	if strings.Contains(errStr, "invalid spec mode") {
+		sb.WriteString("- Only mode 'overwrite' is supported in v1\n")
+	}
+	if strings.Contains(errStr, "questions without") || strings.Contains(errStr, "numbered questions") {
+		sb.WriteString("- Every numbered question in post_comment MUST have a matching gap in update_gaps.add\n")
+		sb.WriteString("- Add gaps for each question: {question, severity, respondent}\n")
 	}
 
 	return sb.String()

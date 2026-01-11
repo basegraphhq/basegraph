@@ -158,9 +158,14 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 			IssueIID:      issueIID,
 		})
 		if err != nil {
-			slog.WarnContext(ctx, "failed to fetch discussions for existing issue",
+			// Strict fetch mode: keep existing discussions, return retryable error
+			// This prevents silent data loss when the issue tracker is temporarily unavailable
+			slog.WarnContext(ctx, "discussion fetch failed, keeping existing discussions",
+				"issue_id", existingIssue.ID,
+				"existing_count", len(existingIssue.Discussions),
 				"error", err,
 			)
+			return nil, fmt.Errorf("fetching discussions (retryable): %w", err)
 		}
 
 		existingIssue.Discussions = discussions
@@ -168,7 +173,7 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 
 		// Add eyes reaction for reply events on subscribed issues
 		if params.EventType == string(mapper.EventReply) {
-			s.addEyesReaction(ctx, issueTracker, params, issueIID)
+			s.addReactions(ctx, issueTracker, params, issueIID)
 		}
 	} else {
 		engagement, err := s.engagementDetector.ShouldEngage(ctx, integration.ID, EngagementRequest{
@@ -217,7 +222,7 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		issueToUpsert = issue
 
 		// Add eyes reaction for new engagement
-		s.addEyesReaction(ctx, issueTracker, params, issueIID)
+		s.addReactions(ctx, issueTracker, params, issueIID)
 	}
 
 	source := string(integration.Provider)
@@ -323,7 +328,7 @@ func computeDedupeKey(source, eventType, externalIssueID string, payload json.Ra
 	return fmt.Sprintf("%s:%s", source, hex.EncodeToString(hash[:]))
 }
 
-func (s *eventIngestService) addEyesReaction(ctx context.Context, issueTracker tracker.IssueTrackerService, params EventIngestParams, issueIID int64) {
+func (s *eventIngestService) addReactions(ctx context.Context, issueTracker tracker.IssueTrackerService, params EventIngestParams, issueIID int64) {
 	var noteID *int64
 	if params.CommentBody != "" {
 		id, err := strconv.ParseInt(params.CommentID, 10, 64)
@@ -346,5 +351,16 @@ func (s *eventIngestService) addEyesReaction(ctx context.Context, issueTracker t
 	})
 	if err != nil {
 		slog.WarnContext(ctx, "failed to add eyes reaction", "error", err)
+	}
+
+	err = issueTracker.AddReaction(ctx, tracker.AddReactionParams{
+		IntegrationID: params.IntegrationID,
+		ProjectID:     params.ExternalProjectID,
+		IssueIID:      issueIID,
+		NoteID:        noteID,
+		Emoji:         "hourglass not done",
+	})
+	if err != nil {
+		slog.WarnContext(ctx, "failed to add hourglass reaction", "error", err)
 	}
 }

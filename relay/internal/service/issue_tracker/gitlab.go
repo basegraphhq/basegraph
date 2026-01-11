@@ -3,6 +3,7 @@ package issue_tracker
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 
@@ -51,17 +52,47 @@ func (s *gitLabIssueTrackerService) FetchDiscussions(ctx context.Context, params
 		return nil, err
 	}
 
-	gitlabDiscussions, _, err := client.Discussions.ListIssueDiscussions(
-		params.ProjectID,
-		params.IssueIID,
-		nil,
-		gitlab.WithContext(ctx),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("fetching discussions from gitlab: %w", err)
+	var allDiscussions []*gitlab.Discussion
+	opts := &gitlab.ListIssueDiscussionsOptions{
+		ListOptions: gitlab.ListOptions{
+			PerPage: 100,
+			Page:    1,
+		},
 	}
 
-	return s.mapDiscussions(gitlabDiscussions), nil
+	for {
+		discussions, resp, err := client.Discussions.ListIssueDiscussions(
+			params.ProjectID,
+			params.IssueIID,
+			opts,
+			gitlab.WithContext(ctx),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("fetching discussions page %d from gitlab: %w", opts.Page, err)
+		}
+
+		allDiscussions = append(allDiscussions, discussions...)
+
+		if resp.NextPage == 0 {
+			break
+		}
+		opts.ListOptions.Page = int64(resp.NextPage)
+	}
+
+	// Count notes for logging
+	noteCount := 0
+	for _, d := range allDiscussions {
+		noteCount += len(d.Notes)
+	}
+
+	slog.InfoContext(ctx, "gitlab discussions fetched",
+		"project_id", params.ProjectID,
+		"issue_iid", params.IssueIID,
+		"threads", len(allDiscussions),
+		"notes", noteCount,
+		"pages", opts.ListOptions.Page)
+
+	return s.mapDiscussions(allDiscussions), nil
 }
 
 func (s *gitLabIssueTrackerService) IsReplyToUser(ctx context.Context, params IsReplyParams) (bool, error) {

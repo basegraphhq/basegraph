@@ -16,6 +16,7 @@ const (
 	ActionTypeUpdateGaps             ActionType = "update_gaps"
 	ActionTypeUpdateLearnings        ActionType = "update_learnings"
 	ActionTypeReadyForSpecGeneration ActionType = "ready_for_spec_generation"
+	ActionTypeUpdateSpec             ActionType = "update_spec"
 )
 
 type Action struct {
@@ -141,6 +142,14 @@ type ReadyForSpecGenerationAction struct {
 	ClosedGaps       []GapID  `json:"closed_gap_ids"`
 	LearningsApplied []string `json:"learning_ids"`
 	ProceedSignal    string   `json:"proceed_signal"`
+}
+
+// UpdateSpecAction is used by the Planner to update the spec directly.
+// This is for follow-up edits when a spec already exists.
+type UpdateSpecAction struct {
+	ContentMarkdown string `json:"content_markdown"`
+	Reason          string `json:"reason,omitempty"`
+	Mode            string `json:"mode"` // "overwrite" only for v1
 }
 
 // ActionExecutor executes actions returned by the Planner.

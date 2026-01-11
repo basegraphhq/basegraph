@@ -19,6 +19,7 @@ type Config struct {
 	OpenAI       OpenAIConfig
 	LLM          LLMConfig
 	ArangoDB     ArangoDBConfig
+	Spec         SpecConfig
 	Env          string
 	Port         string
 	DashboardURL string
@@ -71,6 +72,10 @@ type ArangoDBConfig struct {
 	Username string
 	Password string
 	Database string
+}
+
+type SpecConfig struct {
+	RootDir string // Root directory for spec storage (default: "relay_specs")
 }
 
 type Features struct{}
@@ -129,6 +134,9 @@ func Load() (Config, error) {
 			Username: getEnv("ARANGO_USERNAME", "root"),
 			Password: getEnv("ARANGO_PASSWORD", ""),
 			Database: getEnv("ARANGO_DATABASE", "codegraph"),
+		},
+		Spec: SpecConfig{
+			RootDir: getEnv("SPEC_ROOT_DIR", "relay_specs"),
 		},
 		Features: Features{},
 	}

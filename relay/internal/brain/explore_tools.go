@@ -573,7 +573,7 @@ var bashBlockedPrefixes = []string{
 	"rm ", "mv ", "cp ", "mkdir ", "touch ", "chmod ", "chown ",
 	"git push", "git commit", "git checkout", "git reset", "git rebase",
 	"git merge", "git pull", "git stash", "git clean", "git add",
-	"echo ", "printf ", "cat ", "head ", "tail ", "sed ", "awk ",
+	"echo ", "printf ", "sed ", "awk ",
 	"grep ", "rg ", // Use the grep tool instead
 	">", ">>",
 }

@@ -1,0 +1,297 @@
+# Spec Generator System Prompt v1 (Pre-Improvements Archive)
+# Archived: 2026-01-11
+# Source: relay/internal/brain/spec_generator.go:406-547, 573-637
+# Purpose: Rollback reference before spec generator improvements
+
+## systemPrompt() - Lines 406-444
+
+```
+You are a Spec Generator agent. Your task is to produce a high-quality, execution-ready specification.
+
+# Principles
+
+1. **Decision traceability**: Every choice must cite evidence (gap answer or code finding).
+2. **Executable specificity**: Include file paths, function names, PR sequence.
+3. **Scenario-driven requirements**: Every requirement must have WHEN/THEN scenarios (OpenSpec-style).
+4. **Scale-adaptive depth**: Spec complexity should match issue complexity.
+
+# Current Complexity Level: {complexity}
+
+{complexityGuidance}
+
+# Output Requirements
+
+When you've gathered enough context, call submit_spec with:
+- spec_markdown: The complete spec following the template below
+- spec_summary: 5-10 bullet summary
+- changelog: What changed (empty if new spec)
+
+# Spec Template
+
+{specTemplate}
+
+# Tools
+
+- submit_spec: Submit the final spec (required)
+- explore: Quick codebase lookup for verification (optional, 1-2 calls max)
+
+# Important
+
+- Reference gap IDs and finding IDs in your Decision Log
+- Include actual file paths from findings
+- If revising an existing spec, include a Changelog section
+- Focus on the "why" not just the "what"
+```
+
+## complexityGuidance() - Lines 447-461
+
+```go
+func complexityGuidance(c model.SpecComplexity) string {
+	switch c {
+	case model.SpecComplexityBugFix:
+		return "L0 (Bug Fix): Include TL;DR, Problem, Success Criteria, Implementation Plan. Skip Goals/Non-goals, Design sections."
+	case model.SpecComplexitySmallFeature:
+		return "L1 (Small Feature): Include TL;DR, Problem, Success Criteria, Goals/Non-goals, Decision Log (1-2 entries), Implementation Plan."
+	case model.SpecComplexityMediumFeature:
+		return "L2 (Medium Feature): Include all standard sections: TL;DR through Test Plan."
+	case model.SpecComplexityLargeFeature:
+		return "L3 (Large Feature): Include all sections including Observability, Rollout, Gotchas."
+	case model.SpecComplexityArchitectural:
+		return "L4 (Architectural): Comprehensive spec with Migration plan, Risk matrix, Alternatives considered."
+	default:
+		return "L2 (Medium Feature): Include all standard sections."
+	}
+}
+```
+
+## specTemplate() - Lines 464-547
+
+```markdown
+# Spec: {Issue Title}
+
+**Status:** Draft
+**Issue:** {external URL}
+**Last updated:** {timestamp}
+**Complexity:** L0-L4
+
+---
+
+## TL;DR
+- {5 bullets: outcome, constraints, biggest risk, rollout shape, validation}
+
+## Problem Statement
+{Clear description of what we're solving}
+
+## Success Criteria
+
+### Requirement: {Primary capability}
+The system SHALL {behavior description}.
+
+#### Scenario: Happy path
+- **WHEN** {precondition/action}
+- **THEN** {expected outcome}
+
+#### Scenario: Error case
+- **WHEN** {error condition}
+- **THEN** {graceful handling}
+
+## Goals / Non-goals
+### Goals
+- ...
+### Non-goals
+- ...
+
+## Decision Log (ADR-lite)
+
+| # | Decision | Context (Gap/Finding) | Consequences |
+|---|----------|----------------------|--------------|
+| 1 | {decision} | Gap #{id}: {question} → {answer} | {consequences} |
+
+## Assumptions
+
+| # | Assumption | If Wrong |
+|---|------------|----------|
+| 1 | {assumption} | {fallback action} |
+
+## Design
+### API / Data Model
+### Flow / Sequence
+### Concurrency / Idempotency / Retry behavior
+
+## Implementation Plan
+
+| # | Task | Touch Points | Done When | Blocked By |
+|---|------|--------------|-----------|------------|
+| 1.1 | {task} | {files} | {criteria} | - |
+
+## Test Plan
+
+### Unit Tests
+- [ ] {test case}
+
+### Integration Tests
+- [ ] {test case}
+
+### Failure-mode Tests
+- [ ] {test case}
+
+## Observability + Rollout
+- **Logging**: {events}
+- **Metrics**: {what to track}
+- **Safe deploy**: {feature flag or strategy}
+- **Backout plan**: {how to revert}
+- **Watch in prod**: {what to monitor}
+
+## Gotchas / Best Practices
+{From learnings, code conventions}
+
+---
+
+## Changelog
+{For revisions only; empty on first creation}
+```
+
+## validateSpec() - Lines 573-637
+
+```go
+// validateSpec performs structural validation on the spec.
+func validateSpec(markdown string, complexity model.SpecComplexity) []model.ValidationError {
+	var errors []model.ValidationError
+
+	// Required for all levels
+	if !strings.Contains(markdown, "## TL;DR") {
+		errors = append(errors, model.ValidationError{
+			Rule:     "has_tldr",
+			Severity: "error",
+			Detail:   "TL;DR section must exist",
+		})
+	}
+
+	if !strings.Contains(markdown, "## Problem Statement") {
+		errors = append(errors, model.ValidationError{
+			Rule:     "has_problem",
+			Severity: "error",
+			Detail:   "Problem Statement section must exist",
+		})
+	}
+
+	// Check for scenarios
+	scenarioRe := regexp.MustCompile(`(?i)####\s*Scenario:`)
+	if !scenarioRe.MatchString(markdown) {
+		errors = append(errors, model.ValidationError{
+			Rule:     "has_scenarios",
+			Severity: "error",
+			Detail:   "At least one Scenario block is required",
+		})
+	}
+
+	// Check WHEN/THEN in scenarios
+	if scenarioRe.MatchString(markdown) {
+		hasWhenThen := strings.Contains(markdown, "**WHEN**") && strings.Contains(markdown, "**THEN**")
+		if !hasWhenThen {
+			errors = append(errors, model.ValidationError{
+				Rule:     "scenario_format",
+				Severity: "error",
+				Detail:   "Scenarios must have WHEN/THEN structure",
+			})
+		}
+	}
+
+	// Implementation plan required
+	if !strings.Contains(markdown, "## Implementation Plan") {
+		errors = append(errors, model.ValidationError{
+			Rule:     "has_implementation_plan",
+			Severity: "error",
+			Detail:   "Implementation Plan section is required",
+		})
+	}
+
+	// Complexity-dependent rules
+	if complexity >= model.SpecComplexityMediumFeature {
+		if !strings.Contains(markdown, "## Decision Log") {
+			errors = append(errors, model.ValidationError{
+				Rule:     "has_decision_log",
+				Severity: "warning",
+				Detail:   "Decision Log recommended for L2+ specs",
+			})
+		}
+	}
+
+	return errors
+}
+```
+
+## buildUserMessage() - Lines 335-403 (handoff context)
+
+```go
+func (g *SpecGenerator) buildUserMessage(input SpecGeneratorInput) string {
+	var sb strings.Builder
+
+	sb.WriteString("# Issue Context\n\n")
+	sb.WriteString(fmt.Sprintf("**Title:** %s\n", input.Issue.Title))
+	if input.Issue.Description != "" {
+		sb.WriteString(fmt.Sprintf("**Description:**\n%s\n\n", input.Issue.Description))
+	}
+	if input.Issue.ExternalURL != "" {
+		sb.WriteString(fmt.Sprintf("**URL:** %s\n", input.Issue.ExternalURL))
+	}
+	if len(input.Issue.Labels) > 0 {
+		sb.WriteString(fmt.Sprintf("**Labels:** %s\n", strings.Join(input.Issue.Labels, ", ")))
+	}
+	if len(input.Issue.Assignees) > 0 {
+		sb.WriteString(fmt.Sprintf("**Assignees:** %s\n", strings.Join(input.Issue.Assignees, ", ")))
+	}
+	sb.WriteString("\n")
+
+	sb.WriteString("# Proceed Signal\n\n")
+	sb.WriteString(fmt.Sprintf("> %s\n\n", input.ProceedSignal))
+
+	sb.WriteString("# Context Summary (from Planner)\n\n")
+	sb.WriteString(input.ContextSummary)
+	sb.WriteString("\n\n")
+
+	if len(input.ClosedGaps) > 0 {
+		sb.WriteString("# Resolved Gaps\n\n")
+		for i, gap := range input.ClosedGaps {
+			sb.WriteString(fmt.Sprintf("## Gap %d\n", i+1))
+			sb.WriteString(fmt.Sprintf("**Question:** %s\n", gap.Question))
+			sb.WriteString(fmt.Sprintf("**Resolution (%s):** %s\n\n", gap.ClosedReason, gap.ClosedNote))
+		}
+	}
+
+	if len(input.RelevantFindings) > 0 {
+		sb.WriteString("# Code Findings\n\n")
+		for _, f := range input.RelevantFindings {
+			if len(f.Sources) > 0 {
+				locations := make([]string, 0, len(f.Sources))
+				for _, s := range f.Sources {
+					locations = append(locations, s.Location)
+				}
+				sb.WriteString(fmt.Sprintf("## %s\n\n", strings.Join(locations, ", ")))
+			}
+			sb.WriteString(f.Synthesis)
+			sb.WriteString("\n\n")
+		}
+	}
+
+	if len(input.Learnings) > 0 {
+		sb.WriteString("# Workspace Learnings\n\n")
+		for _, l := range input.Learnings {
+			sb.WriteString(fmt.Sprintf("- [%s] %s\n", l.Type, l.Content))
+		}
+		sb.WriteString("\n")
+	}
+
+	if input.ExistingSpec != nil {
+		sb.WriteString("# Existing Spec (for revision)\n\n")
+		sb.WriteString("```markdown\n")
+		sb.WriteString(*input.ExistingSpec)
+		sb.WriteString("\n```\n\n")
+		sb.WriteString("**Task:** Revise the spec above based on the new context. Include a Changelog section at the end.\n")
+	} else {
+		sb.WriteString("**Task:** Generate a new spec based on the context above.\n")
+	}
+
+	return sb.String()
+}
+```

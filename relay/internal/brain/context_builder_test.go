@@ -136,6 +136,27 @@ type mockContextBuilderGapStore struct {
 	err  error
 }
 
+type mockSpecStore struct {
+	content string
+	meta    model.SpecMeta
+	err     error
+}
+
+func (m *mockSpecStore) Read(ctx context.Context, ref model.SpecRef) (string, model.SpecMeta, error) {
+	if m.err != nil {
+		return "", model.SpecMeta{}, m.err
+	}
+	return m.content, m.meta, nil
+}
+
+func (m *mockSpecStore) Write(ctx context.Context, issueID int64, provider, externalIssueID, slug, content string) (model.SpecRef, error) {
+	return model.SpecRef{}, nil
+}
+
+func (m *mockSpecStore) Exists(ctx context.Context, ref model.SpecRef) (bool, error) {
+	return m.content != "", nil
+}
+
 func (m *mockContextBuilderGapStore) Create(ctx context.Context, gap model.Gap) (model.Gap, error) {
 	return model.Gap{}, nil
 }
@@ -275,7 +296,7 @@ var _ = Describe("ContextBuilder", func() {
 			gaps: nil, // Default: no gaps
 		}
 
-		builder = brain.NewContextBuilder(mockInteg, mockConfig, mockLearnings, mockGaps)
+		builder = brain.NewContextBuilder(mockInteg, mockConfig, mockLearnings, mockGaps, nil)
 	})
 
 	Describe("BuildPlannerMessages", func() {
@@ -598,6 +619,107 @@ var _ = Describe("ContextBuilder", func() {
 				// Names should be sanitized (dots and @ replaced with underscores)
 				Expect(messages[2].Name).To(Equal("user_with_dots"))
 				Expect(messages[3].Name).To(Equal("user_example_com"))
+			})
+		})
+
+		Context("with spec stub", func() {
+			It("includes spec stub section when issue has a spec", func() {
+				specRefJSON := `{"version":1,"backend":"local","path":"issue_1_gitlab_123_test-issue/spec.md","updated_at":"2026-01-10T12:00:00Z","sha256":"abc123def456abc123def456abc123def456abc123def456abc123def456abcd","format":"markdown"}`
+				specContent := `# Spec: Test Issue
+
+## TL;DR
+- This is a test spec
+- It has important information
+- About what we're building
+
+## Problem Statement
+We need to build something.
+`
+				mockSpec := &mockSpecStore{
+					content: specContent,
+					meta: model.SpecMeta{
+						UpdatedAt: time.Date(2026, 1, 10, 12, 0, 0, 0, time.UTC),
+						SHA256:    "abc123def456abc123def456abc123def456abc123def456abc123def456abcd",
+					},
+				}
+
+				builderWithSpec := brain.NewContextBuilder(mockInteg, mockConfig, mockLearnings, mockGaps, mockSpec)
+
+				title := "Test issue"
+				issue := model.Issue{
+					ID:            1,
+					IntegrationID: integrationID,
+					Title:         &title,
+					Spec:          &specRefJSON,
+				}
+
+				messages, err := builderWithSpec.BuildPlannerMessages(ctx, issue, "")
+
+				Expect(err).NotTo(HaveOccurred())
+				contextDump := messages[1]
+				Expect(contextDump.Content).To(ContainSubstring("# Current Spec"))
+				Expect(contextDump.Content).To(ContainSubstring("issue_1_gitlab_123_test-issue/spec.md"))
+				Expect(contextDump.Content).To(ContainSubstring("abc123def456abc1..."))
+				// Summary contains the TL;DR content (bullets), not the header
+				Expect(contextDump.Content).To(ContainSubstring("This is a test spec"))
+				Expect(contextDump.Content).To(ContainSubstring("Use `read_spec` tool for full content"))
+			})
+
+			It("excludes spec section when issue has no spec", func() {
+				title := "Test issue"
+				issue := model.Issue{
+					ID:            1,
+					IntegrationID: integrationID,
+					Title:         &title,
+					Spec:          nil,
+				}
+
+				messages, err := builder.BuildPlannerMessages(ctx, issue, "")
+
+				Expect(err).NotTo(HaveOccurred())
+				contextDump := messages[1]
+				Expect(contextDump.Content).NotTo(ContainSubstring("# Current Spec"))
+			})
+
+			It("excludes spec section when spec store is nil", func() {
+				builderNoSpec := brain.NewContextBuilder(mockInteg, mockConfig, mockLearnings, mockGaps, nil)
+
+				specRefJSON := `{"version":1,"backend":"local","path":"test/spec.md"}`
+				title := "Test issue"
+				issue := model.Issue{
+					ID:            1,
+					IntegrationID: integrationID,
+					Title:         &title,
+					Spec:          &specRefJSON,
+				}
+
+				messages, err := builderNoSpec.BuildPlannerMessages(ctx, issue, "")
+
+				Expect(err).NotTo(HaveOccurred())
+				contextDump := messages[1]
+				Expect(contextDump.Content).NotTo(ContainSubstring("# Current Spec"))
+			})
+
+			It("excludes spec section when spec read fails", func() {
+				mockSpec := &mockSpecStore{
+					err: store.ErrNotFound,
+				}
+				builderWithSpec := brain.NewContextBuilder(mockInteg, mockConfig, mockLearnings, mockGaps, mockSpec)
+
+				specRefJSON := `{"version":1,"backend":"local","path":"nonexistent/spec.md"}`
+				title := "Test issue"
+				issue := model.Issue{
+					ID:            1,
+					IntegrationID: integrationID,
+					Title:         &title,
+					Spec:          &specRefJSON,
+				}
+
+				messages, err := builderWithSpec.BuildPlannerMessages(ctx, issue, "")
+
+				Expect(err).NotTo(HaveOccurred())
+				contextDump := messages[1]
+				Expect(contextDump.Content).NotTo(ContainSubstring("# Current Spec"))
 			})
 		})
 

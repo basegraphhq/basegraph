@@ -145,6 +145,13 @@ func main() {
 
 	stores := store.NewStores(database.Queries())
 
+	specStore, err := store.NewLocalSpecStore(cfg.Spec.RootDir)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to create spec store", "error", err)
+		os.Exit(1)
+	}
+	slog.InfoContext(ctx, "spec store initialized", "root_dir", cfg.Spec.RootDir)
+
 	issueTrackers := map[model.Provider]issue_tracker.IssueTrackerService{
 		model.ProviderGitLab: issue_tracker.NewGitLabIssueTrackerService(
 			stores.Integrations(),
@@ -170,6 +177,7 @@ func main() {
 		stores.Integrations(),
 		stores.IntegrationConfigs(),
 		stores.Learnings(),
+		specStore,
 		issueTrackers,
 	)
 

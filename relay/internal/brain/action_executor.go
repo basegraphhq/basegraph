@@ -2,6 +2,7 @@ package brain
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -17,11 +18,14 @@ import (
 const maxCodeFindings = 20
 
 type actionExecutor struct {
-	issueTracker issue_tracker.IssueTrackerService
-	issues       store.IssueStore
-	gaps         store.GapStore
-	integrations store.IntegrationStore
-	learnings    store.LearningStore
+	issueTracker  issue_tracker.IssueTrackerService
+	issues        store.IssueStore
+	gaps          store.GapStore
+	integrations  store.IntegrationStore
+	configs       store.IntegrationConfigStore
+	learnings     store.LearningStore
+	specStore     store.SpecStore
+	specGenerator *SpecGenerator
 }
 
 func NewActionExecutor(
@@ -29,14 +33,20 @@ func NewActionExecutor(
 	issues store.IssueStore,
 	gaps store.GapStore,
 	integrations store.IntegrationStore,
+	configs store.IntegrationConfigStore,
 	learnings store.LearningStore,
+	specStore store.SpecStore,
+	specGenerator *SpecGenerator,
 ) actionExecutor {
 	return actionExecutor{
-		issueTracker: issueTracker,
-		issues:       issues,
-		gaps:         gaps,
-		integrations: integrations,
-		learnings:    learnings,
+		issueTracker:  issueTracker,
+		issues:        issues,
+		gaps:          gaps,
+		integrations:  integrations,
+		configs:       configs,
+		learnings:     learnings,
+		specStore:     specStore,
+		specGenerator: specGenerator,
 	}
 }
 
@@ -52,6 +62,8 @@ func (e *actionExecutor) Execute(ctx context.Context, issue model.Issue, action 
 		return e.executeUpdateLearnings(ctx, issue, action)
 	case ActionTypeReadyForSpecGeneration:
 		return e.executeReadyForSpecGeneration(ctx, issue, action)
+	case ActionTypeUpdateSpec:
+		return e.executeUpdateSpec(ctx, issue, action)
 	}
 	return nil
 }
@@ -250,8 +262,6 @@ func (e *actionExecutor) executeReadyForSpecGeneration(ctx context.Context, issu
 		return err
 	}
 
-	// Spec generation is intentionally separate and not yet implemented.
-	// For now, acknowledge receipt so the action isn't silently dropped.
 	slog.InfoContext(ctx, "ready_for_spec_generation received",
 		"issue_id", issue.ID,
 		"closed_gaps", data.ClosedGaps,
@@ -260,5 +270,142 @@ func (e *actionExecutor) executeReadyForSpecGeneration(ctx context.Context, issu
 		"context_summary", data.ContextSummary,
 		"proceed_signal", data.ProceedSignal)
 
+	// Fetch closed gaps for this issue
+	closedGaps, err := e.gaps.ListClosedByIssue(ctx, issue.ID, 50)
+	if err != nil {
+		return fmt.Errorf("fetching closed gaps: %w", err)
+	}
+
+	// Fetch learnings for the workspace
+	integration, err := e.integrations.GetByID(ctx, issue.IntegrationID)
+	if err != nil {
+		return fmt.Errorf("fetching integration: %w", err)
+	}
+	learnings, err := e.learnings.ListByWorkspace(ctx, integration.WorkspaceID)
+	if err != nil {
+		return fmt.Errorf("fetching learnings: %w", err)
+	}
+
+	// Fetch relay username for conversation mapping
+	relayUsername, err := e.getRelayUsername(ctx, issue.IntegrationID)
+	if err != nil {
+		slog.WarnContext(ctx, "failed to get relay username, using empty",
+			"error", err,
+			"issue_id", issue.ID)
+		relayUsername = ""
+	}
+
+	// Check for existing spec
+	var existingSpec *string
+	var existingSpecRef *model.SpecRef
+	if issue.Spec != nil && *issue.Spec != "" {
+		var ref model.SpecRef
+		if err := json.Unmarshal([]byte(*issue.Spec), &ref); err == nil {
+			content, _, err := e.specStore.Read(ctx, ref)
+			if err == nil {
+				existingSpec = &content
+				existingSpecRef = &ref
+			}
+		}
+	}
+
+	// Build input for SpecGenerator
+	input := BuildSpecGeneratorInput(
+		issue,
+		data,
+		closedGaps,
+		learnings,
+		existingSpec,
+		existingSpecRef,
+		0, // Let SpecGenerator infer complexity
+		relayUsername,
+	)
+
+	// Generate spec
+	output, err := e.specGenerator.Generate(ctx, input)
+	if err != nil {
+		return fmt.Errorf("generating spec: %w", err)
+	}
+
+	// Write spec to store
+	ref, err := e.specGenerator.WriteSpec(ctx, issue, output)
+	if err != nil {
+		return fmt.Errorf("writing spec: %w", err)
+	}
+
+	// Update issue with spec reference
+	refJSON, err := SerializeSpecRef(ref)
+	if err != nil {
+		return fmt.Errorf("serializing spec ref: %w", err)
+	}
+	issue.Spec = &refJSON
+
+	if _, err := e.issues.Upsert(ctx, &issue); err != nil {
+		return fmt.Errorf("updating issue with spec ref: %w", err)
+	}
+
+	slog.InfoContext(ctx, "spec generated and stored",
+		"issue_id", issue.ID,
+		"spec_path", ref.Path,
+		"spec_sha256", ref.SHA256,
+		"char_count", output.Metadata.CharCount,
+		"validation_errors", len(output.ValidationErrors))
+
 	return nil
+}
+
+func (e *actionExecutor) executeUpdateSpec(ctx context.Context, issue model.Issue, action Action) error {
+	data, err := ParseActionData[UpdateSpecAction](action)
+	if err != nil {
+		return err
+	}
+
+	// Generate slug from issue title
+	slug := "spec"
+	if issue.Title != nil && *issue.Title != "" {
+		slug = *issue.Title
+	}
+
+	// Write spec to store
+	ref, err := e.specStore.Write(ctx, issue.ID, string(issue.Provider), issue.ExternalIssueID, slug, data.ContentMarkdown)
+	if err != nil {
+		return fmt.Errorf("writing spec: %w", err)
+	}
+
+	// Serialize SpecRef to JSON for storage in issues.spec
+	refJSON, err := json.Marshal(ref)
+	if err != nil {
+		return fmt.Errorf("serializing spec ref: %w", err)
+	}
+
+	specStr := string(refJSON)
+	issue.Spec = &specStr
+
+	// Update issue with new spec reference
+	if _, err := e.issues.Upsert(ctx, &issue); err != nil {
+		return fmt.Errorf("updating issue spec: %w", err)
+	}
+
+	slog.InfoContext(ctx, "spec updated",
+		"issue_id", issue.ID,
+		"spec_path", ref.Path,
+		"spec_sha256", ref.SHA256,
+		"reason", data.Reason)
+
+	return nil
+}
+
+// getRelayUsername fetches Relay's service account username for the integration.
+func (e *actionExecutor) getRelayUsername(ctx context.Context, integrationID int64) (string, error) {
+	config, err := e.configs.GetByIntegrationAndKey(ctx, integrationID, model.ConfigKeyServiceAccount)
+	if err != nil {
+		return "", fmt.Errorf("fetching service account config: %w", err)
+	}
+
+	var sa model.ServiceAccountConfig
+	if err := json.Unmarshal(config.Value, &sa); err != nil {
+		return "", fmt.Errorf("parsing service account config: %w", err)
+	}
+
+	return sa.Username, nil
 }
