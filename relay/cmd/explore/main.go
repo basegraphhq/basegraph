@@ -74,6 +74,30 @@ func main() {
 	tools := brain.NewExploreTools(repoRoot, arangoClient)
 	explorer := brain.NewExploreAgent(agentClient, tools, modulePath, debugDir)
 
+	// Mock mode support for A/B testing
+	mockFixtureFile := os.Getenv("MOCK_EXPLORE_FIXTURES")
+	if mockFixtureFile != "" {
+		// Create a cheap LLM for fixture selection (OpenAI gpt-4o-mini)
+		mockAPIKey := os.Getenv("OPENAI_API_KEY")
+		if mockAPIKey == "" {
+			mockAPIKey = apiKey // Fall back to LLM_API_KEY
+		}
+		mockModel := getEnv("MOCK_EXPLORE_MODEL", "gpt-4o-mini")
+
+		selectorClient, err := llm.NewAgentClient(llm.Config{
+			Provider: "openai",
+			APIKey:   mockAPIKey,
+			Model:    mockModel,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create mock selector LLM: %v\n", err)
+			os.Exit(1)
+		}
+
+		explorer = explorer.WithMockMode(selectorClient, mockFixtureFile)
+		fmt.Fprintf(os.Stderr, "Mock mode: enabled (fixtures=%s, model=%s)\n", mockFixtureFile, mockModel)
+	}
+
 	// Thoroughness from env or default
 	thoroughness := brain.ThoughnessMedium
 	if t := os.Getenv("THOROUGHNESS"); t != "" {

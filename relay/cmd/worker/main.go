@@ -155,12 +155,46 @@ func main() {
 	// TODO(cleanup): Remove DebugDir once product goes live.
 	// It creates debug_logs/YYYY-MM-DD/NNN/ folders for each worker run.
 	// Related: brain.SetupDebugRunDir, Planner.debugDir, ExploreAgent.debugDir
+	orchestratorCfg := brain.OrchestratorConfig{
+		RepoRoot:   repoRoot,
+		ModulePath: modulePath,
+		DebugDir:   os.Getenv("BRAIN_DEBUG_DIR"),
+	}
+
+	// Mock explore mode for A/B testing planner prompts
+	// Set MOCK_EXPLORE_FIXTURES to enable (e.g., "evals/fixtures/explore.json")
+	mockFixtureFile := os.Getenv("MOCK_EXPLORE_FIXTURES")
+	if mockFixtureFile != "" {
+		mockAPIKey := os.Getenv("OPENAI_API_KEY")
+		if mockAPIKey == "" {
+			mockAPIKey = cfg.LLM.APIKey // Fall back to LLM_API_KEY
+		}
+		mockModel := os.Getenv("MOCK_EXPLORE_MODEL")
+		if mockModel == "" {
+			mockModel = "gpt-4o-mini"
+		}
+
+		mockLLM, err := llm.NewAgentClient(llm.Config{
+			Provider: "openai",
+			APIKey:   mockAPIKey,
+			Model:    mockModel,
+		})
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to create mock explore LLM client", "error", err)
+			os.Exit(1)
+		}
+
+		orchestratorCfg.MockExploreEnabled = true
+		orchestratorCfg.MockExploreLLM = mockLLM
+		orchestratorCfg.MockFixtureFile = mockFixtureFile
+
+		slog.InfoContext(ctx, "mock explore mode enabled",
+			"fixture_file", mockFixtureFile,
+			"selector_model", mockModel)
+	}
+
 	orchestrator := brain.NewOrchestrator(
-		brain.OrchestratorConfig{
-			RepoRoot:   repoRoot,
-			ModulePath: modulePath,
-			DebugDir:   os.Getenv("BRAIN_DEBUG_DIR"),
-		},
+		orchestratorCfg,
 		agentClient,
 		arangoClient,
 		stores.Issues(),

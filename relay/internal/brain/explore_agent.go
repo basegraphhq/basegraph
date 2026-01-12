@@ -103,6 +103,11 @@ type ExploreAgent struct {
 	tools      *ExploreTools
 	modulePath string // Go module path for constructing qnames (e.g., "basegraph.app/relay")
 	debugDir   string // Directory for debug logs (empty = no logging)
+
+	// Mock mode fields for A/B testing planner prompts
+	mockMode    bool            // When true, use fixture selection instead of real exploration
+	mockLLM     llm.AgentClient // Cheap LLM (e.g., gpt-4o-mini) for fixture selection
+	fixtureFile string          // Path to JSON file with pre-written explore responses
 }
 
 // NewExploreAgent creates an ExploreAgent sub-agent.
@@ -113,6 +118,17 @@ func NewExploreAgent(llmClient llm.AgentClient, tools *ExploreTools, modulePath,
 		modulePath: modulePath,
 		debugDir:   debugDir,
 	}
+}
+
+// WithMockMode enables mock mode for A/B testing planner prompts.
+// Instead of real exploration, it uses a cheap LLM to select from pre-written fixture responses.
+// selectorLLM should be a cheap model like gpt-4o-mini.
+// fixtureFile is the path to a JSON file with pre-written explore responses.
+func (e *ExploreAgent) WithMockMode(selectorLLM llm.AgentClient, fixtureFile string) *ExploreAgent {
+	e.mockMode = true
+	e.mockLLM = selectorLLM
+	e.fixtureFile = fixtureFile
+	return e
 }
 
 // toolCallRecord tracks a tool invocation for doom loop detection.
@@ -131,6 +147,11 @@ type toolResult struct {
 // Returns a prose report with code snippets for another LLM to read.
 // Thoroughness controls search depth: quick (first match), medium (few locations), thorough (comprehensive).
 func (e *ExploreAgent) Explore(ctx context.Context, query string, thoroughness Thoroughness) (string, error) {
+	// Mock mode: use fixture selection instead of real exploration
+	if e.mockMode {
+		return e.exploreWithMock(ctx, query)
+	}
+
 	config := thoroughnessConfig(thoroughness)
 	start := time.Now()
 

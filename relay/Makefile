@@ -1,4 +1,4 @@
-.PHONY: build build-server build-worker build-explore run-server run-worker run-worker-testdata run-explore test test-unit test-bdd test-integration clean sqlc-generate migrate-up migrate-down format lint install-tools reindex-codegraph reset reset-redis reset-db tidy create-fixture
+.PHONY: build build-server build-worker build-explore run-server run-worker run-worker-testdata run-worker-mock run-explore test test-unit test-bdd test-integration clean sqlc-generate migrate-up migrate-down format lint install-tools reindex-codegraph reset reset-redis reset-db tidy create-fixture
 
 PKGS := $(shell go list ./... | grep -v '/testdata/')
 
@@ -25,6 +25,15 @@ run-worker:
 run-worker-testdata:
 	REPO_ROOT=$(CURDIR)/testdata/fixtures/relay-without-ack \
 	MODULE_PATH=basegraph.app/relay-without-ack \
+	go run ./cmd/worker
+
+# Run worker with mock explore for A/B testing planner prompts
+# Uses pre-written fixtures instead of real codebase exploration
+run-worker-mock:
+	REPO_ROOT=$(CURDIR)/testdata/fixtures/relay-without-ack \
+	MODULE_PATH=basegraph.app/relay-without-ack \
+	MOCK_EXPLORE_FIXTURES=$(CURDIR)/evals/fixtures/explore.json \
+	BRAIN_DEBUG_DIR=$(CURDIR)/debug_logs \
 	go run ./cmd/worker
 
 # Explore CLI - interactive code exploration
