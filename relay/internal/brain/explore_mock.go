@@ -88,13 +88,13 @@ func (e *ExploreAgent) loadFixtures() ([]ExploreFixture, error) {
 
 // selectFixture uses the mock LLM to select the best matching fixture.
 func (e *ExploreAgent) selectFixture(ctx context.Context, query string, fixtures []ExploreFixture) (*ExploreFixture, error) {
-	// Build the fixture list for the prompt
+	// Build the fixture list for the prompt (use ID as bullet, not numbers to avoid confusion)
 	var fixtureList strings.Builder
-	for i, f := range fixtures {
-		fixtureList.WriteString(fmt.Sprintf("%d. **%s**\n", i+1, f.ID))
-		fixtureList.WriteString(fmt.Sprintf("   Intent: %s\n", f.Intent))
-		fixtureList.WriteString(fmt.Sprintf("   Scope: %s\n", strings.Join(f.Scope, ", ")))
-		fixtureList.WriteString(fmt.Sprintf("   Keywords: %s\n\n", strings.Join(f.Keywords, ", ")))
+	for _, f := range fixtures {
+		fixtureList.WriteString(fmt.Sprintf("- **%s**\n", f.ID))
+		fixtureList.WriteString(fmt.Sprintf("  Intent: %s\n", f.Intent))
+		fixtureList.WriteString(fmt.Sprintf("  Scope: %s\n", strings.Join(f.Scope, ", ")))
+		fixtureList.WriteString(fmt.Sprintf("  Keywords: %s\n\n", strings.Join(f.Keywords, ", ")))
 	}
 
 	prompt := fmt.Sprintf(`You are selecting a pre-written code exploration result that best matches a query.
@@ -113,8 +113,10 @@ Select the fixture that best answers this query. Consider:
 - Does the scope cover files the query mentions?
 - Do keywords overlap with query terms?
 
+IMPORTANT: The fixture_id must be the exact string ID (like "token-tracking-in-agents"), NOT a number.
+
 Respond with ONLY this JSON (no markdown, no explanation):
-{"fixture_id": "the-id-here", "confidence": "high|medium|low", "reason": "one sentence why"}
+{"fixture_id": "exact-fixture-id-string", "confidence": "high|medium|low", "reason": "one sentence why"}
 
 If no fixture is a good match:
 {"fixture_id": null, "confidence": "none", "reason": "why no match"}`, fixtureList.String(), query)
