@@ -61,7 +61,8 @@ type Orchestrator struct {
 
 func NewOrchestrator(
 	cfg OrchestratorConfig,
-	agentClient llm.AgentClient,
+	plannerClient llm.AgentClient,
+	exploreClient llm.AgentClient,
 	arangoDB arangodb.Client,
 	issues store.IssueStore,
 	gaps store.GapStore,
@@ -72,8 +73,8 @@ func NewOrchestrator(
 	issueTrackers map[model.Provider]issue_tracker.IssueTrackerService,
 ) *Orchestrator {
 	tools := NewExploreTools(cfg.RepoRoot, arangoDB)
-	explore := NewExploreAgent(agentClient, tools, cfg.ModulePath)
-	planner := NewPlanner(agentClient, explore)
+	explore := NewExploreAgent(exploreClient, tools, cfg.ModulePath)
+	planner := NewPlanner(plannerClient, explore)
 	ctxBuilder := NewContextBuilder(integrations, configs, learnings)
 
 	slog.InfoContext(context.Background(), "orchestrator initialized",

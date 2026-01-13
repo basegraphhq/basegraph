@@ -25,9 +25,9 @@ const (
 type Thoroughness string
 
 const (
-	ThoroughnessQuick  Thoroughness = "quick"    // Fast lookup, ~30 iterations, ~40k tokens
-	ThoughnessMedium   Thoroughness = "medium"   // Balanced exploration, ~50 iterations, ~100k tokens
-	ThoughnessThorough Thoroughness = "thorough" // Comprehensive search, ~100 iterations, ~200k tokens
+	ThoroughnessQuick  Thoroughness = "quick"    // Fast lookup, ~30 iterations, ~15k soft / ~25k hard
+	ThoughnessMedium   Thoroughness = "medium"   // Balanced exploration, ~50 iterations, ~40k soft / ~60k hard
+	ThoughnessThorough Thoroughness = "thorough" // Comprehensive search, ~120 iterations, ~80k soft / ~120k hard
 )
 
 // ThoroughnessConfig defines limits and behavior for each thoroughness level.
@@ -50,14 +50,14 @@ func thoroughnessConfig(t Thoroughness) ThoroughnessConfig {
 	case ThoughnessMedium:
 		return ThoroughnessConfig{
 			MaxIterations:   50,
-			SoftTokenTarget: 25000,
-			HardTokenLimit:  40000,
+			SoftTokenTarget: 40000,
+			HardTokenLimit:  60000,
 		}
 	case ThoughnessThorough:
 		return ThoroughnessConfig{
 			MaxIterations:   120,
-			SoftTokenTarget: 60000,
-			HardTokenLimit:  100000,
+			SoftTokenTarget: 80000,
+			HardTokenLimit:  120000,
 		}
 	default:
 		return thoroughnessConfig(ThoughnessMedium)
@@ -103,6 +103,11 @@ type ExploreAgent struct {
 	tools      *ExploreTools
 	modulePath string // Go module path for constructing qnames (e.g., "basegraph.app/relay")
 	debugDir   string // Directory for debug logs (empty = no logging)
+
+	// Mock mode fields for A/B testing planner prompts
+	mockMode    bool            // When true, use fixture selection instead of real exploration
+	mockLLM     llm.AgentClient // Cheap LLM (e.g., gpt-4o-mini) for fixture selection
+	fixtureFile string          // Path to JSON file with pre-written explore responses
 }
 
 // NewExploreAgent creates an ExploreAgent sub-agent.
@@ -113,6 +118,17 @@ func NewExploreAgent(llmClient llm.AgentClient, tools *ExploreTools, modulePath,
 		modulePath: modulePath,
 		debugDir:   debugDir,
 	}
+}
+
+// WithMockMode enables mock mode for A/B testing planner prompts.
+// Instead of real exploration, it uses a cheap LLM to select from pre-written fixture responses.
+// selectorLLM should be a cheap model like gpt-4o-mini.
+// fixtureFile is the path to a JSON file with pre-written explore responses.
+func (e *ExploreAgent) WithMockMode(selectorLLM llm.AgentClient, fixtureFile string) *ExploreAgent {
+	e.mockMode = true
+	e.mockLLM = selectorLLM
+	e.fixtureFile = fixtureFile
+	return e
 }
 
 // toolCallRecord tracks a tool invocation for doom loop detection.
@@ -129,16 +145,20 @@ type toolResult struct {
 
 // Explore explores the codebase to answer a question.
 // Returns a prose report with code snippets for another LLM to read.
-// Thoroughness controls search depth: quick (first match), medium (few locations), thorough (comprehensive).
-func (e *ExploreAgent) Explore(ctx context.Context, query string, thoroughness Thoroughness) (string, error) {
-	config := thoroughnessConfig(thoroughness)
+func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error) {
+	// Mock mode: use fixture selection instead of real exploration
+	if e.mockMode {
+		return e.exploreWithMock(ctx, query)
+	}
+
+	config := thoroughnessConfig(ThoughnessMedium)
 	start := time.Now()
 
 	// Initialize metrics for structured logging
 	metrics := ExploreMetrics{
 		SessionID:    time.Now().Format("20060102-150405.000"),
 		Query:        query,
-		Thoroughness: string(thoroughness),
+		Thoroughness: "medium",
 		StartTime:    start,
 		ToolCalls:    make(map[string]int),
 		CodegraphOps: make(map[string]int),
@@ -160,13 +180,12 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string, thoroughness T
 	// Start a new session for this explore query and prepare debug logging.
 	var debugLog strings.Builder
 	debugLog.WriteString(fmt.Sprintf("=== ExploreAgent session started at %s ===\n", metrics.SessionID))
-	debugLog.WriteString(fmt.Sprintf("Thoroughness: %s (max_iter=%d, soft_target=%d, hard_limit=%d)\n",
-		thoroughness, config.MaxIterations, config.SoftTokenTarget, config.HardTokenLimit))
+	debugLog.WriteString(fmt.Sprintf("Limits: max_iter=%d, soft_target=%d, hard_limit=%d\n",
+		config.MaxIterations, config.SoftTokenTarget, config.HardTokenLimit))
 	debugLog.WriteString(fmt.Sprintf("Query: %s\n\n", query))
 
 	slog.DebugContext(ctx, "explore agent starting",
-		"query", logger.Truncate(query, 100),
-		"thoroughness", string(thoroughness))
+		"query", logger.Truncate(query, 100))
 
 	// Track token usage and iterations
 	// - contextWindowTokens: current context window size (for limit checks)
@@ -188,7 +207,6 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string, thoroughness T
 
 		slog.InfoContext(ctx, "explore agent completed",
 			"query", logger.Truncate(query, 50),
-			"thoroughness", string(thoroughness),
 			"duration_ms", metrics.DurationMs,
 			"iterations", iterations,
 			"context_window_tokens", contextWindowTokens,
@@ -604,6 +622,7 @@ You have three types of tools:
 - glob: Find files by name/path
 - grep: Find string patterns in content
 - read: View code at specific locations
+- bash: Read files (cat, head, tail), search (grep, rg)
 
 **HISTORY tools** - Track changes over time
 - bash: Git log, diff, blame
@@ -647,18 +666,18 @@ For structural questions in Go/Python:
 # Strategy
 
 1. **Structure before text** — For Go/Python, codegraph gives precise answers; grep gives noisy matches
-2. **Narrow fast** — Start specific, broaden only if needed
-3. **Surgical reads** — Read 30-50 lines around the target, never full files
-4. **Stop at sufficient evidence** — You don't need exhaustive proof
+2. **Start specific, broaden as needed** — Begin with focused queries, expand to cover all aspects
+3. **Read enough to understand** — Read 50-100 lines around targets for full context
+4. **Gather comprehensive evidence** — Explore all relevant aspects before synthesizing
 
 # Anti-Patterns
 
 ❌ grep for "who calls X" in Go/Python — codegraph gives exact answer
 ❌ codegraph for .js/.ts/other files — unsupported, use grep
 ❌ Manually constructing qnames — use codegraph(resolve) or pass name
-❌ Reading full files "for context" — read the specific function
+❌ Reading only 10-20 lines — read enough to understand the full context
 ❌ Multiple searches for same thing — your context already has the data
-❌ "One more search to be thorough" — if you can answer, stop
+❌ Stopping before exploring related areas — follow connections to build complete picture
 
 # Tools Reference
 
@@ -666,31 +685,77 @@ glob(pattern, path?) — Find files. Supports **, *, {a,b}. Returns paths by rec
 grep(pattern, glob?, context?) — Search contents. Regex pattern. Returns file:line matches.
 codegraph(operation, ...) — Query code graph. Operations: search, resolve, file_symbols, callers, callees, implementations, usages, trace.
 read(file_path, offset?, limit?) — Read file. Default 200 lines. Returns numbered lines.
-bash(command) — Git only: log, diff, blame, show, status. Also: ls.
+bash(command) — Git: log, diff, blame, show, status. File ops: cat, head, tail, grep, rg, ls, find.
 
 # Context
 
 Go module: %s
 Codebase index: .basegraph/index.md
 
+# Token Budget
+
+You have approximately 60,000 tokens for this exploration (medium thoroughness).
+- Around 40,000 tokens: consider starting your report synthesis
+- Maximum 60,000 tokens: you must synthesize by this point
+
+Use your budget wisely:
+- Explore multiple related areas, not just the direct answer
+- Read 50-100 lines for full context, not just function signatures
+- Follow connections to build a complete picture
+
 # Output
 
-When you have sufficient evidence, write:
+When you have gathered comprehensive evidence, write a detailed report:
 
 <report>
-## Answer
-[Direct 1-2 sentence answer]
+## Summary
+[2-3 sentence overview answering the question directly]
 
-## Evidence
-- file.go:42 — [what this shows]
-- file.go:87 — [what this shows]
+## 1. [First Major Topic/Component]
 
-## Key Code
-[Most relevant snippet with file:line]
+[Detailed explanation with context about this aspect]
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| path/to/file.go | Brief description of role |
+
+**Code:**
+~~~go
+// file.go:42-58 - What this code does
+[relevant code snippet]
+~~~
+
+## 2. [Second Major Topic/Component]
+
+[Continue this pattern for each major aspect discovered]
+
+## 3. [Additional Topics as Needed]
+
+[Add as many numbered sections as the topic requires]
+
+## Key Findings
+
+1. [Important architectural/design insight]
+2. [Important implementation detail]
+3. [Important relationship or flow]
+
+## Files Reference
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| file1.go | 42-58 | Description |
+| file2.go | 100-150 | Description |
+| file3.go | 200-250 | Description |
 
 ## Confidence
-[high/medium/low] — [reasoning]
+[high/medium/low] — [reasoning about completeness of exploration]
 </report>
 
-Stop exploring when you can write this report.`, e.modulePath)
+**Report Guidelines:**
+- Organize by **logical topics**, not by discovery order
+- Use **tables** to summarize file lists and relationships
+- Include **actual code snippets** for key logic (with file:line references)
+- Add as many numbered sections as needed to fully answer the question
+- The report should be **self-contained** — a reader shouldn't need to explore further`, e.modulePath)
 }

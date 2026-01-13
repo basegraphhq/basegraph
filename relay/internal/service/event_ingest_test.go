@@ -111,8 +111,9 @@ func (m *mockIssueStore) ResetQueuedToIdle(ctx context.Context, issueID int64) e
 }
 
 type mockIssueTrackerService struct {
-	fetchFn         func(ctx context.Context, params issue_tracker.FetchIssueParams) (*model.Issue, error)
-	isReplyToUserFn func(ctx context.Context, params issue_tracker.IsReplyParams) (bool, error)
+	fetchFn            func(ctx context.Context, params issue_tracker.FetchIssueParams) (*model.Issue, error)
+	fetchDiscussionsFn func(ctx context.Context, params issue_tracker.FetchDiscussionsParams) ([]model.Discussion, error)
+	isReplyToUserFn    func(ctx context.Context, params issue_tracker.IsReplyParams) (bool, error)
 }
 
 func (m *mockIssueTrackerService) FetchIssue(ctx context.Context, params issue_tracker.FetchIssueParams) (*model.Issue, error) {
@@ -136,6 +137,9 @@ func (m *mockIssueTrackerService) FetchIssue(ctx context.Context, params issue_t
 }
 
 func (m *mockIssueTrackerService) FetchDiscussions(ctx context.Context, params issue_tracker.FetchDiscussionsParams) ([]model.Discussion, error) {
+	if m.fetchDiscussionsFn != nil {
+		return m.fetchDiscussionsFn(ctx, params)
+	}
 	return nil, nil
 }
 
@@ -300,7 +304,7 @@ var _ = Describe("EventIngestService", func() {
 						SetupByUserID:  1,
 					}, nil
 				}
-				// Issue already exists (subscribed) - skip trigger detection
+				// Issue already exists (subscribed)
 				mockIssuesStore.getByIntegrationAndExternalIDFn = func(ctx context.Context, integrationID int64, externalID string) (*model.Issue, error) {
 					return &model.Issue{
 						ID:              12345,
@@ -309,9 +313,13 @@ var _ = Describe("EventIngestService", func() {
 						Provider:        model.ProviderGitLab,
 					}, nil
 				}
+				// Configure engagement detector - subscribed issues still need @mention or reply
+				mockEngagementDet.shouldEngageFn = func(ctx context.Context, integrationID int64, req service.EngagementRequest) (service.EngagementResult, error) {
+					return service.EngagementResult{ShouldEngage: true}, nil
+				}
 			})
 
-			It("processes event without trigger detection", func() {
+			It("processes event when engaged via @mention", func() {
 				payload := json.RawMessage(`{"action":"open"}`)
 				params := service.EventIngestParams{
 					IntegrationID:       123,
@@ -534,6 +542,10 @@ var _ = Describe("EventIngestService", func() {
 							ExternalIssueID: externalID,
 							Provider:        provider,
 						}, nil
+					}
+					// Configure engagement detector - subscribed issues need @mention or reply to engage
+					mockEngagementDet.shouldEngageFn = func(ctx context.Context, integrationID int64, req service.EngagementRequest) (service.EngagementResult, error) {
+						return service.EngagementResult{ShouldEngage: true}, nil
 					}
 
 					payload := json.RawMessage(`{"action":"test"}`)

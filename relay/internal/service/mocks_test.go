@@ -210,3 +210,46 @@ func (m *mockTxRunner) WithTx(ctx context.Context, fn func(stores service.StoreP
 	}
 	return fn(&mockStoreProvider{})
 }
+
+type mockIntegrationConfigStore struct {
+	getByIntegrationAndKeyFn func(ctx context.Context, integrationID int64, key string) (*model.IntegrationConfig, error)
+}
+
+func (m *mockIntegrationConfigStore) GetByID(context.Context, int64) (*model.IntegrationConfig, error) {
+	return nil, nil
+}
+
+func (m *mockIntegrationConfigStore) GetByIntegrationAndKey(ctx context.Context, integrationID int64, key string) (*model.IntegrationConfig, error) {
+	if m.getByIntegrationAndKeyFn != nil {
+		return m.getByIntegrationAndKeyFn(ctx, integrationID, key)
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *mockIntegrationConfigStore) ListByIntegration(context.Context, int64) ([]model.IntegrationConfig, error) {
+	return nil, nil
+}
+
+func (m *mockIntegrationConfigStore) ListByIntegrationAndType(context.Context, int64, string) ([]model.IntegrationConfig, error) {
+	return nil, nil
+}
+
+func (m *mockIntegrationConfigStore) Create(context.Context, *model.IntegrationConfig) error {
+	return nil
+}
+
+func (m *mockIntegrationConfigStore) Update(context.Context, *model.IntegrationConfig) error {
+	return nil
+}
+
+func (m *mockIntegrationConfigStore) Upsert(context.Context, *model.IntegrationConfig) error {
+	return nil
+}
+
+func (m *mockIntegrationConfigStore) Delete(context.Context, int64) error {
+	return nil
+}
+
+func (m *mockIntegrationConfigStore) DeleteByIntegration(context.Context, int64) error {
+	return nil
+}
