@@ -119,7 +119,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nExploring: %s\n", query)
 		fmt.Fprintln(os.Stderr, "---")
 
-		report, err := explorer.Explore(ctx, query)
+		report, err := explorer.Explore(ctx, 0, query) // 0 = no issue context (CLI mode, no caching)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			continue

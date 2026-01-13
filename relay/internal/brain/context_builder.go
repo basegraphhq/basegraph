@@ -236,15 +236,34 @@ func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.L
 	// Code findings section
 	if len(issue.CodeFindings) > 0 {
 		sb.WriteString("# Code Findings\n\n")
+		sb.WriteString("These are cached explorations. Check if any answer your question before exploring again.\n\n")
 		for _, f := range issue.CodeFindings {
-			// Format sources as header
-			if len(f.Sources) > 0 {
+			// Show query so planner knows what was explored
+			if f.Query != "" {
+				sb.WriteString(fmt.Sprintf("## Query: %s\n", f.Query))
+				if !f.CreatedAt.IsZero() {
+					sb.WriteString(fmt.Sprintf("*Explored %s ago*\n\n", humanizeDuration(time.Since(f.CreatedAt))))
+				} else {
+					sb.WriteString("\n")
+				}
+			} else if len(f.Sources) > 0 {
+				// Legacy finding without query - use sources as header
 				locations := make([]string, 0, len(f.Sources))
 				for _, s := range f.Sources {
 					locations = append(locations, fmt.Sprintf("`%s`", s.Location))
 				}
 				sb.WriteString(fmt.Sprintf("## %s\n\n", strings.Join(locations, ", ")))
 			}
+
+			// Sources as subheader (if query was shown)
+			if f.Query != "" && len(f.Sources) > 0 {
+				locations := make([]string, 0, len(f.Sources))
+				for _, s := range f.Sources {
+					locations = append(locations, fmt.Sprintf("`%s`", s.Location))
+				}
+				sb.WriteString(fmt.Sprintf("**Files**: %s\n\n", strings.Join(locations, ", ")))
+			}
+
 			sb.WriteString(f.Synthesis)
 			sb.WriteString("\n\n")
 		}
@@ -478,4 +497,30 @@ func (b *contextBuilder) buildDiscussionMessages(discussions []model.Discussion,
 // Handles both username match and "id:123" format used by some providers.
 func (b *contextBuilder) isRelayAuthor(author, relayUsername string) bool {
 	return strings.EqualFold(author, relayUsername)
+}
+
+// humanizeDuration formats a duration in a human-readable way.
+func humanizeDuration(d time.Duration) string {
+	if d < time.Minute {
+		return "just now"
+	}
+	if d < time.Hour {
+		mins := int(d.Minutes())
+		if mins == 1 {
+			return "1 minute"
+		}
+		return fmt.Sprintf("%d minutes", mins)
+	}
+	if d < 24*time.Hour {
+		hours := int(d.Hours())
+		if hours == 1 {
+			return "1 hour"
+		}
+		return fmt.Sprintf("%d hours", hours)
+	}
+	days := int(d.Hours() / 24)
+	if days == 1 {
+		return "1 day"
+	}
+	return fmt.Sprintf("%d days", days)
 }

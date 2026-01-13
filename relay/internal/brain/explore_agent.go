@@ -11,8 +11,10 @@ import (
 	"sync"
 	"time"
 
+	"basegraph.app/relay/common/id"
 	"basegraph.app/relay/common/llm"
 	"basegraph.app/relay/common/logger"
+	"basegraph.app/relay/internal/model"
 )
 
 const (
@@ -104,6 +106,9 @@ type ExploreAgent struct {
 	modulePath string // Go module path for constructing qnames (e.g., "basegraph.app/relay")
 	debugDir   string // Directory for debug logs (empty = no logging)
 
+	// Findings persister for caching and deduplication (optional)
+	findings FindingsPersister
+
 	// Mock mode fields for A/B testing planner prompts
 	mockMode    bool            // When true, use fixture selection instead of real exploration
 	mockLLM     llm.AgentClient // Cheap LLM (e.g., gpt-4o-mini) for fixture selection
@@ -131,6 +136,42 @@ func (e *ExploreAgent) WithMockMode(selectorLLM llm.AgentClient, fixtureFile str
 	return e
 }
 
+// WithFindingsPersister enables auto-caching and deduplication of explore results.
+// When set, Explore() will check for cached findings before exploring and
+// automatically persist new findings after exploration.
+func (e *ExploreAgent) WithFindingsPersister(fp FindingsPersister) *ExploreAgent {
+	e.findings = fp
+	return e
+}
+
+// persistFinding saves the exploration result as a CodeFinding for caching.
+func (e *ExploreAgent) persistFinding(ctx context.Context, issueID int64, query, report string, metrics *ExploreMetrics) {
+	if e.findings == nil || issueID == 0 {
+		return
+	}
+
+	finding := model.CodeFinding{
+		ID:         fmt.Sprintf("%d", id.New()),
+		Query:      query,
+		Synthesis:  report,
+		Sources:    []model.CodeSource{}, // TODO: extract from metrics.ToolCalls
+		TokensUsed: metrics.ContextWindowTokens + metrics.TotalCompletionTokens,
+		CreatedAt:  time.Now(),
+	}
+
+	if err := e.findings.AddFinding(ctx, issueID, finding); err != nil {
+		slog.WarnContext(ctx, "failed to persist explore finding",
+			"issue_id", issueID,
+			"query", query,
+			"error", err)
+	} else {
+		slog.InfoContext(ctx, "persisted explore finding",
+			"issue_id", issueID,
+			"query", query,
+			"tokens_used", finding.TokensUsed)
+	}
+}
+
 // toolCallRecord tracks a tool invocation for doom loop detection.
 type toolCallRecord struct {
 	name string
@@ -145,7 +186,24 @@ type toolResult struct {
 
 // Explore explores the codebase to answer a question.
 // Returns a prose report with code snippets for another LLM to read.
-func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error) {
+// If issueID is provided (non-zero) and a FindingsPersister is configured,
+// the result will be cached and similar queries will return cached findings.
+func (e *ExploreAgent) Explore(ctx context.Context, issueID int64, query string) (string, error) {
+	// Check for cached finding if persister is configured
+	if e.findings != nil && issueID != 0 {
+		cached, err := e.findings.FindSimilarQuery(ctx, issueID, query)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to check cached findings", "error", err)
+		} else if cached != nil && time.Since(cached.CreatedAt) < FindingsCacheDuration {
+			slog.InfoContext(ctx, "returning cached finding",
+				"issue_id", issueID,
+				"query", query,
+				"cached_query", cached.Query,
+				"age", time.Since(cached.CreatedAt))
+			return cached.Synthesis, nil
+		}
+	}
+
 	// Mock mode: use fixture selection instead of real exploration
 	if e.mockMode {
 		return e.exploreWithMock(ctx, query)
@@ -240,6 +298,7 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error
 
 			metrics.FinalReportLen = len(report)
 			debugLog.WriteString(fmt.Sprintf("[SYNTHESIS]\n%s\n", report))
+			e.persistFinding(ctx, issueID, query, report, &metrics)
 			return report, nil
 		}
 
@@ -299,7 +358,9 @@ Stop exploring. Start synthesizing.`,
 				return "", err
 			}
 
+			metrics.FinalReportLen = len(report)
 			debugLog.WriteString(fmt.Sprintf("[SYNTHESIS]\n%s\n", report))
+			e.persistFinding(ctx, issueID, query, report, &metrics)
 			return report, nil
 		}
 
@@ -343,8 +404,10 @@ Stop exploring. Start synthesizing.`,
 			// Combine the original report with the confidence assessment
 			finalReport := pendingReport + "\n\n---\n\n**Confidence Assessment:** " + resp.Content
 			metrics.FinalReportLen = len(finalReport)
+			metrics.TerminationReason = "natural"
 
 			debugLog.WriteString(fmt.Sprintf("=== EXPLORE AGENT COMPLETED (confidence: %s) ===\n", metrics.Confidence))
+			e.persistFinding(ctx, issueID, query, finalReport, &metrics)
 			return finalReport, nil
 		}
 
@@ -410,7 +473,9 @@ Stop exploring. Start synthesizing.`,
 					return "", err
 				}
 
+				metrics.FinalReportLen = len(report)
 				debugLog.WriteString(fmt.Sprintf("[SYNTHESIS]\n%s\n", report))
+				e.persistFinding(ctx, issueID, query, report, &metrics)
 				return report, nil
 			}
 		} else {
@@ -665,18 +730,18 @@ For structural questions in Go/Python:
 # Strategy
 
 1. **Structure before text** — For Go/Python, codegraph gives precise answers; grep gives noisy matches
-2. **Narrow fast** — Start specific, broaden only if needed
-3. **Surgical reads** — Read 30-50 lines around the target, never full files
-4. **Stop at sufficient evidence** — You don't need exhaustive proof
+2. **Start specific, broaden as needed** — Begin with focused queries, expand to cover all aspects
+3. **Read enough to understand** — Read 50-100 lines around targets for full context
+4. **Gather comprehensive evidence** — Explore all relevant aspects before synthesizing
 
 # Anti-Patterns
 
 ❌ grep for "who calls X" in Go/Python — codegraph gives exact answer
 ❌ codegraph for .js/.ts/other files — unsupported, use grep
 ❌ Manually constructing qnames — use codegraph(resolve) or pass name
-❌ Reading full files "for context" — read the specific function
+❌ Reading only 10-20 lines — read enough to understand the full context
 ❌ Multiple searches for same thing — your context already has the data
-❌ "One more search to be thorough" — if you can answer, stop
+❌ Stopping before exploring related areas — follow connections to build complete picture
 
 # Tools Reference
 
@@ -691,24 +756,70 @@ bash(command) — Git only: log, diff, blame, show, status. Also: ls.
 Go module: %s
 Codebase index: .basegraph/index.md
 
+# Token Budget
+
+You have approximately 60,000 tokens for this exploration (medium thoroughness).
+- Around 40,000 tokens: consider starting your report synthesis
+- Maximum 60,000 tokens: you must synthesize by this point
+
+Use your budget wisely:
+- Explore multiple related areas, not just the direct answer
+- Read 50-100 lines for full context, not just function signatures
+- Follow connections to build a complete picture
+
 # Output
 
-When you have sufficient evidence, write:
+When you have gathered comprehensive evidence, write a detailed report:
 
 <report>
-## Answer
-[Direct 1-2 sentence answer]
+## Summary
+[2-3 sentence overview answering the question directly]
 
-## Evidence
-- file.go:42 — [what this shows]
-- file.go:87 — [what this shows]
+## 1. [First Major Topic/Component]
 
-## Snippets
-[Most relevant snippets with file:line]
+[Detailed explanation with context about this aspect]
+
+**Key Files:**
+| File | Purpose |
+|------|---------|
+| path/to/file.go | Brief description of role |
+
+**Code:**
+~~~go
+// file.go:42-58 - What this code does
+[relevant code snippet]
+~~~
+
+## 2. [Second Major Topic/Component]
+
+[Continue this pattern for each major aspect discovered]
+
+## 3. [Additional Topics as Needed]
+
+[Add as many numbered sections as the topic requires]
+
+## Key Findings
+
+1. [Important architectural/design insight]
+2. [Important implementation detail]
+3. [Important relationship or flow]
+
+## Files Reference
+
+| File | Lines | Purpose |
+|------|-------|---------|
+| file1.go | 42-58 | Description |
+| file2.go | 100-150 | Description |
+| file3.go | 200-250 | Description |
 
 ## Confidence
-[high/medium/low] — [reasoning]
+[high/medium/low] — [reasoning about completeness of exploration]
 </report>
 
-Stop exploring when you can write this report.`, e.modulePath)
+**Report Guidelines:**
+- Organize by **logical topics**, not by discovery order
+- Use **tables** to summarize file lists and relationships
+- Include **actual code snippets** for key logic (with file:line references)
+- Add as many numbered sections as needed to fully answer the question
+- The report should be **self-contained** — a reader shouldn't need to explore further`, e.modulePath)
 }
