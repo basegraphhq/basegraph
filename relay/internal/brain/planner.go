@@ -91,8 +91,9 @@ func NewPlanner(llmClient llm.AgentClient, explore *ExploreAgent, debugDir strin
 }
 
 // Plan runs the reasoning loop with pre-built messages from ContextBuilder.
+// issueID is used to persist explore findings for caching/deduplication.
 // Returns structured actions for Orchestrator to execute.
-func (p *Planner) Plan(ctx context.Context, messages []llm.Message) (PlannerOutput, error) {
+func (p *Planner) Plan(ctx context.Context, issueID int64, messages []llm.Message) (PlannerOutput, error) {
 	start := time.Now()
 
 	// Enrich context with planner component
@@ -266,7 +267,7 @@ func (p *Planner) Plan(ctx context.Context, messages []llm.Message) (PlannerOutp
 			}
 		}
 
-		results := p.executeExploresParallel(ctx, resp.ToolCalls)
+		results := p.executeExploresParallel(ctx, issueID, resp.ToolCalls)
 
 		for _, r := range results {
 			// Log tool result (truncated for readability)
@@ -392,7 +393,7 @@ type exploreResult struct {
 }
 
 // executeExploresParallel runs multiple explore calls concurrently with bounded parallelism.
-func (p *Planner) executeExploresParallel(ctx context.Context, toolCalls []llm.ToolCall) []exploreResult {
+func (p *Planner) executeExploresParallel(ctx context.Context, issueID int64, toolCalls []llm.ToolCall) []exploreResult {
 	results := make([]exploreResult, len(toolCalls))
 	var wg sync.WaitGroup
 
@@ -432,7 +433,7 @@ func (p *Planner) executeExploresParallel(ctx context.Context, toolCalls []llm.T
 				"slot", idx+1,
 				"total", len(toolCalls))
 
-			report, err := p.explore.Explore(ctx, params.Query)
+			report, err := p.explore.Explore(ctx, issueID, params.Query)
 			if err != nil {
 				slog.WarnContext(ctx, "explore agent failed",
 					"error", err,
@@ -604,13 +605,25 @@ Test: Would this help someone on a DIFFERENT ticket? If no, don't capture it.
 # Execution
 You're a Planner that returns structured actions. Don't roleplay posting — request it via actions. End your turn by submitting actions.
 
+# Code Findings (cached explorations)
+
+Before calling explore(), check if a Code Finding already answers your question.
+Findings show what was explored and when — if one covers your question and is recent (< 1 hour), use it.
+
+Only explore if:
+- No existing finding covers your question
+- The relevant finding is stale and you need fresh information
+- You need different details than what the finding provides
+
+This saves time and keeps context focused.
+
 # Tools
 
 ## explore(query)
 Delegate exploration to a junior engineer. Keep queries short and conceptual:
 - "Explore how authentication works" (not "find JWT validation in AuthMiddleware")
 - "Explore the webhook handling flow" (not "trace handleWebhook to processEvent")
-They'll discover the specifics and report back.
+They'll discover the specifics and report back. Results are automatically cached as Code Findings.
 
 ## submit_actions(actions, reasoning)
 End your turn. Reasoning is for logs only.

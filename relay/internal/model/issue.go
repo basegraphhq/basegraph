@@ -43,11 +43,15 @@ type CodeSource struct {
 }
 
 // CodeFinding represents the ExploreAgent's understanding of code context.
-// Intentionally minimal: prose synthesis + evidence sources.
-// The consumer (Gap Detector) is an LLM that can read natural language.
+// Auto-persisted by ExploreAgent after each exploration.
+// The Query field enables deduplication across planner runs.
 type CodeFinding struct {
 	// ID is a Snowflake ID for referencing this finding in actions (e.g., removal).
 	ID string `json:"id"`
+
+	// Query is the original exploration query that produced this finding.
+	// Used for deduplication: similar queries return cached findings.
+	Query string `json:"query"`
 
 	// Synthesis is free-form prose describing what was found and understood.
 	// Written like a senior engineer briefing the team - patterns, relationships,
@@ -57,6 +61,13 @@ type CodeFinding struct {
 	// Sources provide evidence/grounding for the synthesis.
 	// These are the actual code locations referenced.
 	Sources []CodeSource `json:"sources"`
+
+	// TokensUsed tracks the cost of this exploration (prompt + completion).
+	TokensUsed int `json:"tokens_used,omitempty"`
+
+	// CreatedAt enables staleness detection.
+	// Findings older than a threshold may be re-explored.
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type Keyword struct {
