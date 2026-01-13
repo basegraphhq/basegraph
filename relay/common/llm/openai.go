@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/openai/openai-go"
@@ -73,8 +74,10 @@ func (c *openaiClient) ChatWithTools(ctx context.Context, req AgentRequest) (*Ag
 		params.Temperature = openai.Float(*req.Temperature)
 	}
 
-	// Enable reasoning for supported models (gpt-5.1, o1, o3, etc.)
-	if c.reasoningEffort != "" {
+	// Enable reasoning for supported models only
+	// OpenAI: o1, o3, gpt-5.1 variants
+	// xAI: only grok-3-mini supports reasoning_effort (grok-4.x does NOT)
+	if c.reasoningEffort != "" && supportsReasoningEffort(c.model) {
 		params.ReasoningEffort = c.reasoningEffort
 	}
 
@@ -195,4 +198,13 @@ func (c *openaiClient) convertTools(tools []Tool) []openai.ChatCompletionToolPar
 	}
 
 	return result
+}
+
+// supportsReasoningEffort returns true if the model supports the reasoningEffort parameter.
+// Only OpenAI reasoning models (o1, o3, gpt-5.x) support this parameter.
+// xAI Grok models do NOT support it.
+func supportsReasoningEffort(model string) bool {
+	return strings.HasPrefix(model, "o1") ||
+		strings.HasPrefix(model, "o3") ||
+		strings.HasPrefix(model, "gpt-5")
 }

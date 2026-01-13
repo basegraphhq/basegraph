@@ -74,3 +74,21 @@ RETURNING *;
 -- name: CountOpenBlockingGapsByIssue :one
 SELECT COUNT(*)::bigint FROM gaps
 WHERE issue_id = $1 AND status = 'open' AND severity = 'blocking';
+
+-- name: OpenGap :one
+UPDATE gaps
+SET status = 'open'
+WHERE id = $1 AND status = 'pending'
+RETURNING *;
+
+-- name: ListPendingGapsByIssue :many
+SELECT * FROM gaps
+WHERE issue_id = $1 AND status = 'pending'
+ORDER BY
+    CASE severity
+        WHEN 'blocking' THEN 1
+        WHEN 'high' THEN 2
+        WHEN 'medium' THEN 3
+        WHEN 'low' THEN 4
+    END,
+    created_at ASC;

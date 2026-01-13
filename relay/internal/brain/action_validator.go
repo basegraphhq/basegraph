@@ -25,6 +25,7 @@ var (
 	ErrInvalidSeverity       = errors.New("invalid gap severity")
 	ErrInvalidRespondent     = errors.New("invalid gap respondent")
 	ErrGapNotFound           = errors.New("gap not found")
+	ErrGapNotPending         = errors.New("gap is not pending")
 	ErrMissingGapCloseReason = errors.New("gap close missing reason")
 	ErrMissingGapCloseNote   = errors.New("gap close missing note")
 	ErrInvalidGapCloseReason = errors.New("invalid gap close reason")
@@ -172,6 +173,24 @@ func (v *actionValidator) validateUpdateGaps(ctx context.Context, action Action)
 		}
 	}
 
+	// Validate Ask gap IDs - must exist and be in pending status
+	for i, gapID := range data.Ask {
+		if string(gapID) == "" {
+			return fmt.Errorf("ask[%d]: %w", i, ErrGapNotFound)
+		}
+
+		gap, err := v.lookupGapByAnyID(ctx, string(gapID))
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) {
+				return fmt.Errorf("ask[%d]: %w: %s", i, ErrGapNotFound, string(gapID))
+			}
+			return fmt.Errorf("ask[%d]: %w", i, err)
+		}
+		if gap.Status != model.GapStatusPending {
+			return fmt.Errorf("ask[%d]: %w: %s (status: %s)", i, ErrGapNotPending, string(gapID), gap.Status)
+		}
+	}
+
 	return nil
 }
 
@@ -255,7 +274,12 @@ func (v *actionValidator) validateReadyForSpecGeneration(ctx context.Context, is
 }
 
 func (v *actionValidator) lookupGapByAnyID(ctx context.Context, idStr string) (model.Gap, error) {
-	id, err := strconv.ParseInt(idStr, 10, 64)
+	// Normalize: strip common LLM mistakes like "gap " prefix
+	normalized := strings.TrimSpace(idStr)
+	normalized = strings.TrimPrefix(normalized, "gap ")
+	normalized = strings.TrimPrefix(normalized, "Gap ")
+
+	id, err := strconv.ParseInt(normalized, 10, 64)
 	if err != nil {
 		return model.Gap{}, fmt.Errorf("invalid gap id: %s", idStr)
 	}
@@ -313,9 +337,17 @@ func FormatValidationErrorForLLM(err error) string {
 
 	errStr := err.Error()
 
+	if strings.Contains(errStr, "invalid gap id") {
+		sb.WriteString("- Gap ID must be numeric only (e.g., \"220\", not \"gap 220\")\n")
+		sb.WriteString("- Use the number from [gap N] format, not the full bracket text\n")
+	}
 	if strings.Contains(errStr, "gap not found") {
-		sb.WriteString("- Gap IDs must match existing gaps from 'Open Gaps' section\n")
+		sb.WriteString("- Gap IDs must match existing gaps from 'Open Gaps' or 'Pending Gaps' section\n")
 		sb.WriteString("- Use short numeric IDs shown in [gap N] format\n")
+	}
+	if strings.Contains(errStr, "gap is not pending") {
+		sb.WriteString("- The 'ask' action can only promote gaps with 'pending' status\n")
+		sb.WriteString("- Check the 'Pending Gaps' section for valid gap IDs to ask\n")
 	}
 	if strings.Contains(errStr, "content too short") || strings.Contains(errStr, "content too long") {
 		sb.WriteString("- Comment content must be 1-65000 characters\n")

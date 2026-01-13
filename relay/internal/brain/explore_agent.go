@@ -25,9 +25,9 @@ const (
 type Thoroughness string
 
 const (
-	ThoroughnessQuick  Thoroughness = "quick"    // Fast lookup, ~30 iterations, ~40k tokens
-	ThoughnessMedium   Thoroughness = "medium"   // Balanced exploration, ~50 iterations, ~100k tokens
-	ThoughnessThorough Thoroughness = "thorough" // Comprehensive search, ~100 iterations, ~200k tokens
+	ThoroughnessQuick  Thoroughness = "quick"    // Fast lookup, ~30 iterations, ~15k soft / ~25k hard
+	ThoughnessMedium   Thoroughness = "medium"   // Balanced exploration, ~50 iterations, ~40k soft / ~60k hard
+	ThoughnessThorough Thoroughness = "thorough" // Comprehensive search, ~120 iterations, ~80k soft / ~120k hard
 )
 
 // ThoroughnessConfig defines limits and behavior for each thoroughness level.
@@ -50,14 +50,14 @@ func thoroughnessConfig(t Thoroughness) ThoroughnessConfig {
 	case ThoughnessMedium:
 		return ThoroughnessConfig{
 			MaxIterations:   50,
-			SoftTokenTarget: 25000,
-			HardTokenLimit:  40000,
+			SoftTokenTarget: 40000,
+			HardTokenLimit:  60000,
 		}
 	case ThoughnessThorough:
 		return ThoroughnessConfig{
 			MaxIterations:   120,
-			SoftTokenTarget: 60000,
-			HardTokenLimit:  100000,
+			SoftTokenTarget: 80000,
+			HardTokenLimit:  120000,
 		}
 	default:
 		return thoroughnessConfig(ThoughnessMedium)
@@ -145,21 +145,20 @@ type toolResult struct {
 
 // Explore explores the codebase to answer a question.
 // Returns a prose report with code snippets for another LLM to read.
-// Thoroughness controls search depth: quick (first match), medium (few locations), thorough (comprehensive).
-func (e *ExploreAgent) Explore(ctx context.Context, query string, thoroughness Thoroughness) (string, error) {
+func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error) {
 	// Mock mode: use fixture selection instead of real exploration
 	if e.mockMode {
 		return e.exploreWithMock(ctx, query)
 	}
 
-	config := thoroughnessConfig(thoroughness)
+	config := thoroughnessConfig(ThoughnessMedium)
 	start := time.Now()
 
 	// Initialize metrics for structured logging
 	metrics := ExploreMetrics{
 		SessionID:    time.Now().Format("20060102-150405.000"),
 		Query:        query,
-		Thoroughness: string(thoroughness),
+		Thoroughness: "medium",
 		StartTime:    start,
 		ToolCalls:    make(map[string]int),
 		CodegraphOps: make(map[string]int),
@@ -181,13 +180,12 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string, thoroughness T
 	// Start a new session for this explore query and prepare debug logging.
 	var debugLog strings.Builder
 	debugLog.WriteString(fmt.Sprintf("=== ExploreAgent session started at %s ===\n", metrics.SessionID))
-	debugLog.WriteString(fmt.Sprintf("Thoroughness: %s (max_iter=%d, soft_target=%d, hard_limit=%d)\n",
-		thoroughness, config.MaxIterations, config.SoftTokenTarget, config.HardTokenLimit))
+	debugLog.WriteString(fmt.Sprintf("Limits: max_iter=%d, soft_target=%d, hard_limit=%d\n",
+		config.MaxIterations, config.SoftTokenTarget, config.HardTokenLimit))
 	debugLog.WriteString(fmt.Sprintf("Query: %s\n\n", query))
 
 	slog.DebugContext(ctx, "explore agent starting",
-		"query", logger.Truncate(query, 100),
-		"thoroughness", string(thoroughness))
+		"query", logger.Truncate(query, 100))
 
 	// Track token usage and iterations
 	// - contextWindowTokens: current context window size (for limit checks)
@@ -209,7 +207,6 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string, thoroughness T
 
 		slog.InfoContext(ctx, "explore agent completed",
 			"query", logger.Truncate(query, 50),
-			"thoroughness", string(thoroughness),
 			"duration_ms", metrics.DurationMs,
 			"iterations", iterations,
 			"context_window_tokens", contextWindowTokens,

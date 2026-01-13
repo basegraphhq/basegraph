@@ -89,26 +89,46 @@ func main() {
 
 	producer := queue.NewRedisProducer(redisClient, cfg.Pipeline.RedisStream)
 
-	if !cfg.LLM.Enabled() {
-		slog.ErrorContext(ctx, "LLM_API_KEY is required for pipeline processing")
+	if !cfg.PlannerLLM.Enabled() {
+		slog.ErrorContext(ctx, "PLANNER_LLM_API_KEY is required for pipeline processing")
 		os.Exit(1)
 	}
 
-	agentClient, err := llm.NewAgentClient(llm.Config{
-		Provider:        cfg.LLM.Provider,
-		APIKey:          cfg.LLM.APIKey,
-		BaseURL:         cfg.LLM.BaseURL,
-		Model:           cfg.LLM.Model,
-		ReasoningEffort: llm.ReasoningEffort(cfg.LLM.ReasoningEffort),
+	plannerClient, err := llm.NewAgentClient(llm.Config{
+		Provider:        cfg.PlannerLLM.Provider,
+		APIKey:          cfg.PlannerLLM.APIKey,
+		BaseURL:         cfg.PlannerLLM.BaseURL,
+		Model:           cfg.PlannerLLM.Model,
+		ReasoningEffort: llm.ReasoningEffort(cfg.PlannerLLM.ReasoningEffort),
 	})
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to create agent client", "error", err)
+		slog.ErrorContext(ctx, "failed to create planner client", "error", err)
 		os.Exit(1)
 	}
-	slog.InfoContext(ctx, "agent client initialized",
-		"provider", cfg.LLM.Provider,
-		"model", cfg.LLM.Model,
-		"reasoning_effort", cfg.LLM.ReasoningEffort)
+	slog.InfoContext(ctx, "planner client initialized",
+		"provider", cfg.PlannerLLM.Provider,
+		"model", cfg.PlannerLLM.Model,
+		"reasoning_effort", cfg.PlannerLLM.ReasoningEffort)
+
+	if !cfg.ExploreLLM.Enabled() {
+		slog.ErrorContext(ctx, "EXPLORE_LLM_API_KEY is required for pipeline processing")
+		os.Exit(1)
+	}
+
+	exploreClient, err := llm.NewAgentClient(llm.Config{
+		Provider:        cfg.ExploreLLM.Provider,
+		APIKey:          cfg.ExploreLLM.APIKey,
+		BaseURL:         cfg.ExploreLLM.BaseURL,
+		Model:           cfg.ExploreLLM.Model,
+		ReasoningEffort: llm.ReasoningEffort(cfg.ExploreLLM.ReasoningEffort),
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to create explore client", "error", err)
+		os.Exit(1)
+	}
+	slog.InfoContext(ctx, "explore client initialized",
+		"provider", cfg.ExploreLLM.Provider,
+		"model", cfg.ExploreLLM.Model)
 
 	repoRoot := os.Getenv("REPO_ROOT")
 	if repoRoot == "" {
@@ -165,18 +185,19 @@ func main() {
 	// Set MOCK_EXPLORE_FIXTURES to enable (e.g., "evals/fixtures/explore.json")
 	mockFixtureFile := os.Getenv("MOCK_EXPLORE_FIXTURES")
 	if mockFixtureFile != "" {
-		mockAPIKey := os.Getenv("OPENAI_API_KEY")
+		mockAPIKey := os.Getenv("MOCK_EXPLORE_KEY")
 		if mockAPIKey == "" {
-			mockAPIKey = cfg.LLM.APIKey // Fall back to LLM_API_KEY
+			mockAPIKey = cfg.PlannerLLM.APIKey // Fall back to PLANNER_LLM_API_KEY
 		}
 		mockModel := os.Getenv("MOCK_EXPLORE_MODEL")
 		if mockModel == "" {
-			mockModel = "gpt-4o-mini"
+			mockModel = "grok-4-1-fast-reasoning"
 		}
 
 		mockLLM, err := llm.NewAgentClient(llm.Config{
 			Provider: "openai",
 			APIKey:   mockAPIKey,
+			BaseURL:  os.Getenv("MOCK_EXPLORE_BASE_URL"),
 			Model:    mockModel,
 		})
 		if err != nil {
@@ -195,7 +216,8 @@ func main() {
 
 	orchestrator := brain.NewOrchestrator(
 		orchestratorCfg,
-		agentClient,
+		plannerClient,
+		exploreClient,
 		arangoClient,
 		stores.Issues(),
 		stores.Gaps(),

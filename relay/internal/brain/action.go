@@ -62,6 +62,7 @@ type CodeSourceInput struct {
 type UpdateGapsAction struct {
 	Add   []GapInput `json:"add,omitempty"`
 	Close []GapClose `json:"close,omitempty"`
+	Ask   []GapID    `json:"ask,omitempty"` // promote pending gaps to open (asked)
 }
 
 type UpdateLearningsAction struct {
@@ -78,6 +79,7 @@ type GapInput struct {
 	Evidence   string      `json:"evidence,omitempty"`
 	Severity   GapSeverity `json:"severity"`
 	Respondent Respondent  `json:"respondent"`
+	Pending    bool        `json:"pending,omitempty"` // true = store for later, false = mark as asked
 }
 
 type GapCloseReason string

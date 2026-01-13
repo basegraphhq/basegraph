@@ -98,18 +98,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Mock mode: enabled (fixtures=%s, model=%s)\n", mockFixtureFile, mockModel)
 	}
 
-	// Thoroughness from env or default
-	thoroughness := brain.ThoughnessMedium
-	if t := os.Getenv("THOROUGHNESS"); t != "" {
-		switch strings.ToLower(t) {
-		case "quick":
-			thoroughness = brain.ThoroughnessQuick
-		case "thorough":
-			thoroughness = brain.ThoughnessThorough
-		}
-	}
-
-	fmt.Fprintf(os.Stderr, "\nExplore CLI ready (repo=%s, thoroughness=%s)\n", repoRoot, thoroughness)
+	fmt.Fprintf(os.Stderr, "\nExplore CLI ready (repo=%s)\n", repoRoot)
 	fmt.Fprintln(os.Stderr, "Enter your question (or 'quit' to exit):")
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -130,7 +119,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nExploring: %s\n", query)
 		fmt.Fprintln(os.Stderr, "---")
 
-		report, err := explorer.Explore(ctx, query, thoroughness)
+		report, err := explorer.Explore(ctx, query)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			continue

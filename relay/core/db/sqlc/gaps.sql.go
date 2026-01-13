@@ -300,6 +300,81 @@ func (q *Queries) ListOpenGapsByIssue(ctx context.Context, issueID int64) ([]Gap
 	return items, nil
 }
 
+const listPendingGapsByIssue = `-- name: ListPendingGapsByIssue :many
+SELECT id, short_id, issue_id, status, closed_reason, closed_note, question, evidence, severity, respondent, learning_id, created_at, resolved_at FROM gaps
+WHERE issue_id = $1 AND status = 'pending'
+ORDER BY
+    CASE severity
+        WHEN 'blocking' THEN 1
+        WHEN 'high' THEN 2
+        WHEN 'medium' THEN 3
+        WHEN 'low' THEN 4
+    END,
+    created_at ASC
+`
+
+func (q *Queries) ListPendingGapsByIssue(ctx context.Context, issueID int64) ([]Gap, error) {
+	rows, err := q.db.Query(ctx, listPendingGapsByIssue, issueID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Gap
+	for rows.Next() {
+		var i Gap
+		if err := rows.Scan(
+			&i.ID,
+			&i.ShortID,
+			&i.IssueID,
+			&i.Status,
+			&i.ClosedReason,
+			&i.ClosedNote,
+			&i.Question,
+			&i.Evidence,
+			&i.Severity,
+			&i.Respondent,
+			&i.LearningID,
+			&i.CreatedAt,
+			&i.ResolvedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const openGap = `-- name: OpenGap :one
+UPDATE gaps
+SET status = 'open'
+WHERE id = $1 AND status = 'pending'
+RETURNING id, short_id, issue_id, status, closed_reason, closed_note, question, evidence, severity, respondent, learning_id, created_at, resolved_at
+`
+
+func (q *Queries) OpenGap(ctx context.Context, id int64) (Gap, error) {
+	row := q.db.QueryRow(ctx, openGap, id)
+	var i Gap
+	err := row.Scan(
+		&i.ID,
+		&i.ShortID,
+		&i.IssueID,
+		&i.Status,
+		&i.ClosedReason,
+		&i.ClosedNote,
+		&i.Question,
+		&i.Evidence,
+		&i.Severity,
+		&i.Respondent,
+		&i.LearningID,
+		&i.CreatedAt,
+		&i.ResolvedAt,
+	)
+	return i, err
+}
+
 const resolveGap = `-- name: ResolveGap :one
 UPDATE gaps
 SET status = 'resolved',

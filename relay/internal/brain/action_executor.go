@@ -78,16 +78,30 @@ func (e *actionExecutor) executePostComment(ctx context.Context, issue model.Iss
 	}
 
 	if data.ReplyToID == "" {
+		slog.InfoContext(ctx, "creating discussion",
+			"issue_id", issue.ID,
+			"content_length", len(content))
 		_, err = e.issueTracker.CreateDiscussion(ctx, issue_tracker.CreateDiscussionParams{
 			Issue:   issue,
 			Content: content,
 		})
 	} else {
+		slog.InfoContext(ctx, "replying to thread",
+			"issue_id", issue.ID,
+			"reply_to_id", data.ReplyToID,
+			"content_length", len(content))
 		_, err = e.issueTracker.ReplyToThread(ctx, issue_tracker.ReplyToThreadParams{
 			Issue:        issue,
 			DiscussionID: data.ReplyToID,
 			Content:      content,
 		})
+	}
+
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to post comment",
+			"issue_id", issue.ID,
+			"reply_to_id", data.ReplyToID,
+			"error", err)
 	}
 
 	return err
@@ -151,9 +165,13 @@ func (e *actionExecutor) executeUpdateGaps(ctx context.Context, issue model.Issu
 	}
 
 	for _, input := range data.Add {
+		status := model.GapStatusOpen
+		if input.Pending {
+			status = model.GapStatusPending
+		}
 		gap := model.Gap{
 			IssueID:    issue.ID,
-			Status:     model.GapStatusOpen,
+			Status:     status,
 			Question:   input.Question,
 			Evidence:   input.Evidence,
 			Severity:   model.GapSeverity(input.Severity),
@@ -170,6 +188,17 @@ func (e *actionExecutor) executeUpdateGaps(ctx context.Context, issue model.Issu
 			return fmt.Errorf("parsing gap id %s: %w", string(close.GapID), err)
 		}
 		if err := e.closeGapByAnyID(ctx, id, close.Reason, close.Note); err != nil {
+			return err
+		}
+	}
+
+	// Promote pending gaps to open (asked)
+	for _, gapID := range data.Ask {
+		id, err := strconv.ParseInt(string(gapID), 10, 64)
+		if err != nil {
+			return fmt.Errorf("parsing gap id %s: %w", string(gapID), err)
+		}
+		if err := e.openGapByAnyID(ctx, id); err != nil {
 			return err
 		}
 	}
@@ -203,6 +232,27 @@ func (e *actionExecutor) closeGapByAnyID(ctx context.Context, id int64, reason G
 	}
 	if _, err := e.gaps.Close(ctx, gap.ID, status, string(reason), note); err != nil {
 		return fmt.Errorf("closing gap %d: %w", id, err)
+	}
+
+	return nil
+}
+
+func (e *actionExecutor) openGapByAnyID(ctx context.Context, id int64) error {
+	_, err := e.gaps.Open(ctx, id)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("opening gap %d: %w", id, err)
+	}
+
+	// Try short ID
+	gap, err := e.gaps.GetByShortID(ctx, id)
+	if err != nil {
+		return fmt.Errorf("opening gap %d: %w", id, err)
+	}
+	if _, err := e.gaps.Open(ctx, gap.ID); err != nil {
+		return fmt.Errorf("opening gap %d: %w", id, err)
 	}
 
 	return nil

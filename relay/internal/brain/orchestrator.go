@@ -119,7 +119,8 @@ type Orchestrator struct {
 
 func NewOrchestrator(
 	cfg OrchestratorConfig,
-	agentClient llm.AgentClient,
+	plannerClient llm.AgentClient,
+	exploreClient llm.AgentClient,
 	arango arangodb.Client,
 	issues store.IssueStore,
 	gaps store.GapStore,
@@ -133,7 +134,7 @@ func NewOrchestrator(
 	debugDir := SetupDebugRunDir(cfg.DebugDir)
 
 	tools := NewExploreTools(cfg.RepoRoot, arango)
-	explore := NewExploreAgent(agentClient, tools, cfg.ModulePath, debugDir)
+	explore := NewExploreAgent(exploreClient, tools, cfg.ModulePath, debugDir)
 
 	// Enable mock explore mode if configured (for A/B testing planner prompts)
 	if cfg.MockExploreEnabled && cfg.MockExploreLLM != nil && cfg.MockFixtureFile != "" {
@@ -142,7 +143,7 @@ func NewOrchestrator(
 			"fixture_file", cfg.MockFixtureFile)
 	}
 
-	planner := NewPlanner(agentClient, explore, debugDir)
+	planner := NewPlanner(plannerClient, explore, debugDir)
 	ctxBuilder := NewContextBuilder(integrations, configs, learnings, gaps)
 	validator := NewActionValidator(gaps)
 

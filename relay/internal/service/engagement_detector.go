@@ -158,13 +158,19 @@ func (d *engagementDetector) checkReplyWithDiscussions(
 	}
 
 	// Check if relay user has commented in the target thread
-	expectedAuthor := fmt.Sprintf("id:%d", serviceAccountUserID)
+	// Author can be stored as username or id:xxx format depending on provider data
+	expectedAuthorByID := fmt.Sprintf("id:%d", serviceAccountUserID)
 	relayInThread := false
 	for _, disc := range discussions {
-		if disc.ThreadID == nil || *disc.ThreadID != req.DiscussionID {
+		// Check if this comment belongs to the thread:
+		// 1. It's a reply in the thread (ThreadID matches), OR
+		// 2. It's the root of the thread (ExternalID matches, meaning relay started this thread)
+		inThread := (disc.ThreadID != nil && *disc.ThreadID == req.DiscussionID) ||
+			disc.ExternalID == req.DiscussionID
+		if !inThread {
 			continue
 		}
-		if disc.Author == expectedAuthor {
+		if strings.EqualFold(disc.Author, serviceAccountUsername) || disc.Author == expectedAuthorByID {
 			relayInThread = true
 			break
 		}
