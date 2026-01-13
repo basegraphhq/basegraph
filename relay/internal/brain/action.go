@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"basegraph.app/relay/internal/model"
 )
@@ -61,6 +62,7 @@ type CodeSourceInput struct {
 type UpdateGapsAction struct {
 	Add   []GapInput `json:"add,omitempty"`
 	Close []GapClose `json:"close,omitempty"`
+	Ask   []GapID    `json:"ask,omitempty"` // promote pending gaps to open (asked)
 }
 
 type UpdateLearningsAction struct {
@@ -77,6 +79,7 @@ type GapInput struct {
 	Evidence   string      `json:"evidence,omitempty"`
 	Severity   GapSeverity `json:"severity"`
 	Respondent Respondent  `json:"respondent"`
+	Pending    bool        `json:"pending,omitempty"` // true = store for later, false = mark as asked
 }
 
 type GapCloseReason string
@@ -127,6 +130,22 @@ const (
 	GapSeverityMedium   GapSeverity = "medium"
 	GapSeverityLow      GapSeverity = "low"
 )
+
+func (g *GapSeverity) UnmarshalJSON(b []byte) error {
+	if string(b) == "null" {
+		*g = ""
+		return nil
+	}
+
+	var s string
+	if err := json.Unmarshal(b, &s); err != nil {
+		return fmt.Errorf("severity must be a string: %w", err)
+	}
+
+	normalized := strings.ToLower(strings.TrimSpace(s))
+	*g = GapSeverity(normalized)
+	return nil
+}
 
 type Respondent string
 

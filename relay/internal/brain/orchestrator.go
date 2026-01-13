@@ -57,6 +57,11 @@ type OrchestratorConfig struct {
 	RepoRoot   string
 	ModulePath string
 	DebugDir   string // Base directory for debug logs (empty = no logging)
+
+	// Mock explore mode for A/B testing planner prompts
+	MockExploreEnabled bool            // Enable mock explore mode
+	MockExploreLLM     llm.AgentClient // Cheap LLM for fixture selection (e.g., gpt-4o-mini)
+	MockFixtureFile    string          // Path to JSON file with pre-written explore responses
 }
 
 // SetupDebugRunDir creates a new debug run directory under baseDir/YYYY-MM-DD/NNN.
@@ -114,7 +119,8 @@ type Orchestrator struct {
 
 func NewOrchestrator(
 	cfg OrchestratorConfig,
-	agentClient llm.AgentClient,
+	plannerClient llm.AgentClient,
+	exploreClient llm.AgentClient,
 	arango arangodb.Client,
 	issues store.IssueStore,
 	gaps store.GapStore,
@@ -128,8 +134,16 @@ func NewOrchestrator(
 	debugDir := SetupDebugRunDir(cfg.DebugDir)
 
 	tools := NewExploreTools(cfg.RepoRoot, arango)
-	explore := NewExploreAgent(agentClient, tools, cfg.ModulePath, debugDir)
-	planner := NewPlanner(agentClient, explore, debugDir)
+	explore := NewExploreAgent(exploreClient, tools, cfg.ModulePath, debugDir)
+
+	// Enable mock explore mode if configured (for A/B testing planner prompts)
+	if cfg.MockExploreEnabled && cfg.MockExploreLLM != nil && cfg.MockFixtureFile != "" {
+		explore = explore.WithMockMode(cfg.MockExploreLLM, cfg.MockFixtureFile)
+		slog.InfoContext(context.Background(), "mock explore mode enabled",
+			"fixture_file", cfg.MockFixtureFile)
+	}
+
+	planner := NewPlanner(plannerClient, explore, debugDir)
 	ctxBuilder := NewContextBuilder(integrations, configs, learnings, gaps)
 	validator := NewActionValidator(gaps)
 

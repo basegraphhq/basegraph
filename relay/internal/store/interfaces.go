@@ -160,10 +160,12 @@ type GapStore interface {
 	GetByShortID(ctx context.Context, shortID int64) (model.Gap, error)
 	ListByIssue(ctx context.Context, issueID int64) ([]model.Gap, error)
 	ListOpenByIssue(ctx context.Context, issueID int64) ([]model.Gap, error)
+	ListPendingByIssue(ctx context.Context, issueID int64) ([]model.Gap, error)
 	ListClosedByIssue(ctx context.Context, issueID int64, limit int32) ([]model.Gap, error)
 	Resolve(ctx context.Context, id int64) (model.Gap, error)
 	Skip(ctx context.Context, id int64) (model.Gap, error)
 	Close(ctx context.Context, id int64, status model.GapStatus, reason, note string) (model.Gap, error)
+	Open(ctx context.Context, id int64) (model.Gap, error) // promote pending → open
 	SetLearning(ctx context.Context, id int64, learningID int64) (model.Gap, error)
 	CountOpenBlocking(ctx context.Context, issueID int64) (int64, error)
 }

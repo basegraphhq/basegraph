@@ -78,6 +78,14 @@ func (s *gapStore) ListOpenByIssue(ctx context.Context, issueID int64) ([]model.
 	return toGapModels(rows), nil
 }
 
+func (s *gapStore) ListPendingByIssue(ctx context.Context, issueID int64) ([]model.Gap, error) {
+	rows, err := s.queries.ListPendingGapsByIssue(ctx, issueID)
+	if err != nil {
+		return nil, err
+	}
+	return toGapModels(rows), nil
+}
+
 func (s *gapStore) ListClosedByIssue(ctx context.Context, issueID int64, limit int32) ([]model.Gap, error) {
 	rows, err := s.queries.ListClosedGapsByIssue(ctx, sqlc.ListClosedGapsByIssueParams{
 		IssueID: issueID,
@@ -128,6 +136,17 @@ func (s *gapStore) Close(ctx context.Context, id int64, status model.GapStatus, 
 		ClosedReason: closedReason,
 		ClosedNote:   closedNote,
 	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.Gap{}, ErrNotFound
+		}
+		return model.Gap{}, err
+	}
+	return toGapModel(row), nil
+}
+
+func (s *gapStore) Open(ctx context.Context, id int64) (model.Gap, error) {
+	row, err := s.queries.OpenGap(ctx, id)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return model.Gap{}, ErrNotFound

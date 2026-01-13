@@ -17,7 +17,8 @@ type Config struct {
 	EventWebhook EventWebhookConfig
 	Pipeline     PipelineConfig
 	OpenAI       OpenAIConfig
-	LLM          LLMConfig
+	PlannerLLM   LLMConfig
+	ExploreLLM   LLMConfig
 	ArangoDB     ArangoDBConfig
 	Env          string
 	Port         string
@@ -116,13 +117,21 @@ func Load() (Config, error) {
 			BaseURL: getEnv("OPENAI_BASE_URL", ""),
 			Model:   getEnv("OPENAI_MODEL", "gpt-4o-mini"),
 		},
-		LLM: LLMConfig{
-			Provider:        getEnv("LLM_PROVIDER", "anthropic"),
-			APIKey:          getEnv("LLM_API_KEY", ""),
-			BaseURL:         getEnv("LLM_BASE_URL", ""),
-			Model:           getEnv("LLM_MODEL", "claude-sonnet-4-5-20250514"),
-			MaxTokens:       getEnvInt("LLM_MAX_TOKENS", 8192),
-			ReasoningEffort: getEnv("LLM_REASONING_EFFORT", "medium"),
+		PlannerLLM: LLMConfig{
+			Provider:        getEnv("PLANNER_LLM_PROVIDER", "openai"),
+			APIKey:          getEnv("PLANNER_LLM_API_KEY", ""),
+			BaseURL:         getEnv("PLANNER_LLM_BASE_URL", ""),
+			Model:           getEnv("PLANNER_LLM_MODEL", "gpt-5.2"),
+			MaxTokens:       getEnvInt("PLANNER_LLM_MAX_TOKENS", 8192),
+			ReasoningEffort: getEnv("PLANNER_LLM_REASONING_EFFORT", "medium"),
+		},
+		ExploreLLM: LLMConfig{
+			Provider:        getEnv("EXPLORE_LLM_PROVIDER", "openai"),
+			APIKey:          getEnv("EXPLORE_LLM_API_KEY", ""),
+			BaseURL:         getEnv("EXPLORE_BASE_URL", ""),
+			Model:           getEnv("EXPLORE_LLM_MODEL", "grok-4-1-fast-reasoning"),
+			MaxTokens:       getEnvInt("EXPLORE_LLM_MAX_TOKENS", 16384),
+			ReasoningEffort: getEnv("EXPLORE_LLM_REASONING_EFFORT", ""),
 		},
 		ArangoDB: ArangoDBConfig{
 			URL:      getEnv("ARANGO_URL", "http://localhost:8529"),

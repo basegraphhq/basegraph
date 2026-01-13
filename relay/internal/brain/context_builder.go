@@ -57,9 +57,15 @@ func (b *contextBuilder) BuildPlannerMessages(ctx context.Context, issue model.I
 	}
 
 	// Fetch open gaps for this issue
-	gaps, err := b.fetchOpenGaps(ctx, issue.ID)
+	openGaps, err := b.fetchOpenGaps(ctx, issue.ID)
 	if err != nil {
 		return nil, fmt.Errorf("fetching open gaps: %w", err)
+	}
+
+	// Fetch pending gaps (identified but not yet asked)
+	pendingGaps, err := b.fetchPendingGaps(ctx, issue.ID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching pending gaps: %w", err)
 	}
 
 	// Fetch recent closed gaps (last 10) for context
@@ -79,7 +85,7 @@ func (b *contextBuilder) BuildPlannerMessages(ctx context.Context, issue model.I
 	// Message 2: Context dump (issue metadata, participants, learnings, gaps, findings)
 	messages = append(messages, llm.Message{
 		Role:    "user",
-		Content: b.buildContextDump(issue, learnings, gaps, recentClosed, triggerThreadID),
+		Content: b.buildContextDump(issue, learnings, openGaps, pendingGaps, recentClosed, triggerThreadID),
 	})
 
 	// Messages 3+: Discussion history as conversation
@@ -142,6 +148,15 @@ func (b *contextBuilder) fetchOpenGaps(ctx context.Context, issueID int64) ([]mo
 	return gaps, nil
 }
 
+// fetchPendingGaps retrieves pending gaps (identified but not yet asked) for the issue.
+func (b *contextBuilder) fetchPendingGaps(ctx context.Context, issueID int64) ([]model.Gap, error) {
+	gaps, err := b.gaps.ListPendingByIssue(ctx, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("fetching pending gaps: %w", err)
+	}
+	return gaps, nil
+}
+
 // fetchRecentClosedGaps returns the most recent closed gaps (resolved or skipped), up to limit.
 func (b *contextBuilder) fetchRecentClosedGaps(ctx context.Context, issueID int64, limit int) ([]model.Gap, error) {
 	all, err := b.gaps.ListClosedByIssue(ctx, issueID, int32(limit))
@@ -161,7 +176,7 @@ Your comments appear as @%s. When you see messages from @%s in the discussion hi
 }
 
 // buildContextDump creates the context message with issue metadata, learnings, gaps, and findings.
-func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.Learning, openGaps []model.Gap, recentClosed []model.Gap, triggerThreadID string) string {
+func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.Learning, openGaps []model.Gap, pendingGaps []model.Gap, recentClosed []model.Gap, triggerThreadID string) string {
 	var sb strings.Builder
 
 	// Issue section
@@ -203,9 +218,14 @@ func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.L
 		sb.WriteString("\n")
 	}
 
-	// Open gaps section
-	if gapsSection := formatGapsSection(issue, openGaps); gapsSection != "" {
+	// Open gaps section (asked, waiting for response)
+	if gapsSection := formatOpenGapsSection(issue, openGaps); gapsSection != "" {
 		sb.WriteString(gapsSection)
+	}
+
+	// Pending gaps section (identified but not yet asked)
+	if pendingSection := formatPendingGapsSection(issue, pendingGaps); pendingSection != "" {
+		sb.WriteString(pendingSection)
 	}
 
 	// Recently closed gaps section (last N)
@@ -233,15 +253,18 @@ func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.L
 	// Reply context - tells planner which thread to reply to
 	if triggerThreadID != "" {
 		sb.WriteString("# Reply Context\n\n")
-		sb.WriteString(fmt.Sprintf("This engagement was triggered by a message in thread `%s`. ", triggerThreadID))
-		sb.WriteString("Always use `reply_to_id: \"" + triggerThreadID + "\"` to keep the conversation in the same thread.\n\n")
+		sb.WriteString(fmt.Sprintf("This engagement was triggered by a message in thread `%s`.\n\n", triggerThreadID))
+		sb.WriteString("**Threading rules:**\n")
+		sb.WriteString(fmt.Sprintf("- Direct responses to that thread (acknowledgments, follow-up questions on the same topic): use `reply_to_id: \"%s\"`\n", triggerThreadID))
+		sb.WriteString("- New question categories (e.g., technical questions after product questions are answered): omit `reply_to_id` to create a new top-level comment\n")
+		sb.WriteString("- Always @mention the respondent (reporter for product questions, assignee for technical questions) in new top-level comments\n\n")
 	}
 
 	return sb.String()
 }
 
-// formatGapsSection creates markdown for open gaps grouped by severity.
-func formatGapsSection(issue model.Issue, gaps []model.Gap) string {
+// formatOpenGapsSection creates markdown for open gaps (asked, waiting for response) grouped by severity.
+func formatOpenGapsSection(issue model.Issue, gaps []model.Gap) string {
 	if len(gaps) == 0 {
 		return ""
 	}
@@ -253,7 +276,55 @@ func formatGapsSection(issue model.Issue, gaps []model.Gap) string {
 	}
 
 	var sb strings.Builder
-	sb.WriteString("# Open Gaps\n\n")
+	sb.WriteString("# Open Gaps (asked, waiting for response)\n\n")
+
+	// Process in severity order: blocking > high > medium > low
+	severityOrder := []model.GapSeverity{
+		model.GapSeverityBlocking,
+		model.GapSeverityHigh,
+		model.GapSeverityMedium,
+		model.GapSeverityLow,
+	}
+
+	for _, sev := range severityOrder {
+		gapsForSev := bySeverity[sev]
+		if len(gapsForSev) == 0 {
+			continue
+		}
+
+		sb.WriteString(fmt.Sprintf("## %s\n\n", strings.ToUpper(string(sev))))
+
+		for i, g := range gapsForSev {
+			gapID := g.ShortID
+			if gapID == 0 {
+				gapID = g.ID
+			}
+			sb.WriteString(fmt.Sprintf("%d. [gap %s] [for %s] %s\n", i+1, strconv.FormatInt(gapID, 10), formatGapRespondent(issue, g.Respondent), g.Question))
+			if g.Evidence != "" {
+				sb.WriteString(fmt.Sprintf("   Evidence: %s\n", g.Evidence))
+			}
+		}
+		sb.WriteString("\n")
+	}
+
+	return sb.String()
+}
+
+// formatPendingGapsSection creates markdown for pending gaps (identified but not yet asked) grouped by severity.
+func formatPendingGapsSection(issue model.Issue, gaps []model.Gap) string {
+	if len(gaps) == 0 {
+		return ""
+	}
+
+	// Group gaps by severity (already ordered by severity from store)
+	bySeverity := make(map[model.GapSeverity][]model.Gap)
+	for _, g := range gaps {
+		bySeverity[g.Severity] = append(bySeverity[g.Severity], g)
+	}
+
+	var sb strings.Builder
+	sb.WriteString("# Pending Gaps (identified but not yet asked)\n\n")
+	sb.WriteString("These questions have been identified but not posted yet. Use the `ask` action to promote them to open when you're ready to ask.\n\n")
 
 	// Process in severity order: blocking > high > medium > low
 	severityOrder := []model.GapSeverity{

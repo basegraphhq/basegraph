@@ -174,6 +174,19 @@ func (m *mockContextBuilderGapStore) ListOpenByIssue(ctx context.Context, issueI
 	return result, nil
 }
 
+func (m *mockContextBuilderGapStore) ListPendingByIssue(ctx context.Context, issueID int64) ([]model.Gap, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	var result []model.Gap
+	for _, g := range m.gaps {
+		if g.IssueID == issueID && g.Status == model.GapStatusPending {
+			result = append(result, g)
+		}
+	}
+	return result, nil
+}
+
 func (m *mockContextBuilderGapStore) ListClosedByIssue(ctx context.Context, issueID int64, limit int32) ([]model.Gap, error) {
 	all, err := m.ListByIssue(ctx, issueID)
 	if err != nil {
@@ -200,6 +213,10 @@ func (m *mockContextBuilderGapStore) Skip(ctx context.Context, id int64) (model.
 }
 
 func (m *mockContextBuilderGapStore) Close(ctx context.Context, id int64, status model.GapStatus, reason, note string) (model.Gap, error) {
+	return model.Gap{}, nil
+}
+
+func (m *mockContextBuilderGapStore) Open(ctx context.Context, id int64) (model.Gap, error) {
 	return model.Gap{}, nil
 }
 

@@ -12,7 +12,6 @@ import (
 
 	"basegraph.app/relay/common/id"
 	"basegraph.app/relay/common/logger"
-	"basegraph.app/relay/internal/mapper"
 	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/queue"
 	tracker "basegraph.app/relay/internal/service/issue_tracker"
@@ -147,49 +146,43 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		return nil, fmt.Errorf("unsupported provider: %s", params.Provider)
 	}
 
+	// Check engagement for ALL events (subscribed or not)
+	// Relay only engages on @mentions in issue body/comments or replies in participated threads
+	engagement, err := s.engagementDetector.ShouldEngage(ctx, integration.ID, EngagementRequest{
+		Provider:          params.Provider,
+		IssueBody:         params.IssueBody,
+		CommentBody:       params.CommentBody,
+		DiscussionID:      params.DiscussionID,
+		CommentID:         params.CommentID,
+		ExternalProjectID: params.ExternalProjectID,
+		ExternalIssueIID:  issueIID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("checking engagement: %w", err)
+	}
+
+	if !engagement.ShouldEngage {
+		slog.InfoContext(ctx, "event not engaged (no @mention or reply in participated thread)",
+			"external_issue_id", params.ExternalIssueID,
+			"is_subscribed", isSubscribed,
+			"event_type", params.EventType,
+		)
+		return &EventIngestResult{
+			Engaged: false,
+		}, nil
+	}
+
 	if isSubscribed {
-		slog.InfoContext(ctx, "refreshing discussions for tracked issue",
+		slog.InfoContext(ctx, "engagement on tracked issue",
 			"external_issue_id", params.ExternalIssueID,
 		)
 
-		discussions, err := issueTracker.FetchDiscussions(ctx, tracker.FetchDiscussionsParams{
-			IntegrationID: params.IntegrationID,
-			ProjectID:     params.ExternalProjectID,
-			IssueIID:      issueIID,
-		})
-		if err != nil {
-			slog.WarnContext(ctx, "failed to fetch discussions for existing issue",
-				"error", err,
-			)
-		}
-
-		existingIssue.Discussions = discussions
+		existingIssue.Discussions = engagement.Discussions
 		issueToUpsert = existingIssue
 
-		// Add eyes reaction for reply events on subscribed issues
-		if params.EventType == string(mapper.EventReply) {
-			s.addEyesReaction(ctx, issueTracker, params, issueIID)
-		}
+		// Add eyes reaction for engaged events on subscribed issues
+		s.addEyesReaction(ctx, issueTracker, params, issueIID)
 	} else {
-		engagement, err := s.engagementDetector.ShouldEngage(ctx, integration.ID, EngagementRequest{
-			Provider:          params.Provider,
-			IssueBody:         params.IssueBody,
-			CommentBody:       params.CommentBody,
-			DiscussionID:      params.DiscussionID,
-			CommentID:         params.CommentID,
-			ExternalProjectID: params.ExternalProjectID,
-			ExternalIssueIID:  issueIID,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("checking engagement: %w", err)
-		}
-
-		if !engagement.ShouldEngage {
-			return &EventIngestResult{
-				Engaged: false,
-			}, nil
-		}
-
 		issue, err := issueTracker.FetchIssue(ctx, tracker.FetchIssueParams{
 			IntegrationID: params.IntegrationID,
 			ProjectID:     params.ExternalProjectID,

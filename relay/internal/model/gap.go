@@ -5,7 +5,8 @@ import "time"
 type GapStatus string
 
 const (
-	GapStatusOpen     GapStatus = "open"
+	GapStatusPending  GapStatus = "pending" // identified but not yet asked
+	GapStatusOpen     GapStatus = "open"    // asked, waiting for response
 	GapStatusResolved GapStatus = "resolved"
 	GapStatusSkipped  GapStatus = "skipped"
 )

@@ -256,13 +256,13 @@ create table gaps (
     resolved_at timestamptz
 );
 
-comment on column gaps.status is 'open | resolved | skipped';
+comment on column gaps.status is 'pending | open | resolved | skipped';
 comment on column gaps.closed_reason is 'answered | inferred | not_relevant';
 comment on column gaps.severity is 'blocking | high | medium | low';
 comment on column gaps.respondent is 'reporter | assignee';
 
 alter table gaps add constraint chk_gaps_status
-    check (status in ('open', 'resolved', 'skipped'));
+    check (status in ('pending', 'open', 'resolved', 'skipped'));
 
 alter table gaps add constraint chk_gaps_severity
     check (severity in ('blocking', 'high', 'medium', 'low'));

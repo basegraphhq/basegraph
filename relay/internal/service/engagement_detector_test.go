@@ -1,10 +1,16 @@
 package service_test
 
 import (
+	"context"
+	"encoding/json"
+	"time"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
+	"basegraph.app/relay/internal/model"
 	"basegraph.app/relay/internal/service"
+	issue_tracker "basegraph.app/relay/internal/service/issue_tracker"
 )
 
 var _ = Describe("Engagement Detector Mention Logic", func() {
@@ -112,5 +118,174 @@ var _ = Describe("Engagement Detector Mention Logic", func() {
 				"Email test@example.com or ask @alice",
 				true),
 		)
+	})
+})
+
+var _ = Describe("Engagement Detector ShouldEngage", func() {
+	var (
+		detector      service.EngagementDetector
+		mockConfig    *mockIntegrationConfigStore
+		mockTracker   *mockIssueTrackerService
+		ctx           context.Context
+		integrationID int64
+	)
+
+	serviceAccountConfig := func() []byte {
+		cfg := model.ServiceAccountConfig{
+			UserID:   123,
+			Username: "relay-bot",
+		}
+		data, _ := json.Marshal(cfg)
+		return data
+	}
+
+	BeforeEach(func() {
+		ctx = context.Background()
+		integrationID = 1
+
+		mockConfig = &mockIntegrationConfigStore{
+			getByIntegrationAndKeyFn: func(_ context.Context, _ int64, _ string) (*model.IntegrationConfig, error) {
+				return &model.IntegrationConfig{
+					Value: serviceAccountConfig(),
+				}, nil
+			},
+		}
+		mockTracker = &mockIssueTrackerService{}
+
+		detector = service.NewEngagementDetector(
+			mockConfig,
+			map[model.Provider]issue_tracker.IssueTrackerService{
+				model.ProviderGitLab: mockTracker,
+			},
+		)
+	})
+
+	Describe("reply to Relay's top-level comment", func() {
+		It("should engage when user replies to Relay's top-level comment", func() {
+			// Relay posted a top-level comment (ThreadID is nil)
+			// User replies to it (DiscussionID = Relay's comment ExternalID)
+			relayCommentID := "note_12345"
+
+			mockTracker.fetchDiscussionsFn = func(_ context.Context, _ issue_tracker.FetchDiscussionsParams) ([]model.Discussion, error) {
+				return []model.Discussion{
+					{
+						ExternalID: relayCommentID,
+						ThreadID:   nil, // Top-level comment has no parent
+						Author:     "relay-bot",
+						Body:       "I have a few questions...",
+						CreatedAt:  time.Now(),
+					},
+				}, nil
+			}
+
+			result, err := detector.ShouldEngage(ctx, integrationID, service.EngagementRequest{
+				Provider:          model.ProviderGitLab,
+				CommentBody:       "Here are my answers",
+				DiscussionID:      relayCommentID, // User is replying to Relay's comment
+				ExternalProjectID: 100,
+				ExternalIssueIID:  1,
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.ShouldEngage).To(BeTrue())
+		})
+
+		It("should engage when user replies in a thread where Relay has replied", func() {
+			// Alice started a thread, Relay replied in it
+			aliceCommentID := "note_11111"
+			relayReplyID := "note_22222"
+
+			mockTracker.fetchDiscussionsFn = func(_ context.Context, _ issue_tracker.FetchDiscussionsParams) ([]model.Discussion, error) {
+				return []model.Discussion{
+					{
+						ExternalID: aliceCommentID,
+						ThreadID:   nil,
+						Author:     "alice",
+						Body:       "Original comment",
+						CreatedAt:  time.Now().Add(-2 * time.Hour),
+					},
+					{
+						ExternalID: relayReplyID,
+						ThreadID:   &aliceCommentID,
+						Author:     "relay-bot",
+						Body:       "Relay's reply",
+						CreatedAt:  time.Now().Add(-1 * time.Hour),
+					},
+				}, nil
+			}
+
+			result, err := detector.ShouldEngage(ctx, integrationID, service.EngagementRequest{
+				Provider:          model.ProviderGitLab,
+				CommentBody:       "New reply in thread",
+				DiscussionID:      aliceCommentID, // Replying in Alice's thread
+				ExternalProjectID: 100,
+				ExternalIssueIID:  1,
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.ShouldEngage).To(BeTrue())
+		})
+
+		It("should NOT engage when replying in a thread where Relay has not participated", func() {
+			aliceCommentID := "note_11111"
+			bobReplyID := "note_22222"
+
+			mockTracker.fetchDiscussionsFn = func(_ context.Context, _ issue_tracker.FetchDiscussionsParams) ([]model.Discussion, error) {
+				return []model.Discussion{
+					{
+						ExternalID: aliceCommentID,
+						ThreadID:   nil,
+						Author:     "alice",
+						Body:       "Original comment",
+						CreatedAt:  time.Now().Add(-2 * time.Hour),
+					},
+					{
+						ExternalID: bobReplyID,
+						ThreadID:   &aliceCommentID,
+						Author:     "bob",
+						Body:       "Bob's reply",
+						CreatedAt:  time.Now().Add(-1 * time.Hour),
+					},
+				}, nil
+			}
+
+			result, err := detector.ShouldEngage(ctx, integrationID, service.EngagementRequest{
+				Provider:          model.ProviderGitLab,
+				CommentBody:       "Another reply in thread",
+				DiscussionID:      aliceCommentID,
+				ExternalProjectID: 100,
+				ExternalIssueIID:  1,
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.ShouldEngage).To(BeFalse())
+		})
+
+		It("should NOT engage when comment is directed at someone else", func() {
+			relayCommentID := "note_12345"
+
+			mockTracker.fetchDiscussionsFn = func(_ context.Context, _ issue_tracker.FetchDiscussionsParams) ([]model.Discussion, error) {
+				return []model.Discussion{
+					{
+						ExternalID: relayCommentID,
+						ThreadID:   nil,
+						Author:     "relay-bot",
+						Body:       "I have a few questions...",
+						CreatedAt:  time.Now(),
+					},
+				}, nil
+			}
+
+			result, err := detector.ShouldEngage(ctx, integrationID, service.EngagementRequest{
+				Provider:          model.ProviderGitLab,
+				CommentBody:       "@alice what do you think?", // Directed at Alice, not Relay
+				DiscussionID:      relayCommentID,
+				ExternalProjectID: 100,
+				ExternalIssueIID:  1,
+			})
+
+			Expect(err).NotTo(HaveOccurred())
+			Expect(result.ShouldEngage).To(BeFalse())
+		})
 	})
 })

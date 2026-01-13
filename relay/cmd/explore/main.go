@@ -74,18 +74,31 @@ func main() {
 	tools := brain.NewExploreTools(repoRoot, arangoClient)
 	explorer := brain.NewExploreAgent(agentClient, tools, modulePath, debugDir)
 
-	// Thoroughness from env or default
-	thoroughness := brain.ThoughnessMedium
-	if t := os.Getenv("THOROUGHNESS"); t != "" {
-		switch strings.ToLower(t) {
-		case "quick":
-			thoroughness = brain.ThoroughnessQuick
-		case "thorough":
-			thoroughness = brain.ThoughnessThorough
+	// Mock mode support for A/B testing
+	mockFixtureFile := os.Getenv("MOCK_EXPLORE_FIXTURES")
+	if mockFixtureFile != "" {
+		// Create a cheap LLM for fixture selection (OpenAI gpt-4o-mini)
+		mockAPIKey := os.Getenv("OPENAI_API_KEY")
+		if mockAPIKey == "" {
+			mockAPIKey = apiKey // Fall back to LLM_API_KEY
 		}
+		mockModel := getEnv("MOCK_EXPLORE_MODEL", "gpt-4o-mini")
+
+		selectorClient, err := llm.NewAgentClient(llm.Config{
+			Provider: "openai",
+			APIKey:   mockAPIKey,
+			Model:    mockModel,
+		})
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Failed to create mock selector LLM: %v\n", err)
+			os.Exit(1)
+		}
+
+		explorer = explorer.WithMockMode(selectorClient, mockFixtureFile)
+		fmt.Fprintf(os.Stderr, "Mock mode: enabled (fixtures=%s, model=%s)\n", mockFixtureFile, mockModel)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nExplore CLI ready (repo=%s, thoroughness=%s)\n", repoRoot, thoroughness)
+	fmt.Fprintf(os.Stderr, "\nExplore CLI ready (repo=%s)\n", repoRoot)
 	fmt.Fprintln(os.Stderr, "Enter your question (or 'quit' to exit):")
 
 	scanner := bufio.NewScanner(os.Stdin)
@@ -106,7 +119,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "\nExploring: %s\n", query)
 		fmt.Fprintln(os.Stderr, "---")
 
-		report, err := explorer.Explore(ctx, query, thoroughness)
+		report, err := explorer.Explore(ctx, query)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
 			continue
