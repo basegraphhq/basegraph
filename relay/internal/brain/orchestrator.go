@@ -136,6 +136,10 @@ func NewOrchestrator(
 	tools := NewExploreTools(cfg.RepoRoot, arango)
 	explore := NewExploreAgent(exploreClient, tools, cfg.ModulePath, debugDir)
 
+	// Wire up findings persistence for caching/deduplication
+	findingsPersister := NewFindingsPersister(issues)
+	explore = explore.WithFindingsPersister(findingsPersister)
+
 	// Enable mock explore mode if configured (for A/B testing planner prompts)
 	if cfg.MockExploreEnabled && cfg.MockExploreLLM != nil && cfg.MockFixtureFile != "" {
 		explore = explore.WithMockMode(cfg.MockExploreLLM, cfg.MockFixtureFile)
@@ -335,7 +339,7 @@ func (o *Orchestrator) runPlannerCycle(ctx context.Context, issue *model.Issue, 
 
 	for attempt := 0; attempt <= maxValidationRetries; attempt++ {
 		if attempt == 0 {
-			output, err = o.planner.Plan(ctx, messages)
+			output, err = o.planner.Plan(ctx, issue.ID, messages)
 		} else {
 			// Inject validation error as tool result and let the model decide what to do
 			feedback := FormatValidationErrorForLLM(validationErr)
@@ -348,7 +352,7 @@ func (o *Orchestrator) runPlannerCycle(ctx context.Context, issue *model.Issue, 
 				Content:    feedback,
 				ToolCallID: output.LastToolCallID,
 			})
-			output, err = o.planner.Plan(ctx, feedbackMessages)
+			output, err = o.planner.Plan(ctx, issue.ID, feedbackMessages)
 		}
 
 		if err != nil {
