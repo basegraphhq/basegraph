@@ -27,7 +27,7 @@ type Gap struct {
 	ID      int64 `json:"id"`
 	ShortID int64 `json:"short_id"`
 	IssueID int64 `json:"issue_id"`
-	// open | resolved | skipped
+	// pending | open | resolved | skipped
 	Status string `json:"status"`
 	// answered | inferred | not_relevant
 	ClosedReason *string `json:"closed_reason"`
@@ -101,6 +101,8 @@ type Issue struct {
 	Learnings         []byte   `json:"learnings"`
 	Discussions       []byte   `json:"discussions"`
 	Spec              *string  `json:"spec"`
+	// null | completed | approved | rejected
+	SpecStatus *string `json:"spec_status"`
 	// idle | queued | processing
 	ProcessingStatus    string             `json:"processing_status"`
 	ProcessingStartedAt pgtype.Timestamptz `json:"processing_started_at"`

@@ -104,6 +104,16 @@ type IssueStore interface {
 	GetByID(ctx context.Context, id int64) (*model.Issue, error)
 	GetByIntegrationAndExternalID(ctx context.Context, integrationID int64, externalIssueID string) (*model.Issue, error)
 
+	// GetByIDForUpdate locks the issue row and returns it. Must be called within a transaction.
+	// Other transactions attempting to update this row will block until the lock is released.
+	GetByIDForUpdate(ctx context.Context, id int64) (*model.Issue, error)
+	// UpdateCodeFindings updates only the code_findings column. Used within transactions.
+	UpdateCodeFindings(ctx context.Context, id int64, findings []model.CodeFinding) error
+	// UpdateSpec updates only the spec column to avoid overwriting other fields.
+	UpdateSpec(ctx context.Context, id int64, spec *string) error
+	// UpdateSpecStatus updates only the spec_status column.
+	UpdateSpecStatus(ctx context.Context, id int64, status model.SpecStatus) error
+
 	// Issue-centric processing state transitions
 	// QueueIfIdle queues an issue for processing, with automatic stuck issue recovery.
 	// Returns (true, nil) if queued, (false, nil) if already being processed (within 15 min).

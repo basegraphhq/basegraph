@@ -135,6 +135,43 @@ func (s *issueStore) ResetQueuedToIdle(ctx context.Context, issueID int64) error
 	return nil
 }
 
+func (s *issueStore) GetByIDForUpdate(ctx context.Context, id int64) (*model.Issue, error) {
+	row, err := s.queries.GetIssueForUpdate(ctx, id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return toIssueModel(row)
+}
+
+func (s *issueStore) UpdateCodeFindings(ctx context.Context, id int64, findings []model.CodeFinding) error {
+	findingsJSON, err := json.Marshal(findings)
+	if err != nil {
+		return err
+	}
+	return s.queries.UpdateIssueCodeFindings(ctx, sqlc.UpdateIssueCodeFindingsParams{
+		ID:           id,
+		CodeFindings: findingsJSON,
+	})
+}
+
+func (s *issueStore) UpdateSpec(ctx context.Context, id int64, spec *string) error {
+	return s.queries.UpdateIssueSpec(ctx, sqlc.UpdateIssueSpecParams{
+		ID:   id,
+		Spec: spec,
+	})
+}
+
+func (s *issueStore) UpdateSpecStatus(ctx context.Context, id int64, status model.SpecStatus) error {
+	statusStr := string(status)
+	return s.queries.UpdateIssueSpecStatus(ctx, sqlc.UpdateIssueSpecStatusParams{
+		ID:         id,
+		SpecStatus: &statusStr,
+	})
+}
+
 func toIssueModel(row sqlc.Issue) (*model.Issue, error) {
 	var keywords []model.Keyword
 	if len(row.Keywords) > 0 {
@@ -184,6 +221,11 @@ func toIssueModel(row sqlc.Issue) (*model.Issue, error) {
 		ProcessingStatus:  model.ProcessingStatus(row.ProcessingStatus),
 		CreatedAt:         row.CreatedAt.Time,
 		UpdatedAt:         row.UpdatedAt.Time,
+	}
+
+	if row.SpecStatus != nil {
+		status := model.SpecStatus(*row.SpecStatus)
+		issue.SpecStatus = &status
 	}
 
 	if row.ProcessingStartedAt.Valid {

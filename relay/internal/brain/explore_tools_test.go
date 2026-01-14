@@ -287,52 +287,6 @@ var _ = Describe("ExploreTools", func() {
 		})
 
 		Describe("Blocked Commands", func() {
-			It("blocks cat command (use read tool)", func() {
-				args, _ := json.Marshal(map[string]any{
-					"command": "cat src/main.go",
-				})
-
-				result, err := tools.Execute(ctx, "bash", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Command blocked"))
-				Expect(result).To(ContainSubstring("read"))
-			})
-
-			It("blocks head command (use read tool)", func() {
-				args, _ := json.Marshal(map[string]any{
-					"command": "head -10 src/main.go",
-				})
-
-				result, err := tools.Execute(ctx, "bash", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Command blocked"))
-			})
-
-			It("blocks grep command (use grep tool)", func() {
-				args, _ := json.Marshal(map[string]any{
-					"command": "grep pattern src/main.go",
-				})
-
-				result, err := tools.Execute(ctx, "bash", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Command blocked"))
-				Expect(result).To(ContainSubstring("grep"))
-			})
-
-			It("blocks rg command (use grep tool)", func() {
-				args, _ := json.Marshal(map[string]any{
-					"command": "rg pattern",
-				})
-
-				result, err := tools.Execute(ctx, "bash", string(args))
-
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result).To(ContainSubstring("Command blocked"))
-			})
-
 			It("blocks rm command", func() {
 				args, _ := json.Marshal(map[string]any{
 					"command": "rm src/main.go",

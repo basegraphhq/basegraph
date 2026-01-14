@@ -62,6 +62,9 @@ type OrchestratorConfig struct {
 	MockExploreEnabled bool            // Enable mock explore mode
 	MockExploreLLM     llm.AgentClient // Cheap LLM for fixture selection (e.g., gpt-4o-mini)
 	MockFixtureFile    string          // Path to JSON file with pre-written explore responses
+
+	// Spec generator LLM (required)
+	SpecGeneratorClient llm.AgentClient
 }
 
 // SetupDebugRunDir creates a new debug run directory under baseDir/YYYY-MM-DD/NNN.
@@ -106,8 +109,10 @@ func SetupDebugRunDir(baseDir string) string {
 type Orchestrator struct {
 	cfg             OrchestratorConfig
 	planner         *Planner
+	specGenerator   *SpecGenerator
 	contextBuilder  *contextBuilder
 	actionValidator ActionValidator
+	txRunner        TxRunner
 	issues          store.IssueStore
 	gaps            store.GapStore
 	integrations    store.IntegrationStore
@@ -122,6 +127,7 @@ func NewOrchestrator(
 	plannerClient llm.AgentClient,
 	exploreClient llm.AgentClient,
 	arango arangodb.Client,
+	txRunner TxRunner,
 	issues store.IssueStore,
 	gaps store.GapStore,
 	eventLogs store.EventLogStore,
@@ -147,6 +153,11 @@ func NewOrchestrator(
 	ctxBuilder := NewContextBuilder(integrations, configs, learnings, gaps)
 	validator := NewActionValidator(gaps)
 
+	// Create spec generator (required)
+	specGen := NewSpecGenerator(cfg.SpecGeneratorClient, explore, debugDir)
+	slog.InfoContext(context.Background(), "spec generator enabled",
+		"model", cfg.SpecGeneratorClient.Model())
+
 	slog.InfoContext(context.Background(), "orchestrator initialized",
 		"repo_root", cfg.RepoRoot,
 		"module_path", cfg.ModulePath)
@@ -154,8 +165,10 @@ func NewOrchestrator(
 	return &Orchestrator{
 		cfg:             cfg,
 		planner:         planner,
+		specGenerator:   specGen,
 		contextBuilder:  ctxBuilder,
 		actionValidator: validator,
+		txRunner:        txRunner,
 		issues:          issues,
 		gaps:            gaps,
 		integrations:    integrations,
@@ -393,7 +406,7 @@ func (o *Orchestrator) runPlannerCycle(ctx context.Context, issue *model.Issue, 
 		return NewFatalError(fmt.Errorf("no issue tracker for provider: %s", issue.Provider))
 	}
 
-	executor := NewActionExecutor(tracker, o.issues, o.gaps, o.integrations, o.learnings)
+	executor := NewActionExecutor(tracker, o.txRunner, o.issues, o.gaps, o.integrations, o.learnings, o.specGenerator)
 	errs := executor.ExecuteBatch(ctx, *issue, output.Actions)
 	if len(errs) > 0 {
 		for _, e := range errs {

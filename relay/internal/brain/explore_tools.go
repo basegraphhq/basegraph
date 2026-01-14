@@ -566,6 +566,8 @@ var bashAllowedPrefixes = []string{
 	"ls ", "ls", "wc ", "file ", "stat ", "tree ",
 	// Find (useful for complex searches)
 	"find ",
+	// File reading
+	"cat ", "head ", "tail ", "grep ", "rg ",
 }
 
 // bashBlockedPrefixes defines write operations that are always blocked.
@@ -573,8 +575,7 @@ var bashBlockedPrefixes = []string{
 	"rm ", "mv ", "cp ", "mkdir ", "touch ", "chmod ", "chown ",
 	"git push", "git commit", "git checkout", "git reset", "git rebase",
 	"git merge", "git pull", "git stash", "git clean", "git add",
-	"echo ", "printf ", "cat ", "head ", "tail ", "sed ", "awk ",
-	"grep ", "rg ", // Use the grep tool instead
+	"echo ", "printf ", "sed ", "awk ",
 	">", ">>",
 }
 
@@ -595,7 +596,7 @@ func (t *ExploreTools) executeBash(ctx context.Context, arguments string) (strin
 		slog.DebugContext(ctx, "bash command blocked",
 			"command", command,
 			"reason", reason)
-		return fmt.Sprintf("Command blocked: %s\n\nAllowed: git log/show/diff/blame/status, ls, tree, find\nUse 'read' tool for file contents, 'grep' tool for searching.", reason), nil
+		return fmt.Sprintf("Command blocked: %s\n\nAllowed: git log/show/diff/blame/status, ls, tree, find, cat, head, tail, grep, rg", reason), nil
 	}
 
 	// Create timeout context

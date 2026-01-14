@@ -11,19 +11,20 @@ import (
 )
 
 type Config struct {
-	Features     Features
-	OTel         OTelConfig
-	WorkOS       WorkOSConfig
-	EventWebhook EventWebhookConfig
-	Pipeline     PipelineConfig
-	OpenAI       OpenAIConfig
-	PlannerLLM   LLMConfig
-	ExploreLLM   LLMConfig
-	ArangoDB     ArangoDBConfig
-	Env          string
-	Port         string
-	DashboardURL string
-	DB           db.Config
+	Features         Features
+	OTel             OTelConfig
+	WorkOS           WorkOSConfig
+	EventWebhook     EventWebhookConfig
+	Pipeline         PipelineConfig
+	OpenAI           OpenAIConfig
+	PlannerLLM       LLMConfig
+	ExploreLLM       LLMConfig
+	SpecGeneratorLLM LLMConfig
+	ArangoDB         ArangoDBConfig
+	Env              string
+	Port             string
+	DashboardURL     string
+	DB               db.Config
 }
 
 type WorkOSConfig struct {
@@ -122,7 +123,7 @@ func Load() (Config, error) {
 			APIKey:          getEnv("PLANNER_LLM_API_KEY", ""),
 			BaseURL:         getEnv("PLANNER_LLM_BASE_URL", ""),
 			Model:           getEnv("PLANNER_LLM_MODEL", "gpt-5.2"),
-			MaxTokens:       getEnvInt("PLANNER_LLM_MAX_TOKENS", 8192),
+			MaxTokens:       getEnvInt("PLANNER_LLM_MAX_TOKENS", 16384),
 			ReasoningEffort: getEnv("PLANNER_LLM_REASONING_EFFORT", "medium"),
 		},
 		ExploreLLM: LLMConfig{
@@ -132,6 +133,15 @@ func Load() (Config, error) {
 			Model:           getEnv("EXPLORE_LLM_MODEL", "grok-4-1-fast-reasoning"),
 			MaxTokens:       getEnvInt("EXPLORE_LLM_MAX_TOKENS", 16384),
 			ReasoningEffort: getEnv("EXPLORE_LLM_REASONING_EFFORT", ""),
+		},
+		// Note: Reusing the planner's config because I'm lazy asf
+		SpecGeneratorLLM: LLMConfig{
+			Provider:        getEnv("PLANNER_LLM_PROVIDER", "openai"),
+			APIKey:          getEnv("PLANNER_LLM_API_KEY", ""),
+			BaseURL:         getEnv("PLANNER_LLM_BASE_URL", ""),
+			Model:           getEnv("PLANNER_LLM_MODEL", "gpt-5.2"),
+			MaxTokens:       getEnvInt("PLANNER_LLM_MAX_TOKENS", 16384),
+			ReasoningEffort: getEnv("PLANNER_LLM_REASONING_EFFORT", "medium"),
 		},
 		ArangoDB: ArangoDBConfig{
 			URL:      getEnv("ARANGO_URL", "http://localhost:8529"),

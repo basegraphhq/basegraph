@@ -166,6 +166,7 @@ create table issues (
     learnings jsonb,
     discussions jsonb,
     spec text,
+    spec_status text,
 
     processing_status text not null default 'idle',
     processing_started_at timestamptz,
@@ -178,9 +179,12 @@ create table issues (
 );
 
 comment on column issues.processing_status is 'idle | queued | processing';
+comment on column issues.spec_status is 'null | completed | approved | rejected';
 
 alter table issues add constraint chk_issues_processing_status
     check (processing_status in ('idle', 'queued', 'processing'));
+alter table issues add constraint chk_issues_spec_status
+    check (spec_status is null or spec_status in ('completed', 'approved', 'rejected'));
 
 create index idx_issues_integration_id on issues (integration_id);
 create index idx_issues_processing_status on issues (processing_status) where processing_status != 'idle';

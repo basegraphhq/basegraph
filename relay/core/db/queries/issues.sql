@@ -36,7 +36,6 @@ SET
     code_findings = EXCLUDED.code_findings,
     learnings = EXCLUDED.learnings,
     discussions = EXCLUDED.discussions,
-    spec = EXCLUDED.spec,
     updated_at = now()
 RETURNING *;
 
@@ -116,3 +115,31 @@ SET processing_status = 'idle',
     updated_at = now()
 WHERE id = $1
   AND processing_status = 'queued';
+
+-- name: GetIssueForUpdate :one
+-- Lock the issue row for atomic updates to JSONB fields like code_findings.
+-- Must be called within a transaction. Other transactions attempting to update
+-- this row will block until the lock is released.
+SELECT * FROM issues WHERE id = $1 FOR UPDATE;
+
+-- name: UpdateIssueCodeFindings :exec
+-- Update only the code_findings column. Used within transactions for atomic updates.
+UPDATE issues
+SET code_findings = $2,
+    updated_at = now()
+WHERE id = $1;
+
+-- name: UpdateIssueSpec :exec
+-- Update spec and set status to completed to reflect latest draft.
+UPDATE issues
+SET spec = $2,
+    spec_status = 'completed',
+    updated_at = now()
+WHERE id = $1;
+
+-- name: UpdateIssueSpecStatus :exec
+-- Update only the spec_status column.
+UPDATE issues
+SET spec_status = $2,
+    updated_at = now()
+WHERE id = $1;

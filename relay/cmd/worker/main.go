@@ -130,6 +130,27 @@ func main() {
 		"provider", cfg.ExploreLLM.Provider,
 		"model", cfg.ExploreLLM.Model)
 
+	if !cfg.SpecGeneratorLLM.Enabled() {
+		slog.ErrorContext(ctx, "SPEC_GENERATOR_LLM_API_KEY is required for pipeline processing")
+		os.Exit(1)
+	}
+
+	specGeneratorClient, err := llm.NewAgentClient(llm.Config{
+		Provider:        cfg.SpecGeneratorLLM.Provider,
+		APIKey:          cfg.SpecGeneratorLLM.APIKey,
+		BaseURL:         cfg.SpecGeneratorLLM.BaseURL,
+		Model:           cfg.SpecGeneratorLLM.Model,
+		ReasoningEffort: llm.ReasoningEffort(cfg.SpecGeneratorLLM.ReasoningEffort),
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to create spec generator client", "error", err)
+		os.Exit(1)
+	}
+	slog.InfoContext(ctx, "spec generator client initialized",
+		"provider", cfg.SpecGeneratorLLM.Provider,
+		"model", cfg.SpecGeneratorLLM.Model,
+		"reasoning_effort", cfg.SpecGeneratorLLM.ReasoningEffort)
+
 	repoRoot := os.Getenv("REPO_ROOT")
 	if repoRoot == "" {
 		slog.ErrorContext(ctx, "REPO_ROOT environment variable is required")
@@ -164,6 +185,7 @@ func main() {
 	slog.InfoContext(ctx, "arangodb connected", "database", cfg.ArangoDB.Database)
 
 	stores := store.NewStores(database.Queries())
+	txRunner := brain.NewTxRunner(database)
 
 	issueTrackers := map[model.Provider]issue_tracker.IssueTrackerService{
 		model.ProviderGitLab: issue_tracker.NewGitLabIssueTrackerService(
@@ -176,9 +198,10 @@ func main() {
 	// It creates debug_logs/YYYY-MM-DD/NNN/ folders for each worker run.
 	// Related: brain.SetupDebugRunDir, Planner.debugDir, ExploreAgent.debugDir
 	orchestratorCfg := brain.OrchestratorConfig{
-		RepoRoot:   repoRoot,
-		ModulePath: modulePath,
-		DebugDir:   os.Getenv("BRAIN_DEBUG_DIR"),
+		RepoRoot:            repoRoot,
+		ModulePath:          modulePath,
+		DebugDir:            os.Getenv("BRAIN_DEBUG_DIR"),
+		SpecGeneratorClient: specGeneratorClient,
 	}
 
 	// Mock explore mode for A/B testing planner prompts
@@ -219,6 +242,7 @@ func main() {
 		plannerClient,
 		exploreClient,
 		arangoClient,
+		txRunner,
 		stores.Issues(),
 		stores.Gaps(),
 		stores.EventLogs(),

@@ -110,6 +110,22 @@ func (m *mockIssueStore) ResetQueuedToIdle(ctx context.Context, issueID int64) e
 	return nil
 }
 
+func (m *mockIssueStore) GetByIDForUpdate(ctx context.Context, id int64) (*model.Issue, error) {
+	return nil, nil
+}
+
+func (m *mockIssueStore) UpdateCodeFindings(ctx context.Context, id int64, findings []model.CodeFinding) error {
+	return nil
+}
+
+func (m *mockIssueStore) UpdateSpec(ctx context.Context, id int64, spec *string) error {
+	return nil
+}
+
+func (m *mockIssueStore) UpdateSpecStatus(ctx context.Context, id int64, status model.SpecStatus) error {
+	return nil
+}
+
 type mockIssueTrackerService struct {
 	fetchFn         func(ctx context.Context, params issue_tracker.FetchIssueParams) (*model.Issue, error)
 	isReplyToUserFn func(ctx context.Context, params issue_tracker.IsReplyParams) (bool, error)

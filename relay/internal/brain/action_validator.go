@@ -38,6 +38,7 @@ var (
 	ErrOpenGaps              = errors.New("open gaps exist")
 	ErrNoResolvedContext     = errors.New("no resolved gaps or findings")
 	ErrMissingProceedSignal  = errors.New("proceed signal not provided")
+	ErrInvalidSpecStatus     = errors.New("invalid spec status: use \"approved\" or \"rejected\"")
 )
 
 type actionValidator struct {
@@ -83,6 +84,8 @@ func (v *actionValidator) Validate(ctx context.Context, issue model.Issue, input
 			err = v.validateUpdateLearnings(action)
 		case ActionTypeReadyForSpecGeneration:
 			err = v.validateReadyForSpecGeneration(ctx, issue, action, pendingClosures)
+		case ActionTypeSetSpecStatus:
+			err = v.validateSetSpecStatus(action)
 		default:
 			err = fmt.Errorf("%w: %s", ErrUnknownActionType, action.Type)
 		}
@@ -210,6 +213,20 @@ func (v *actionValidator) validateUpdateLearnings(action Action) error {
 	}
 
 	return nil
+}
+
+func (v *actionValidator) validateSetSpecStatus(action Action) error {
+	data, err := ParseActionData[SetSpecStatusAction](action)
+	if err != nil {
+		return err
+	}
+
+	switch data.Status {
+	case string(model.SpecStatusApproved), string(model.SpecStatusRejected):
+		return nil
+	default:
+		return ErrInvalidSpecStatus
+	}
 }
 
 func (v *actionValidator) validateReadyForSpecGeneration(ctx context.Context, issue model.Issue, action Action, pendingClosures map[string]struct{}) error {

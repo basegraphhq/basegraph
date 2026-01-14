@@ -16,7 +16,7 @@ SET processing_status = 'processing',
     updated_at = now()
 WHERE id = $1
   AND processing_status = 'queued'
-RETURNING id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
+RETURNING id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, spec_status, processing_status, processing_started_at, last_processed_at, created_at, updated_at
 `
 
 // Atomically transition issue from 'queued' to 'processing'.
@@ -42,6 +42,7 @@ func (q *Queries) ClaimQueuedIssue(ctx context.Context, id int64) (Issue, error)
 		&i.Learnings,
 		&i.Discussions,
 		&i.Spec,
+		&i.SpecStatus,
 		&i.ProcessingStatus,
 		&i.ProcessingStartedAt,
 		&i.LastProcessedAt,
@@ -52,7 +53,7 @@ func (q *Queries) ClaimQueuedIssue(ctx context.Context, id int64) (Issue, error)
 }
 
 const getIssue = `-- name: GetIssue :one
-SELECT id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at FROM issues WHERE id = $1
+SELECT id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, spec_status, processing_status, processing_started_at, last_processed_at, created_at, updated_at FROM issues WHERE id = $1
 `
 
 func (q *Queries) GetIssue(ctx context.Context, id int64) (Issue, error) {
@@ -76,6 +77,7 @@ func (q *Queries) GetIssue(ctx context.Context, id int64) (Issue, error) {
 		&i.Learnings,
 		&i.Discussions,
 		&i.Spec,
+		&i.SpecStatus,
 		&i.ProcessingStatus,
 		&i.ProcessingStartedAt,
 		&i.LastProcessedAt,
@@ -86,7 +88,7 @@ func (q *Queries) GetIssue(ctx context.Context, id int64) (Issue, error) {
 }
 
 const getIssueByIntegrationAndExternalID = `-- name: GetIssueByIntegrationAndExternalID :one
-SELECT id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at FROM issues WHERE integration_id = $1 AND external_issue_id = $2
+SELECT id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, spec_status, processing_status, processing_started_at, last_processed_at, created_at, updated_at FROM issues WHERE integration_id = $1 AND external_issue_id = $2
 `
 
 type GetIssueByIntegrationAndExternalIDParams struct {
@@ -115,6 +117,45 @@ func (q *Queries) GetIssueByIntegrationAndExternalID(ctx context.Context, arg Ge
 		&i.Learnings,
 		&i.Discussions,
 		&i.Spec,
+		&i.SpecStatus,
+		&i.ProcessingStatus,
+		&i.ProcessingStartedAt,
+		&i.LastProcessedAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getIssueForUpdate = `-- name: GetIssueForUpdate :one
+SELECT id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, spec_status, processing_status, processing_started_at, last_processed_at, created_at, updated_at FROM issues WHERE id = $1 FOR UPDATE
+`
+
+// Lock the issue row for atomic updates to JSONB fields like code_findings.
+// Must be called within a transaction. Other transactions attempting to update
+// this row will block until the lock is released.
+func (q *Queries) GetIssueForUpdate(ctx context.Context, id int64) (Issue, error) {
+	row := q.db.QueryRow(ctx, getIssueForUpdate, id)
+	var i Issue
+	err := row.Scan(
+		&i.ID,
+		&i.IntegrationID,
+		&i.ExternalProjectID,
+		&i.ExternalIssueID,
+		&i.Provider,
+		&i.Title,
+		&i.Description,
+		&i.Labels,
+		&i.Members,
+		&i.Assignees,
+		&i.Reporter,
+		&i.ExternalIssueUrl,
+		&i.Keywords,
+		&i.CodeFindings,
+		&i.Learnings,
+		&i.Discussions,
+		&i.Spec,
+		&i.SpecStatus,
 		&i.ProcessingStatus,
 		&i.ProcessingStartedAt,
 		&i.LastProcessedAt,
@@ -135,7 +176,7 @@ WHERE id = $1
     OR (processing_status = 'processing' AND processing_started_at < NOW() - INTERVAL '15 minutes')
     OR (processing_status = 'queued' AND updated_at < NOW() - INTERVAL '15 minutes')
   )
-RETURNING id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
+RETURNING id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, spec_status, processing_status, processing_started_at, last_processed_at, created_at, updated_at
 `
 
 // Queue an issue for processing, with automatic recovery of stuck issues.
@@ -185,6 +226,7 @@ func (q *Queries) QueueIssueIfIdle(ctx context.Context, id int64) (Issue, error)
 		&i.Learnings,
 		&i.Discussions,
 		&i.Spec,
+		&i.SpecStatus,
 		&i.ProcessingStatus,
 		&i.ProcessingStartedAt,
 		&i.LastProcessedAt,
@@ -231,6 +273,61 @@ func (q *Queries) SetIssueIdle(ctx context.Context, id int64) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const updateIssueCodeFindings = `-- name: UpdateIssueCodeFindings :exec
+UPDATE issues
+SET code_findings = $2,
+    updated_at = now()
+WHERE id = $1
+`
+
+type UpdateIssueCodeFindingsParams struct {
+	ID           int64  `json:"id"`
+	CodeFindings []byte `json:"code_findings"`
+}
+
+// Update only the code_findings column. Used within transactions for atomic updates.
+func (q *Queries) UpdateIssueCodeFindings(ctx context.Context, arg UpdateIssueCodeFindingsParams) error {
+	_, err := q.db.Exec(ctx, updateIssueCodeFindings, arg.ID, arg.CodeFindings)
+	return err
+}
+
+const updateIssueSpec = `-- name: UpdateIssueSpec :exec
+UPDATE issues
+SET spec = $2,
+    spec_status = 'completed',
+    updated_at = now()
+WHERE id = $1
+`
+
+type UpdateIssueSpecParams struct {
+	ID   int64   `json:"id"`
+	Spec *string `json:"spec"`
+}
+
+// Update spec and set status to completed to reflect latest draft.
+func (q *Queries) UpdateIssueSpec(ctx context.Context, arg UpdateIssueSpecParams) error {
+	_, err := q.db.Exec(ctx, updateIssueSpec, arg.ID, arg.Spec)
+	return err
+}
+
+const updateIssueSpecStatus = `-- name: UpdateIssueSpecStatus :exec
+UPDATE issues
+SET spec_status = $2,
+    updated_at = now()
+WHERE id = $1
+`
+
+type UpdateIssueSpecStatusParams struct {
+	ID         int64   `json:"id"`
+	SpecStatus *string `json:"spec_status"`
+}
+
+// Update only the spec_status column.
+func (q *Queries) UpdateIssueSpecStatus(ctx context.Context, arg UpdateIssueSpecStatusParams) error {
+	_, err := q.db.Exec(ctx, updateIssueSpecStatus, arg.ID, arg.SpecStatus)
+	return err
+}
+
 const upsertIssue = `-- name: UpsertIssue :one
 INSERT INTO issues (
     id,
@@ -269,9 +366,8 @@ SET
     code_findings = EXCLUDED.code_findings,
     learnings = EXCLUDED.learnings,
     discussions = EXCLUDED.discussions,
-    spec = EXCLUDED.spec,
     updated_at = now()
-RETURNING id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, processing_status, processing_started_at, last_processed_at, created_at, updated_at
+RETURNING id, integration_id, external_project_id, external_issue_id, provider, title, description, labels, members, assignees, reporter, external_issue_url, keywords, code_findings, learnings, discussions, spec, spec_status, processing_status, processing_started_at, last_processed_at, created_at, updated_at
 `
 
 type UpsertIssueParams struct {
@@ -331,6 +427,7 @@ func (q *Queries) UpsertIssue(ctx context.Context, arg UpsertIssueParams) (Issue
 		&i.Learnings,
 		&i.Discussions,
 		&i.Spec,
+		&i.SpecStatus,
 		&i.ProcessingStatus,
 		&i.ProcessingStartedAt,
 		&i.LastProcessedAt,

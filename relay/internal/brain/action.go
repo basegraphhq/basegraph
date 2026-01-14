@@ -17,6 +17,7 @@ const (
 	ActionTypeUpdateGaps             ActionType = "update_gaps"
 	ActionTypeUpdateLearnings        ActionType = "update_learnings"
 	ActionTypeReadyForSpecGeneration ActionType = "ready_for_spec_generation"
+	ActionTypeSetSpecStatus          ActionType = "set_spec_status"
 )
 
 type Action struct {
@@ -160,6 +161,10 @@ type ReadyForSpecGenerationAction struct {
 	ClosedGaps       []GapID  `json:"closed_gap_ids"`
 	LearningsApplied []string `json:"learning_ids"`
 	ProceedSignal    string   `json:"proceed_signal"`
+}
+
+type SetSpecStatusAction struct {
+	Status string `json:"status"`
 }
 
 // ActionExecutor executes actions returned by the Planner.

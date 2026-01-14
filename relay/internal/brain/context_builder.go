@@ -250,6 +250,18 @@ func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.L
 		}
 	}
 
+	// Spec section (if generated)
+	if issue.Spec != nil && *issue.Spec != "" {
+		sb.WriteString("# Current Spec\n\n")
+		if issue.SpecStatus != nil {
+			sb.WriteString(fmt.Sprintf("**Status**: %s\n\n", *issue.SpecStatus))
+		}
+		sb.WriteString("You previously generated and posted this implementation spec. The user is now reviewing it.\n\n")
+		sb.WriteString("<spec>\n")
+		sb.WriteString(*issue.Spec)
+		sb.WriteString("\n</spec>\n\n")
+	}
+
 	// Reply context - tells planner which thread to reply to
 	if triggerThreadID != "" {
 		sb.WriteString("# Reply Context\n\n")
