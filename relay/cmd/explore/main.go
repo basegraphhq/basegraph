@@ -23,18 +23,20 @@ func main() {
 	repoRoot := getEnv("REPO_ROOT", "/Users/nithin/basegraph/relay")
 	modulePath := getEnv("MODULE_PATH", "basegraph.app/relay")
 
-	// LLM client - uses same env vars as relay server
-	provider := getEnv("LLM_PROVIDER", "openai")
-	model := getEnv("LLM_MODEL", "gpt-4o")
-	apiKey := os.Getenv("LLM_API_KEY")
+	// LLM client - uses EXPLORE_LLM_* env vars (consistent with worker)
+	provider := getEnv("EXPLORE_LLM_PROVIDER", "openai")
+	model := getEnv("EXPLORE_LLM_MODEL", "gpt-4o")
+	baseURL := os.Getenv("EXPLORE_BASE_URL")
+	apiKey := os.Getenv("EXPLORE_LLM_API_KEY")
 	if apiKey == "" {
-		fmt.Fprintln(os.Stderr, "LLM_API_KEY is required")
+		fmt.Fprintln(os.Stderr, "EXPLORE_LLM_API_KEY is required")
 		os.Exit(1)
 	}
 
 	agentClient, err := llm.NewAgentClient(llm.Config{
 		Provider: provider,
 		APIKey:   apiKey,
+		BaseURL:  baseURL,
 		Model:    model,
 	})
 	if err != nil {
@@ -77,16 +79,18 @@ func main() {
 	// Mock mode support for A/B testing
 	mockFixtureFile := os.Getenv("MOCK_EXPLORE_FIXTURES")
 	if mockFixtureFile != "" {
-		// Create a cheap LLM for fixture selection (OpenAI gpt-4o-mini)
-		mockAPIKey := os.Getenv("OPENAI_API_KEY")
+		// Create a cheap LLM for fixture selection
+		mockAPIKey := os.Getenv("MOCK_EXPLORE_KEY")
 		if mockAPIKey == "" {
-			mockAPIKey = apiKey // Fall back to LLM_API_KEY
+			mockAPIKey = apiKey // Fall back to EXPLORE_LLM_API_KEY
 		}
 		mockModel := getEnv("MOCK_EXPLORE_MODEL", "gpt-4o-mini")
+		mockBaseURL := os.Getenv("MOCK_EXPLORE_BASE_URL")
 
 		selectorClient, err := llm.NewAgentClient(llm.Config{
 			Provider: "openai",
 			APIKey:   mockAPIKey,
+			BaseURL:  mockBaseURL,
 			Model:    mockModel,
 		})
 		if err != nil {
