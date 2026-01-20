@@ -267,9 +267,9 @@ func (b *contextBuilder) buildContextDump(issue model.Issue, learnings []model.L
 		sb.WriteString("# Reply Context\n\n")
 		sb.WriteString(fmt.Sprintf("This engagement was triggered by a message in thread `%s`.\n\n", triggerThreadID))
 		sb.WriteString("**Threading rules:**\n")
-		sb.WriteString(fmt.Sprintf("- Direct responses to that thread (acknowledgments, follow-up questions on the same topic): use `reply_to_id: \"%s\"`\n", triggerThreadID))
-		sb.WriteString("- New question categories (e.g., technical questions after product questions are answered): omit `reply_to_id` to create a new top-level comment\n")
-		sb.WriteString("- Always @mention the respondent (reporter for product questions, assignee for technical questions) in new top-level comments\n\n")
+		sb.WriteString(fmt.Sprintf("- Use `reply_to_id: \"%s\"` ONLY for direct follow-ups to a user's reply in that thread (e.g., clarifying their answer)\n", triggerThreadID))
+		sb.WriteString("- New questions, status updates, findings → always top-level (omit `reply_to_id`)\n")
+		sb.WriteString("- Always @mention the respondent in new top-level comments\n\n")
 	}
 
 	return sb.String()
