@@ -155,18 +155,24 @@ NOT allowed: rm, mv, cp, echo, write operations.`,
 		},
 		{
 			Name: "codegraph",
-			Description: `Query code structure graph for relationships and call flow. SUPPORTED: Go (.go) and Python (.py) only.
+			Description: `Query code structure graph for relationships and call flow. SUPPORTED: Go (.go) only.
+
+QNAME FORMAT (qualified name):
+A qname is the globally unique identifier: module/path/to/package.Type.Method
+  Function:  github.com/acme/app/internal/auth.ValidateToken
+  Method:    github.com/acme/app/internal/store.UserRepo.Save
+  Struct:    github.com/acme/app/internal/model.User
+  Interface: github.com/acme/app/internal/store.Repository
+
+name vs qname:
+  name="Save"                    — short name, may match multiple symbols
+  qname="...store.UserRepo.Save" — exact match, globally unique
 
 SUPPORTED KINDS (strict): function, method, struct, interface, class.
-If you pass any other kind, you will get an error listing supported kinds.
-
-KEY IDEA: Relationship operations accept either:
-- qname (preferred when known), OR
-- name (+ optional kind/file), and the tool will resolve to qname internally.
 
 OPERATIONS:
 
-- resolve: Resolve name -> single qname (or show candidates)
+- resolve: Convert name → qname (or show candidates if ambiguous)
   codegraph(operation="resolve", name="ActionExecutor", kind="interface")
 
 - search: List matching symbols by name/glob
@@ -178,19 +184,22 @@ OPERATIONS:
 - callers: Find callers of a function/method
   codegraph(operation="callers", name="Plan", kind="method", depth=2)
 
-- callees: Find callees from a function/method
-  codegraph(operation="callees", qname="basegraph.app/relay/internal/brain.Planner.Plan", depth=2)
+- callees: Find callees from a function/method (use qname if you have it)
+  codegraph(operation="callees", qname="github.com/acme/app/store.UserRepo.Save", depth=2)
 
-- implementations: Find types that implement an interface/class
+- implementations: Find types that implement an interface
   codegraph(operation="implementations", name="IssueStore", kind="interface")
 
 - usages: Find functions/methods that use a type (param/return)
   codegraph(operation="usages", name="Issue", kind="struct")
 
 - trace: Find a DIRECT call path between two functions/methods.
-  Only works within the same process - will NOT find paths that cross async
-  boundaries (queues, IPC, HTTP). For those, use callers/callees + grep.
   codegraph(operation="trace", from_name="HandleWebhook", to_name="Plan", to_kind="method", max_depth=6)
+
+COMMON MISTAKES:
+- codegraph(operation="resolve", qname="X") — WRONG. Use name="X". resolve converts name→qname.
+- codegraph(operation="search", qname="X")  — WRONG. Use name="X".
+- codegraph(operation="callers", to_qname="X") — WRONG. to_qname is only for trace.
 
 For text search or unsupported languages, use grep/read instead.`,
 			Parameters: llm.GenerateSchemaFrom(CodegraphParams{}),
@@ -832,7 +841,18 @@ func (t *ExploreTools) executeCodegraph(ctx context.Context, arguments string) (
 // executeCodegraphSearch handles symbol search.
 func (t *ExploreTools) executeCodegraphSearch(ctx context.Context, params CodegraphParams) (string, error) {
 	if params.Name == "" {
-		return "Error: name parameter required for search operation", nil
+		hint := ""
+		if params.QName != "" {
+			hint = fmt.Sprintf(" You passed qname=%q — use name=%q instead.", params.QName, params.QName)
+		}
+		return "Error: name parameter required for search operation." + hint, nil
+	}
+
+	// Warn about unused trace parameters
+	if params.ToQName != "" || params.FromQName != "" || params.ToName != "" || params.FromName != "" {
+		slog.WarnContext(ctx, "codegraph search called with trace params (ignored)",
+			"to_qname", params.ToQName, "from_qname", params.FromQName,
+			"to_name", params.ToName, "from_name", params.FromName)
 	}
 
 	results, total, err := t.arango.SearchSymbols(ctx, arangodb.SearchOptions{
@@ -1015,7 +1035,18 @@ func sanitizeCodegraphSignature(sig string) string {
 
 func (t *ExploreTools) executeCodegraphResolve(ctx context.Context, params CodegraphParams) (string, error) {
 	if params.Name == "" {
-		return "Error: name parameter required for resolve operation", nil
+		hint := ""
+		if params.QName != "" {
+			hint = fmt.Sprintf(" You passed qname=%q — use name=%q instead (resolve converts name→qname).", params.QName, params.QName)
+		}
+		return "Error: name parameter required for resolve operation." + hint, nil
+	}
+
+	// Warn about unused trace parameters
+	if params.ToQName != "" || params.FromQName != "" || params.ToName != "" || params.FromName != "" {
+		slog.WarnContext(ctx, "codegraph resolve called with trace params (ignored)",
+			"to_qname", params.ToQName, "from_qname", params.FromQName,
+			"to_name", params.ToName, "from_name", params.FromName)
 	}
 
 	symbol, err := t.resolveSymbol(ctx, params.Name, params.Kind, params.File)
