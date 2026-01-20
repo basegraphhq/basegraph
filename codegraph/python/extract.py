@@ -52,12 +52,15 @@ def extract(pkgstr: str, dir:str):
     seen_namespaces = set()
     result = {}
 
+    # Normalize to absolute path for consistent filepath storage
+    dir = os.path.abspath(dir)
+
     start = time.time()
     for root, _, files in os.walk(dir):
         for filename in files:
             if not filename.endswith(".py"):
                 continue
-            path = os.path.join(root, filename )
+            path = os.path.join(root, filename)
             qualified_file_name = _derive_qualified_name(dir, path, pkgstr)
             if qualified_file_name not in seen_namespaces:
                 seen_namespaces.add(qualified_file_name)

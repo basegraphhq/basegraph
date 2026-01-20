@@ -196,6 +196,16 @@ def ingest_edges(db: StandardDatabase, data: dict[str, Any], qname_to_coll: dict
             source_coll = qname_to_coll.get(source)
             target_coll = qname_to_coll.get(target)
 
+            # For call edges to classes (constructor calls), redirect to __init__
+            if edge_coll == "calls" and target_coll == "types":
+                init_qname = f"{target}.__init__"
+                if init_qname in qname_to_coll:
+                    target = init_qname
+                    target_coll = qname_to_coll.get(target)
+                else:
+                    # Skip constructor calls if __init__ not found
+                    continue
+
             # For parent edges, target might be a module not in our mapping
             if edge_coll == "parent" and not target_coll:
                 # Check if target looks like a module
