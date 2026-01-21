@@ -17,7 +17,7 @@ import (
 
 const (
 	maxSpecIterations        = 30 // Safety limit for spec generation loop
-	maxParallelSpecExplorers = 2  // Parallel exploration during spec generation
+	maxParallelSpecExplorers = 5  // Parallel exploration during spec generation
 )
 
 // SubmitSpecParams defines the schema for the submit_spec tool.

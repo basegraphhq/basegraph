@@ -18,7 +18,7 @@ import (
 const (
 	exploreTimeout    = 12 * time.Minute // Increased for thorough explorations
 	doomLoopThreshold = 3                // Stop if same tool called 3 times with identical args
-	maxParallelTools  = 4                // Limit concurrent tool executions
+	maxParallelTools  = 8                // Limit concurrent tool executions
 )
 
 // Thoroughness levels control how deep the explore agent searches.
