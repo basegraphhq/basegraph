@@ -1,0 +1,9 @@
+{
+  "version": "1",
+  "name": "Relay API Server",
+  "type": "collection",
+  "ignore": [
+    "node_modules",
+    ".git"
+  ]
+}
