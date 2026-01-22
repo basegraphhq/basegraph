@@ -5,15 +5,16 @@ meta {
 }
 
 get {
-  url: http://localhost:8080/admin/invites/pending
+  url: {{server}}/admin/invites/pending
   body: none
   auth: inherit
 }
 
 headers {
-  Authorization: Bearer YOUR_ADMIN_API_KEY
+  Authorization: Bearer {{ADMIN_API_KEY}}
 }
 
 settings {
   encodeUrl: false
+  timeout: 0
 }

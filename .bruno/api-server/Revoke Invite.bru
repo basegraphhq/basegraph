@@ -5,22 +5,23 @@ meta {
 }
 
 post {
-  url: http://localhost:8080/admin/invites/revoke
+  url: {{server}}/admin/invites/revoke
   body: json
   auth: inherit
 }
 
 headers {
-  Authorization: Bearer YOUR_ADMIN_API_KEY
+  Authorization: Bearer {{ADMIN_API_KEY}}
   Content-Type: application/json
 }
 
 body:json {
   {
-    "token": "abc123..."
+  "id": 2014301019252461568
   }
 }
 
 settings {
   encodeUrl: false
+  timeout: 0
 }
