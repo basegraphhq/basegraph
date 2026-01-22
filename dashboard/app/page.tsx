@@ -1,6 +1,8 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { AuthRedirect } from "@/components/auth-redirect";
 import { ContactDialog } from "@/components/contact-dialog";
+import { InviteOnlyAlert } from "@/components/invite-only-alert";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 export default function Home() {
@@ -37,6 +39,11 @@ export default function Home() {
 		<main className="relative min-h-screen bg-background text-foreground overflow-hidden">
 			{/* Redirect signed-in users to dashboard */}
 			<AuthRedirect />
+
+			{/* Show invite-only alert when redirected with error=invite_only */}
+			<Suspense fallback={null}>
+				<InviteOnlyAlert />
+			</Suspense>
 
 			{/* Structured Data */}
 			<script

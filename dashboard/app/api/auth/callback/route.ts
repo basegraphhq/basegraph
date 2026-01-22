@@ -45,11 +45,8 @@ export async function GET(request: NextRequest) {
 
 	cookieStore.delete(STATE_COOKIE);
 
-	// Get and clear invite token if present
+	// Get invite token (don't delete yet - need it for retry on failure)
 	const inviteToken = cookieStore.get(INVITE_TOKEN_COOKIE)?.value;
-	if (inviteToken) {
-		cookieStore.delete(INVITE_TOKEN_COOKIE);
-	}
 
 	if (!code) {
 		return NextResponse.redirect(new URL("/?auth_error=no_code", baseUrl));
@@ -73,38 +70,71 @@ export async function GET(request: NextRequest) {
 			const errorData = await res.json().catch(() => ({}));
 			console.error("Failed to exchange code:", res.status, errorData);
 
+			const clearInviteCookie = (response: NextResponse) => {
+				if (inviteToken) {
+					response.cookies.delete(INVITE_TOKEN_COOKIE);
+				}
+				return response;
+			};
+
 			// Handle invite-specific errors
 			if (errorData.code === "email_mismatch") {
-				// Pass token back so invite page can show expected email
+				// On email mismatch, the backend keeps the session active (user IS logged in,
+				// just with the wrong account). We set the session cookie so the logout flow
+				// can find the session and get the WorkOS session ID for full logout.
 				const redirectUrl = new URL("/invite", baseUrl);
 				redirectUrl.searchParams.set("error", "email_mismatch");
 				if (inviteToken) {
 					redirectUrl.searchParams.set("token", inviteToken);
 				}
-				return NextResponse.redirect(redirectUrl);
+				
+				const response = NextResponse.redirect(redirectUrl);
+				
+				// Set session cookie if provided - needed for logout to work
+				if (errorData.session_id) {
+					response.cookies.set(SESSION_COOKIE, errorData.session_id, {
+						httpOnly: true,
+						secure: process.env.NODE_ENV === "production",
+						sameSite: "lax",
+						maxAge: SESSION_MAX_AGE,
+						path: "/",
+					});
+				}
+				
+				return response;
 			}
 			if (errorData.code === "invite_expired") {
-				return NextResponse.redirect(
-					new URL("/invite?error=expired", baseUrl),
+				return clearInviteCookie(
+					NextResponse.redirect(new URL("/invite?error=expired", baseUrl)),
 				);
 			}
 			if (errorData.code === "invite_used") {
-				return NextResponse.redirect(
-					new URL("/invite?error=used", baseUrl),
+				return clearInviteCookie(
+					NextResponse.redirect(new URL("/invite?error=used", baseUrl)),
 				);
 			}
 			if (errorData.code === "invite_revoked") {
-				return NextResponse.redirect(
-					new URL("/invite?error=revoked", baseUrl),
+				return clearInviteCookie(
+					NextResponse.redirect(new URL("/invite?error=revoked", baseUrl)),
+				);
+			}
+			if (errorData.code === "invite_only") {
+				return clearInviteCookie(
+					NextResponse.redirect(new URL("/?error=invite_only", baseUrl)),
 				);
 			}
 
-			return NextResponse.redirect(
-				new URL("/?auth_error=exchange_failed", baseUrl),
+			return clearInviteCookie(
+				NextResponse.redirect(new URL("/?auth_error=exchange_failed", baseUrl)),
 			);
 		}
 
 		const data: ExchangeResponse = await res.json();
+
+		// Clear invite token only on success
+		if (inviteToken) {
+			cookieStore.delete(INVITE_TOKEN_COOKIE);
+		}
 
 		cookieStore.set(SESSION_COOKIE, data.session_id, {
 			httpOnly: true,

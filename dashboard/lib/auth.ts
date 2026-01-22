@@ -29,11 +29,43 @@ export async function getSession(): Promise<Session | null> {
 	}
 }
 
-export async function signOut(): Promise<void> {
-	await fetch("/api/auth/logout", {
+type SignOutOptions = {
+	/** If true, also signs out from WorkOS (clears WorkOS session) */
+	fullLogout?: boolean;
+	/** URL to redirect to after logout (only used with fullLogout) */
+	returnTo?: string;
+};
+
+type SignOutResponse = {
+	message: string;
+	logout_url?: string;
+};
+
+/**
+ * Signs out the user from the application.
+ * @param options.fullLogout - If true, also clears the WorkOS session
+ * @param options.returnTo - URL to redirect to after WorkOS logout
+ * @returns The WorkOS logout URL if fullLogout was requested and available
+ */
+export async function signOut(options?: SignOutOptions): Promise<string | undefined> {
+	const res = await fetch("/api/auth/logout", {
 		method: "POST",
 		credentials: "include",
+		headers: {
+			"Content-Type": "application/json",
+		},
+		body: JSON.stringify({
+			full_logout: options?.fullLogout,
+			return_to: options?.returnTo,
+		}),
 	});
+
+	if (!res.ok) {
+		return undefined;
+	}
+
+	const data: SignOutResponse = await res.json();
+	return data.logout_url;
 }
 
 export function getLoginUrl(): string {

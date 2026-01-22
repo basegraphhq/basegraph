@@ -155,8 +155,7 @@ export const config = {
 		// Page routes
 		"/",
 		"/dashboard/:path*",
-		// API routes (excluding public auth endpoints and api/auth/me since it's going to fetch avatar_url and name)
-		"/api/auth/logout",
+		// API routes (excluding public auth endpoints)
 		"/api/organization/:path*",
 		"/api/integrations/:path*",
 	],

@@ -13,10 +13,21 @@ type AuthURLResponse = {
 
 export async function GET(request: NextRequest) {
 	const inviteToken = request.nextUrl.searchParams.get("invite_token");
+	const loginHint = request.nextUrl.searchParams.get("login_hint");
 	const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
 
 	try {
-		const res = await fetch(`${RELAY_API_URL}/auth/url`);
+		// Build auth URL with optional login_hint to pre-fill email
+		const authUrlParams = new URLSearchParams();
+		if (loginHint) {
+			authUrlParams.set("login_hint", loginHint);
+		}
+		const queryString = authUrlParams.toString();
+		const authUrlEndpoint = queryString 
+			? `${RELAY_API_URL}/auth/url?${queryString}`
+			: `${RELAY_API_URL}/auth/url`;
+		
+		const res = await fetch(authUrlEndpoint);
 
 		if (!res.ok) {
 			console.error("Failed to get auth URL from Relay:", res.status);

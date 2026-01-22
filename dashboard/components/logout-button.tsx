@@ -4,12 +4,29 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { signOut } from "@/lib/auth";
 
-export function LogoutButton() {
+type LogoutButtonProps = {
+	/** If true, also signs out from WorkOS (clears WorkOS session) */
+	fullLogout?: boolean;
+};
+
+export function LogoutButton({ fullLogout = true }: LogoutButtonProps) {
 	const router = useRouter();
 
 	const handleLogout = async () => {
 		try {
-			await signOut();
+			const workosLogoutUrl = await signOut({
+				fullLogout,
+				returnTo: window.location.origin,
+			});
+
+			// If full logout and we have a WorkOS logout URL, redirect to it
+			// WorkOS will redirect back to our returnTo URL after clearing their session
+			if (fullLogout && workosLogoutUrl) {
+				window.location.href = workosLogoutUrl;
+				return;
+			}
+
+			// Otherwise, just redirect to home
 			router.push("/");
 		} catch (error) {
 			console.error("Logout failed:", error);
