@@ -5,6 +5,7 @@ import { RELAY_API_URL } from "@/lib/config";
 
 const STATE_COOKIE = "relay_oauth_state";
 const SESSION_COOKIE = "relay_session";
+const INVITE_TOKEN_COOKIE = "relay_invite_token";
 const SESSION_MAX_AGE = 7 * 24 * 60 * 60;
 
 type ExchangeResponse = {
@@ -44,22 +45,51 @@ export async function GET(request: NextRequest) {
 
 	cookieStore.delete(STATE_COOKIE);
 
+	// Get and clear invite token if present
+	const inviteToken = cookieStore.get(INVITE_TOKEN_COOKIE)?.value;
+	if (inviteToken) {
+		cookieStore.delete(INVITE_TOKEN_COOKIE);
+	}
+
 	if (!code) {
 		return NextResponse.redirect(new URL("/?auth_error=no_code", baseUrl));
 	}
 
 	try {
+		const exchangeBody: { code: string; invite_token?: string } = { code };
+		if (inviteToken) {
+			exchangeBody.invite_token = inviteToken;
+		}
+
 		const res = await fetch(`${RELAY_API_URL}/auth/exchange`, {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
 			},
-			body: JSON.stringify({ code }),
+			body: JSON.stringify(exchangeBody),
 		});
 
 		if (!res.ok) {
 			const errorData = await res.json().catch(() => ({}));
 			console.error("Failed to exchange code:", res.status, errorData);
+
+			// Handle invite-specific errors
+			if (errorData.code === "email_mismatch") {
+				return NextResponse.redirect(
+					new URL("/invite?error=email_mismatch", baseUrl),
+				);
+			}
+			if (errorData.code === "invite_expired") {
+				return NextResponse.redirect(
+					new URL("/invite?error=expired", baseUrl),
+				);
+			}
+			if (errorData.code === "invite_used") {
+				return NextResponse.redirect(
+					new URL("/invite?error=used", baseUrl),
+				);
+			}
+
 			return NextResponse.redirect(
 				new URL("/?auth_error=exchange_failed", baseUrl),
 			);

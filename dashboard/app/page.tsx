@@ -1,8 +1,7 @@
 import Link from "next/link";
 import { AuthRedirect } from "@/components/auth-redirect";
-import { LoginButton } from "@/components/login-button";
+import { ContactDialog } from "@/components/contact-dialog";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { Waitlist } from "@/components/waitlist";
 
 export default function Home() {
 	const jsonLd = {
@@ -45,11 +44,6 @@ export default function Home() {
 				dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
 			/>
 
-			{/* Login Button */}
-			<div className="fixed-top-right-offset flex items-center gap-3">
-				<LoginButton />
-			</div>
-
 			{/* Theme Toggle */}
 			<ThemeToggle />
 
@@ -84,7 +78,7 @@ export default function Home() {
 					</p>
 
 					<div className="mb-12">
-						<Waitlist />
+						<ContactDialog />
 					</div>
 
 					<div className="cluster text-sm text-muted-foreground">
@@ -268,10 +262,11 @@ export default function Home() {
 					aria-label="Call to action"
 				>
 					<div className="page-container py-16 md:py-20 text-center">
-						<p className="text-lead max-w-3xl mx-auto">
+						<p className="text-lead max-w-3xl mx-auto mb-8">
 							Stop letting your AI agents guess. Give them specs that actually
 							work.
 						</p>
+						<ContactDialog />
 					</div>
 				</section>
 
@@ -296,16 +291,16 @@ export default function Home() {
 							</p>
 							<div className="pt-2">
 								<Link
-									href="mailto:nithinraj@basegraph.app"
+									href="mailto:nithinsj@basegraph.co"
 									className="inline-flex items-center gap-2 text-mono text-sm text-link"
 								>
-									Reach out → nithinsj@basegraph.app
+									Reach out → nithinsj@basegraph.co
 								</Link>
 								<Link
-									href="mailto:nithinsudarsan@basegraph.app"
+									href="mailto:nithinsudarsan@basegraph.co"
 									className="inline-flex items-center gap-2 text-mono text-sm text-link"
 								>
-									, nithinsudarsan@basegraph.app
+									, nithinsudarsan@basegraph.co
 								</Link>
 							</div>
 							<Link

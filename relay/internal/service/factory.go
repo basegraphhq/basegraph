@@ -109,3 +109,7 @@ func (s *Services) EventIngest() EventIngestService {
 		s.EngagementDetector(),
 	)
 }
+
+func (s *Services) Invitations() InvitationService {
+	return NewInvitationService(s.stores.Invitations(), s.dashboardURL)
+}

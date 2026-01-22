@@ -15,6 +15,27 @@ create index idx_users_email on users (email);
 create index idx_users_workos_id on users (workos_id) where workos_id is not null;
 
 
+create table invitations (
+    id          bigint primary key,
+    email       text not null,
+    token       text not null unique,
+    status      text not null default 'pending',
+    
+    invited_by  bigint references users(id),
+    accepted_by bigint references users(id),
+    
+    expires_at  timestamptz not null,
+    created_at  timestamptz not null default now(),
+    accepted_at timestamptz,
+    
+    constraint chk_invitation_status check (status in ('pending', 'accepted', 'expired', 'revoked'))
+);
+
+create index idx_invitations_token on invitations (token);
+create index idx_invitations_email on invitations (email);
+create index idx_invitations_status on invitations (status);
+
+
 create table organizations (
     id bigint primary key,
     admin_user_id bigint not null references users(id),
@@ -339,6 +360,7 @@ drop table if exists integration_credentials;
 drop table if exists integrations;
 drop table if exists workspaces;
 drop table if exists organizations;
+drop table if exists invitations;
 drop table if exists users;
 
 -- +goose StatementEnd

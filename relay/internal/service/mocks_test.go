@@ -253,3 +253,86 @@ func (m *mockIntegrationConfigStore) Delete(context.Context, int64) error {
 func (m *mockIntegrationConfigStore) DeleteByIntegration(context.Context, int64) error {
 	return nil
 }
+
+type mockInvitationStore struct {
+	createFn          func(ctx context.Context, inv *model.Invitation) error
+	getByIDFn         func(ctx context.Context, id int64) (*model.Invitation, error)
+	getByTokenFn      func(ctx context.Context, token string) (*model.Invitation, error)
+	getValidByTokenFn func(ctx context.Context, token string) (*model.Invitation, error)
+	getByEmailFn      func(ctx context.Context, email string) (*model.Invitation, error)
+	acceptFn          func(ctx context.Context, id int64, userID int64) (*model.Invitation, error)
+	revokeFn          func(ctx context.Context, id int64) (*model.Invitation, error)
+	listFn            func(ctx context.Context, limit, offset int32) ([]model.Invitation, error)
+	listPendingFn     func(ctx context.Context) ([]model.Invitation, error)
+	expireOldFn       func(ctx context.Context) error
+}
+
+func (m *mockInvitationStore) Create(ctx context.Context, inv *model.Invitation) error {
+	if m.createFn != nil {
+		return m.createFn(ctx, inv)
+	}
+	return nil
+}
+
+func (m *mockInvitationStore) GetByID(ctx context.Context, id int64) (*model.Invitation, error) {
+	if m.getByIDFn != nil {
+		return m.getByIDFn(ctx, id)
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *mockInvitationStore) GetByToken(ctx context.Context, token string) (*model.Invitation, error) {
+	if m.getByTokenFn != nil {
+		return m.getByTokenFn(ctx, token)
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *mockInvitationStore) GetValidByToken(ctx context.Context, token string) (*model.Invitation, error) {
+	if m.getValidByTokenFn != nil {
+		return m.getValidByTokenFn(ctx, token)
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *mockInvitationStore) GetByEmail(ctx context.Context, email string) (*model.Invitation, error) {
+	if m.getByEmailFn != nil {
+		return m.getByEmailFn(ctx, email)
+	}
+	return nil, store.ErrNotFound
+}
+
+func (m *mockInvitationStore) Accept(ctx context.Context, id int64, userID int64) (*model.Invitation, error) {
+	if m.acceptFn != nil {
+		return m.acceptFn(ctx, id, userID)
+	}
+	return nil, nil
+}
+
+func (m *mockInvitationStore) Revoke(ctx context.Context, id int64) (*model.Invitation, error) {
+	if m.revokeFn != nil {
+		return m.revokeFn(ctx, id)
+	}
+	return nil, nil
+}
+
+func (m *mockInvitationStore) List(ctx context.Context, limit, offset int32) ([]model.Invitation, error) {
+	if m.listFn != nil {
+		return m.listFn(ctx, limit, offset)
+	}
+	return []model.Invitation{}, nil
+}
+
+func (m *mockInvitationStore) ListPending(ctx context.Context) ([]model.Invitation, error) {
+	if m.listPendingFn != nil {
+		return m.listPendingFn(ctx)
+	}
+	return []model.Invitation{}, nil
+}
+
+func (m *mockInvitationStore) ExpireOld(ctx context.Context) error {
+	if m.expireOldFn != nil {
+		return m.expireOldFn(ctx)
+	}
+	return nil
+}

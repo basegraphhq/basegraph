@@ -24,6 +24,7 @@ type Config struct {
 	Env              string
 	Port             string
 	DashboardURL     string
+	AdminAPIKey      string
 	DB               db.Config
 }
 
@@ -77,15 +78,33 @@ type ArangoDBConfig struct {
 
 type Features struct{}
 
-func Load() (Config, error) {
+type ServiceType string
+
+const (
+	ServiceTypeServer ServiceType = "server"
+	ServiceTypeWorker ServiceType = "worker"
+)
+
+// Load loads configuration from environment variables.
+// In development, it loads from service-specific .env files:
+//   - .env.server for the API server
+//   - .env.worker for the background worker
+//
+// Falls back to .env if service-specific file doesn't exist.
+func Load(serviceType ServiceType) (Config, error) {
 	if getEnv("RELAY_ENV", "development") == "development" {
-		_ = godotenv.Load(".env")
+		// Try service-specific env file first, fall back to .env
+		envFile := fmt.Sprintf(".env.%s", serviceType)
+		if err := godotenv.Load(envFile); err != nil {
+			_ = godotenv.Load(".env")
+		}
 	}
 
 	cfg := Config{
 		Env:          getEnv("RELAY_ENV", "development"),
 		Port:         getEnv("PORT", "8080"),
 		DashboardURL: getEnv("DASHBOARD_URL", "http://localhost:3000"),
+		AdminAPIKey:  getEnv("ADMIN_API_KEY", ""),
 		DB: db.Config{
 			DSN:      getEnv("DATABASE_URL", "postgres://postgres:postgres@localhost:5432/basegraph?sslmode=disable"),
 			MaxConns: getEnvInt32("DB_MAX_CONNS", 10),

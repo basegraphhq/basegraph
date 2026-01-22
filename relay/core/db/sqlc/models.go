@@ -83,6 +83,18 @@ type IntegrationCredential struct {
 	RevokedAt      pgtype.Timestamptz `json:"revoked_at"`
 }
 
+type Invitation struct {
+	ID         int64              `json:"id"`
+	Email      string             `json:"email"`
+	Token      string             `json:"token"`
+	Status     string             `json:"status"`
+	InvitedBy  *int64             `json:"invited_by"`
+	AcceptedBy *int64             `json:"accepted_by"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	AcceptedAt pgtype.Timestamptz `json:"accepted_at"`
+}
+
 type Issue struct {
 	ID                int64    `json:"id"`
 	IntegrationID     int64    `json:"integration_id"`

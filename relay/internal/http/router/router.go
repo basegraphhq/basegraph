@@ -12,6 +12,7 @@ type RouterConfig struct {
 	DashboardURL    string
 	IsProduction    bool
 	TraceHeaderName string // header name for distributed tracing (e.g., "X-Trace-ID")
+	AdminAPIKey     string // API key for admin endpoints
 }
 
 func SetupRoutes(router *gin.Engine, services *service.Services, cfg RouterConfig) {
@@ -19,8 +20,14 @@ func SetupRoutes(router *gin.Engine, services *service.Services, cfg RouterConfi
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	authHandler := handler.NewAuthHandler(services.Auth(), cfg.DashboardURL, cfg.IsProduction)
+	invitationService := services.Invitations()
+
+	authHandler := handler.NewAuthHandler(services.Auth(), invitationService, cfg.DashboardURL, cfg.IsProduction)
 	AuthRouter(router.Group("/auth"), authHandler)
+
+	// Invitation routes (public validation + admin management)
+	invitationHandler := handler.NewInvitationHandler(invitationService, cfg.AdminAPIKey)
+	InvitationRouter(router.Group("/invites"), router.Group("/admin/invites"), invitationHandler)
 
 	v1 := router.Group("/api/v1")
 	{

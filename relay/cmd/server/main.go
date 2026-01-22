@@ -29,7 +29,7 @@ func main() {
 	fmt.Printf("%s\n", banner)
 	ctx := context.Background()
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(config.ServiceTypeServer)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to load config", "error", err)
 		os.Exit(1)
@@ -150,6 +150,7 @@ func setupRouter(cfg config.Config, services *service.Services) *gin.Engine {
 		DashboardURL:    cfg.DashboardURL,
 		IsProduction:    cfg.IsProduction(),
 		TraceHeaderName: cfg.Pipeline.TraceHeaderName,
+		AdminAPIKey:     cfg.AdminAPIKey,
 	})
 
 	return router
