@@ -75,9 +75,13 @@ export async function GET(request: NextRequest) {
 
 			// Handle invite-specific errors
 			if (errorData.code === "email_mismatch") {
-				return NextResponse.redirect(
-					new URL("/invite?error=email_mismatch", baseUrl),
-				);
+				// Pass token back so invite page can show expected email
+				const redirectUrl = new URL("/invite", baseUrl);
+				redirectUrl.searchParams.set("error", "email_mismatch");
+				if (inviteToken) {
+					redirectUrl.searchParams.set("token", inviteToken);
+				}
+				return NextResponse.redirect(redirectUrl);
 			}
 			if (errorData.code === "invite_expired") {
 				return NextResponse.redirect(
@@ -87,6 +91,11 @@ export async function GET(request: NextRequest) {
 			if (errorData.code === "invite_used") {
 				return NextResponse.redirect(
 					new URL("/invite?error=used", baseUrl),
+				);
+			}
+			if (errorData.code === "invite_revoked") {
+				return NextResponse.redirect(
+					new URL("/invite?error=revoked", baseUrl),
 				);
 			}
 

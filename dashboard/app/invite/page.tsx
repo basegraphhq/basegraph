@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { ThemeToggle } from "@/components/theme-toggle";
 
-type InviteStatus = "loading" | "valid" | "expired" | "used" | "revoked" | "not_found" | "error";
+type InviteStatus = "loading" | "valid" | "expired" | "used" | "revoked" | "not_found" | "email_mismatch" | "error";
 
 interface InviteData {
 	email: string;
@@ -22,6 +22,22 @@ function InviteContent() {
 	const [isRedirecting, setIsRedirecting] = useState(false);
 
 	useEffect(() => {
+		const errorParam = searchParams.get("error");
+		
+		// Handle non-token errors immediately
+		if (errorParam && errorParam !== "email_mismatch") {
+			if (errorParam === "expired") {
+				setStatus("expired");
+			} else if (errorParam === "used") {
+				setStatus("used");
+			} else if (errorParam === "revoked") {
+				setStatus("revoked");
+			} else {
+				setStatus("error");
+			}
+			return;
+		}
+
 		if (!token) {
 			setStatus("not_found");
 			return;
@@ -33,8 +49,13 @@ function InviteContent() {
 				const data = await res.json();
 
 				if (res.ok) {
-					setStatus("valid");
 					setInviteData(data);
+					// If we came back from email mismatch, show that error with the email
+					if (errorParam === "email_mismatch") {
+						setStatus("email_mismatch");
+					} else {
+						setStatus("valid");
+					}
 				} else {
 					const code = data.code as string;
 					if (code === "expired") {
@@ -53,7 +74,7 @@ function InviteContent() {
 		}
 
 		validateInvite();
-	}, [token]);
+	}, [token, searchParams]);
 
 	const handleContinue = async () => {
 		if (!token) return;
@@ -144,6 +165,38 @@ function InviteContent() {
 						<Button variant="outline" onClick={() => router.push("/")}>
 							Go to Homepage
 						</Button>
+					</div>
+				)}
+
+				{status === "email_mismatch" && (
+					<div className="text-center space-y-6">
+						<div>
+							<h1 className="text-2xl font-semibold mb-2">Wrong Account</h1>
+							<p className="text-muted-foreground">
+								The email you signed in with doesn't match the invitation.
+								{inviteData && (
+									<>
+										{" "}This invite was sent to{" "}
+										<span className="font-medium text-foreground">{inviteData.email}</span>.
+									</>
+								)}
+							</p>
+						</div>
+
+						{token && (
+							<Button
+								size="lg"
+								onClick={handleContinue}
+								disabled={isRedirecting}
+								className="w-full"
+							>
+								{isRedirecting ? "Redirecting..." : "Try Again with Correct Account"}
+							</Button>
+						)}
+
+						<p className="text-xs text-muted-foreground">
+							Make sure to sign in with the same email address the invitation was sent to.
+						</p>
 					</div>
 				)}
 

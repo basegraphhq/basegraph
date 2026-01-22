@@ -303,6 +303,12 @@ func (h *AuthHandler) Exchange(c *gin.Context) {
 					"code":  "invite_used",
 				})
 				return
+			case errors.Is(err, service.ErrInviteRevoked):
+				c.JSON(http.StatusGone, gin.H{
+					"error": "This invitation has been revoked",
+					"code":  "invite_revoked",
+				})
+				return
 			case errors.Is(err, service.ErrInviteNotFound):
 				c.JSON(http.StatusNotFound, gin.H{
 					"error": "Invitation not found",
