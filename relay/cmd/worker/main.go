@@ -33,7 +33,7 @@ const maxAttempts = 3
 func main() {
 	ctx := context.Background()
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(config.ServiceTypeWorker)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to load config", "error", err)
 		os.Exit(1)

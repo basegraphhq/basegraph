@@ -21,16 +21,23 @@ const (
 )
 
 type AuthHandler struct {
-	authService  service.AuthService
-	dashboardURL string
-	isProduction bool
+	authService       service.AuthService
+	invitationService service.InvitationService
+	dashboardURL      string
+	isProduction      bool
 }
 
-func NewAuthHandler(authService service.AuthService, dashboardURL string, isProduction bool) *AuthHandler {
+func NewAuthHandler(
+	authService service.AuthService,
+	invitationService service.InvitationService,
+	dashboardURL string,
+	isProduction bool,
+) *AuthHandler {
 	return &AuthHandler{
-		authService:  authService,
-		dashboardURL: dashboardURL,
-		isProduction: isProduction,
+		authService:       authService,
+		invitationService: invitationService,
+		dashboardURL:      dashboardURL,
+		isProduction:      isProduction,
 	}
 }
 
@@ -231,7 +238,8 @@ func (h *AuthHandler) GetAuthURL(c *gin.Context) {
 }
 
 type ExchangeRequest struct {
-	Code string `json:"code" binding:"required"`
+	Code        string  `json:"code" binding:"required"`
+	InviteToken *string `json:"invite_token,omitempty"`
 }
 
 type ExchangeResponse struct {
@@ -265,6 +273,51 @@ func (h *AuthHandler) Exchange(c *gin.Context) {
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to exchange code"})
 		return
+	}
+
+	// If invite token is provided, validate and accept it
+	if req.InviteToken != nil && *req.InviteToken != "" {
+		_, err := h.invitationService.Accept(ctx, *req.InviteToken, user)
+		if err != nil {
+			slog.WarnContext(ctx, "failed to accept invitation",
+				"error", err,
+				"user_email", user.Email,
+			)
+			// Map specific errors to user-friendly messages
+			switch {
+			case errors.Is(err, service.ErrEmailMismatch):
+				c.JSON(http.StatusForbidden, gin.H{
+					"error": "The email you signed in with doesn't match the invitation",
+					"code":  "email_mismatch",
+				})
+				return
+			case errors.Is(err, service.ErrInviteExpired):
+				c.JSON(http.StatusGone, gin.H{
+					"error": "This invitation has expired",
+					"code":  "invite_expired",
+				})
+				return
+			case errors.Is(err, service.ErrInviteAlreadyUsed):
+				c.JSON(http.StatusGone, gin.H{
+					"error": "This invitation has already been used",
+					"code":  "invite_used",
+				})
+				return
+			case errors.Is(err, service.ErrInviteNotFound):
+				c.JSON(http.StatusNotFound, gin.H{
+					"error": "Invitation not found",
+					"code":  "invite_not_found",
+				})
+				return
+			default:
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process invitation"})
+				return
+			}
+		}
+		slog.InfoContext(ctx, "invitation accepted during auth exchange",
+			"user_id", user.ID,
+			"email", user.Email,
+		)
 	}
 
 	slog.InfoContext(ctx, "user authenticated via exchange", "user_id", user.ID, "email", user.Email)

@@ -63,3 +63,7 @@ func (s *Stores) LLMEvals() LLMEvalStore {
 func (s *Stores) Gaps() GapStore {
 	return newGapStore(s.queries)
 }
+
+func (s *Stores) Invitations() InvitationStore {
+	return newInvitationStore(s.queries)
+}

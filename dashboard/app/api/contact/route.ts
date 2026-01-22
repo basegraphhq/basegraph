@@ -1,24 +1,23 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { getClientIP, rateLimit } from "@/lib/rate-limit";
 
-// Rate limit configuration: 5 requests per 15 minutes per IP
 const RATE_LIMIT_MAX_REQUESTS = 5;
 const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
 
-// Handle CORS preflight requests
+const corsHeaders = {
+	"Access-Control-Allow-Origin": "*",
+	"Access-Control-Allow-Methods": "POST, OPTIONS",
+	"Access-Control-Allow-Headers": "Content-Type",
+};
+
 export async function OPTIONS() {
 	return new NextResponse(null, {
 		status: 200,
-		headers: {
-			"Access-Control-Allow-Origin": "*",
-			"Access-Control-Allow-Methods": "POST, OPTIONS",
-			"Access-Control-Allow-Headers": "Content-Type",
-		},
+		headers: corsHeaders,
 	});
 }
 
 export async function POST(request: NextRequest) {
-	// Check rate limit
 	const clientIP = getClientIP(request);
 	const rateLimitResult = rateLimit(
 		clientIP,
@@ -40,32 +39,50 @@ export async function POST(request: NextRequest) {
 					"X-RateLimit-Limit": rateLimitResult.limit.toString(),
 					"X-RateLimit-Remaining": rateLimitResult.remaining.toString(),
 					"X-RateLimit-Reset": new Date(rateLimitResult.reset).toISOString(),
-					"Access-Control-Allow-Origin": "*",
-					"Access-Control-Allow-Methods": "POST, OPTIONS",
-					"Access-Control-Allow-Headers": "Content-Type",
+					...corsHeaders,
 				},
 			},
 		);
 	}
 
 	try {
-		const { email } = await request.json();
+		const { name, email, company, issueTracker, codeHost, message } = await request.json();
+
+		if (!name || !name.trim()) {
+			return NextResponse.json(
+				{ error: "Name is required" },
+				{ status: 400, headers: corsHeaders },
+			);
+		}
 
 		if (!email || !email.includes("@")) {
 			return NextResponse.json(
 				{ error: "Invalid email address" },
-				{
-					status: 400,
-					headers: {
-						"Access-Control-Allow-Origin": "*",
-						"Access-Control-Allow-Methods": "POST, OPTIONS",
-						"Access-Control-Allow-Headers": "Content-Type",
-					},
-				},
+				{ status: 400, headers: corsHeaders },
 			);
 		}
 
-		// Get Airtable credentials from environment variables
+		if (!company || !company.trim()) {
+			return NextResponse.json(
+				{ error: "Company is required" },
+				{ status: 400, headers: corsHeaders },
+			);
+		}
+
+		if (!issueTracker || !issueTracker.trim()) {
+			return NextResponse.json(
+				{ error: "Issue tracker is required" },
+				{ status: 400, headers: corsHeaders },
+			);
+		}
+
+		if (!codeHost || !codeHost.trim()) {
+			return NextResponse.json(
+				{ error: "Code host is required" },
+				{ status: 400, headers: corsHeaders },
+			);
+		}
+
 		const airtableApiKey = process.env.AIRTABLE_API_KEY;
 		const airtableBaseId = process.env.AIRTABLE_BASE_ID;
 		const airtableTableName = process.env.AIRTABLE_TABLE_NAME || "Waitlist";
@@ -74,18 +91,10 @@ export async function POST(request: NextRequest) {
 			console.error("Missing Airtable configuration");
 			return NextResponse.json(
 				{ error: "Server configuration error" },
-				{
-					status: 500,
-					headers: {
-						"Access-Control-Allow-Origin": "*",
-						"Access-Control-Allow-Methods": "POST, OPTIONS",
-						"Access-Control-Allow-Headers": "Content-Type",
-					},
-				},
+				{ status: 500, headers: corsHeaders },
 			);
 		}
 
-		// Create record in Airtable
 		const response = await fetch(
 			`https://api.airtable.com/v0/${airtableBaseId}/${encodeURIComponent(airtableTableName)}`,
 			{
@@ -96,8 +105,13 @@ export async function POST(request: NextRequest) {
 				},
 				body: JSON.stringify({
 					fields: {
-						Email: email,
-						"Joined At": new Date().toISOString(),
+						Name: name.trim(),
+						Email: email.trim(),
+						Company: company.trim(),
+						"Issue Tracker": issueTracker.trim(),
+						"Code Host": codeHost.trim(),
+						Message: message?.trim() || "",
+						"Submitted At": new Date().toISOString(),
 					},
 				}),
 			},
@@ -107,31 +121,16 @@ export async function POST(request: NextRequest) {
 			const errorData = await response.json().catch(() => ({}));
 			console.error("Airtable API error:", errorData);
 
-			// Handle duplicate email (if Airtable returns 422)
 			if (response.status === 422) {
 				return NextResponse.json(
-					{ error: "This email is already on the waitlist" },
-					{
-						status: 422,
-						headers: {
-							"Access-Control-Allow-Origin": "*",
-							"Access-Control-Allow-Methods": "POST, OPTIONS",
-							"Access-Control-Allow-Headers": "Content-Type",
-						},
-					},
+					{ error: "This email has already submitted a request" },
+					{ status: 422, headers: corsHeaders },
 				);
 			}
 
 			return NextResponse.json(
-				{ error: "Failed to add email to waitlist" },
-				{
-					status: response.status,
-					headers: {
-						"Access-Control-Allow-Origin": "*",
-						"Access-Control-Allow-Methods": "POST, OPTIONS",
-						"Access-Control-Allow-Headers": "Content-Type",
-					},
-				},
+				{ error: "Failed to submit request" },
+				{ status: response.status, headers: corsHeaders },
 			);
 		}
 
@@ -145,24 +144,15 @@ export async function POST(request: NextRequest) {
 					"X-RateLimit-Limit": rateLimitResult.limit.toString(),
 					"X-RateLimit-Remaining": rateLimitResult.remaining.toString(),
 					"X-RateLimit-Reset": new Date(rateLimitResult.reset).toISOString(),
-					"Access-Control-Allow-Origin": "*",
-					"Access-Control-Allow-Methods": "POST, OPTIONS",
-					"Access-Control-Allow-Headers": "Content-Type",
+					...corsHeaders,
 				},
 			},
 		);
 	} catch (error) {
-		console.error("Error adding to waitlist:", error);
+		console.error("Error submitting contact request:", error);
 		return NextResponse.json(
 			{ error: "Internal server error" },
-			{
-				status: 500,
-				headers: {
-					"Access-Control-Allow-Origin": "*",
-					"Access-Control-Allow-Methods": "POST, OPTIONS",
-					"Access-Control-Allow-Headers": "Content-Type",
-				},
-			},
+			{ status: 500, headers: corsHeaders },
 		);
 	}
 }

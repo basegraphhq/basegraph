@@ -179,3 +179,16 @@ type GapStore interface {
 	SetLearning(ctx context.Context, id int64, learningID int64) (model.Gap, error)
 	CountOpenBlocking(ctx context.Context, issueID int64) (int64, error)
 }
+
+type InvitationStore interface {
+	Create(ctx context.Context, inv *model.Invitation) error
+	GetByID(ctx context.Context, id int64) (*model.Invitation, error)
+	GetByToken(ctx context.Context, token string) (*model.Invitation, error)
+	GetValidByToken(ctx context.Context, token string) (*model.Invitation, error)
+	GetByEmail(ctx context.Context, email string) (*model.Invitation, error)
+	Accept(ctx context.Context, id int64, userID int64) (*model.Invitation, error)
+	Revoke(ctx context.Context, id int64) (*model.Invitation, error)
+	List(ctx context.Context, limit, offset int32) ([]model.Invitation, error)
+	ListPending(ctx context.Context) ([]model.Invitation, error)
+	ExpireOld(ctx context.Context) error
+}
