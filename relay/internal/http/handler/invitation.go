@@ -2,6 +2,7 @@ package handler
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 
@@ -12,12 +13,14 @@ import (
 
 type InvitationHandler struct {
 	invService  service.InvitationService
+	authService service.AuthService
 	adminAPIKey string
 }
 
-func NewInvitationHandler(invService service.InvitationService, adminAPIKey string) *InvitationHandler {
+func NewInvitationHandler(invService service.InvitationService, authService service.AuthService, adminAPIKey string) *InvitationHandler {
 	return &InvitationHandler{
 		invService:  invService,
+		authService: authService,
 		adminAPIKey: adminAPIKey,
 	}
 }
@@ -173,15 +176,24 @@ func (h *InvitationHandler) Validate(c *gin.Context) {
 
 	inv, err := h.invService.ValidateToken(ctx, token)
 	if err != nil {
+		var email string
+		if errors.Is(err, service.ErrInviteAlreadyUsed) ||
+			errors.Is(err, service.ErrInviteExpired) ||
+			errors.Is(err, service.ErrInviteRevoked) {
+			if invInfo, getErr := h.invService.GetByToken(ctx, token); getErr == nil {
+				email = invInfo.Email
+			}
+		}
+
 		switch {
 		case errors.Is(err, service.ErrInviteNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "invitation not found", "code": "not_found"})
 		case errors.Is(err, service.ErrInviteExpired):
-			c.JSON(http.StatusGone, gin.H{"error": "invitation has expired", "code": "expired"})
+			c.JSON(http.StatusGone, gin.H{"error": "invitation has expired", "code": "expired", "email": email})
 		case errors.Is(err, service.ErrInviteAlreadyUsed):
-			c.JSON(http.StatusGone, gin.H{"error": "invitation has already been used", "code": "already_used"})
+			c.JSON(http.StatusGone, gin.H{"error": "invitation has already been used", "code": "already_used", "email": email})
 		case errors.Is(err, service.ErrInviteRevoked):
-			c.JSON(http.StatusGone, gin.H{"error": "invitation has been revoked", "code": "revoked"})
+			c.JSON(http.StatusGone, gin.H{"error": "invitation has been revoked", "code": "revoked", "email": email})
 		default:
 			slog.ErrorContext(ctx, "failed to validate invitation", "error", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate invitation"})
@@ -194,6 +206,95 @@ func (h *InvitationHandler) Validate(c *gin.Context) {
 		ExpiresAt: inv.ExpiresAt.Format("2006-01-02T15:04:05Z07:00"),
 		Valid:     true,
 	})
+}
+
+type acceptInviteRequest struct {
+	Token string `json:"token" binding:"required"`
+}
+
+// Accept accepts an invitation for an already-authenticated user
+func (h *InvitationHandler) Accept(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	// Get session ID from header (set by auth middleware)
+	sessionIDStr := c.GetHeader("X-Session-ID")
+	if sessionIDStr == "" {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "authentication required"})
+		return
+	}
+
+	sessionID, err := parseSessionID(sessionIDStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid session"})
+		return
+	}
+
+	var req acceptInviteRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "token is required"})
+		return
+	}
+
+	// Validate session and get user
+	user, _, err := h.authService.ValidateSession(ctx, sessionID)
+	if err != nil {
+		if errors.Is(err, service.ErrSessionExpired) || errors.Is(err, service.ErrUserNotFound) {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": "session expired"})
+			return
+		}
+		slog.ErrorContext(ctx, "failed to validate session", "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to validate session"})
+		return
+	}
+
+	// Accept the invitation
+	_, err = h.invService.Accept(ctx, req.Token, user)
+	if err != nil {
+		switch {
+		case errors.Is(err, service.ErrEmailMismatch):
+			c.JSON(http.StatusForbidden, gin.H{
+				"error": "email does not match invitation",
+				"code":  "email_mismatch",
+			})
+		case errors.Is(err, service.ErrInviteExpired):
+			c.JSON(http.StatusGone, gin.H{
+				"error": "invitation has expired",
+				"code":  "expired",
+			})
+		case errors.Is(err, service.ErrInviteAlreadyUsed):
+			c.JSON(http.StatusGone, gin.H{
+				"error": "invitation has already been used",
+				"code":  "already_used",
+			})
+		case errors.Is(err, service.ErrInviteRevoked):
+			c.JSON(http.StatusGone, gin.H{
+				"error": "invitation has been revoked",
+				"code":  "revoked",
+			})
+		case errors.Is(err, service.ErrInviteNotFound):
+			c.JSON(http.StatusNotFound, gin.H{
+				"error": "invitation not found",
+				"code":  "not_found",
+			})
+		default:
+			slog.ErrorContext(ctx, "failed to accept invitation", "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to accept invitation"})
+		}
+		return
+	}
+
+	slog.InfoContext(ctx, "invitation accepted by authenticated user",
+		"user_id", user.ID,
+		"email", user.Email,
+	)
+
+	c.JSON(http.StatusOK, gin.H{"message": "invitation accepted"})
+}
+
+func parseSessionID(s string) (int64, error) {
+	var id int64
+	_, err := fmt.Sscanf(s, "%d", &id)
+	return id, err
 }
 
 // RequireAdminAPIKey middleware checks for valid admin API key

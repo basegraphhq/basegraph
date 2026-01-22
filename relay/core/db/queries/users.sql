@@ -2,20 +2,20 @@
 SELECT * FROM users WHERE id = $1;
 
 -- name: GetUserByEmail :one
-SELECT * FROM users WHERE email = $1;
+SELECT * FROM users WHERE LOWER(email) = LOWER(sqlc.arg(email));
 
 -- name: GetUserByWorkOSID :one
 SELECT * FROM users WHERE workos_id = $1;
 
 -- name: CreateUser :one
 INSERT INTO users (id, name, email, avatar_url, workos_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, now(), now())
+VALUES (sqlc.arg(id), sqlc.arg(name), LOWER(sqlc.arg(email)), sqlc.arg(avatar_url), sqlc.arg(workos_id), now(), now())
 RETURNING *;
 
 -- name: UpdateUser :one
 UPDATE users
-SET name = $2, email = $3, avatar_url = $4, workos_id = $5, updated_at = now()
-WHERE id = $1
+SET name = sqlc.arg(name), email = LOWER(sqlc.arg(email)), avatar_url = sqlc.arg(avatar_url), workos_id = sqlc.arg(workos_id), updated_at = now()
+WHERE id = sqlc.arg(id)
 RETURNING *;
 
 -- name: DeleteUser :exec
@@ -23,7 +23,7 @@ DELETE FROM users WHERE id = $1;
 
 -- name: UpsertUser :one
 INSERT INTO users (id, name, email, avatar_url, workos_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, now(), now())
+VALUES (sqlc.arg(id), sqlc.arg(name), LOWER(sqlc.arg(email)), sqlc.arg(avatar_url), sqlc.arg(workos_id), now(), now())
 ON CONFLICT (email) DO UPDATE SET
   name = EXCLUDED.name,
   avatar_url = EXCLUDED.avatar_url,
@@ -33,10 +33,10 @@ RETURNING *;
 
 -- name: UpsertUserByWorkOSID :one
 INSERT INTO users (id, name, email, avatar_url, workos_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, now(), now())
+VALUES (sqlc.arg(id), sqlc.arg(name), LOWER(sqlc.arg(email)), sqlc.arg(avatar_url), sqlc.arg(workos_id), now(), now())
 ON CONFLICT (workos_id) DO UPDATE SET
   name = EXCLUDED.name,
-  email = EXCLUDED.email,
+  email = LOWER(EXCLUDED.email),
   avatar_url = EXCLUDED.avatar_url,
   updated_at = now()
 RETURNING *;

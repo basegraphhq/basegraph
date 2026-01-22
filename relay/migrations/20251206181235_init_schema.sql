@@ -13,6 +13,7 @@ create table users (
 
 create index idx_users_email on users (email);
 create index idx_users_workos_id on users (workos_id) where workos_id is not null;
+create unique index unq_users_email_lower on users (lower(email));
 
 
 create table invitations (
@@ -239,6 +240,7 @@ create index idx_event_logs_issue_unprocessed on event_logs (issue_id, created_a
 create table sessions (
     id              bigint primary key,
     user_id         bigint not null references users(id),
+    workos_session_id text,
     created_at      timestamptz not null default now(),
     expires_at      timestamptz not null
 );

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"basegraph.app/relay/internal/model"
+	"basegraph.app/relay/internal/service"
 )
 
 type mockUserService struct {
@@ -39,6 +40,7 @@ func (m *mockOrganizationService) Create(ctx context.Context, name string, slug 
 type mockInvitationService struct {
 	createFn        func(ctx context.Context, email string, invitedBy *int64) (*model.Invitation, string, error)
 	validateTokenFn func(ctx context.Context, token string) (*model.Invitation, error)
+	getByTokenFn    func(ctx context.Context, token string) (*model.Invitation, error)
 	acceptFn        func(ctx context.Context, token string, user *model.User) (*model.Invitation, error)
 	revokeFn        func(ctx context.Context, id int64) (*model.Invitation, error)
 	listFn          func(ctx context.Context, limit, offset int32) ([]model.Invitation, error)
@@ -55,6 +57,13 @@ func (m *mockInvitationService) Create(ctx context.Context, email string, invite
 func (m *mockInvitationService) ValidateToken(ctx context.Context, token string) (*model.Invitation, error) {
 	if m.validateTokenFn != nil {
 		return m.validateTokenFn(ctx, token)
+	}
+	return nil, nil
+}
+
+func (m *mockInvitationService) GetByToken(ctx context.Context, token string) (*model.Invitation, error) {
+	if m.getByTokenFn != nil {
+		return m.getByTokenFn(ctx, token)
 	}
 	return nil, nil
 }
@@ -85,4 +94,39 @@ func (m *mockInvitationService) ListPending(ctx context.Context) ([]model.Invita
 		return m.listPendingFn(ctx)
 	}
 	return []model.Invitation{}, nil
+}
+
+type mockAuthService struct {
+	validateSessionFn func(ctx context.Context, sessionID int64) (*model.User, *service.UserContext, error)
+}
+
+func (m *mockAuthService) GetAuthorizationURL(_ string, _ ...service.AuthURLOption) (string, error) {
+	return "", nil
+}
+
+func (m *mockAuthService) HandleCallback(_ context.Context, _ string) (*service.CallbackResult, error) {
+	return nil, nil
+}
+
+func (m *mockAuthService) HandleSignIn(_ context.Context, _ string) (*service.CallbackResult, error) {
+	return nil, nil
+}
+
+func (m *mockAuthService) ValidateSession(ctx context.Context, sessionID int64) (*model.User, *service.UserContext, error) {
+	if m.validateSessionFn != nil {
+		return m.validateSessionFn(ctx, sessionID)
+	}
+	return nil, nil, nil
+}
+
+func (m *mockAuthService) GetSessionByID(_ context.Context, _ int64) (*model.Session, error) {
+	return nil, nil
+}
+
+func (m *mockAuthService) Logout(_ context.Context, _ int64) error {
+	return nil
+}
+
+func (m *mockAuthService) GetLogoutURL(_ string, _ string) string {
+	return ""
 }

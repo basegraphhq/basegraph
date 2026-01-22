@@ -21,6 +21,7 @@ var _ = Describe("InvitationHandler", func() {
 	var (
 		router      *gin.Engine
 		svc         *mockInvitationService
+		authSvc     *mockAuthService
 		adminAPIKey string
 	)
 
@@ -28,8 +29,9 @@ var _ = Describe("InvitationHandler", func() {
 		gin.SetMode(gin.TestMode)
 		router = gin.New()
 		svc = &mockInvitationService{}
+		authSvc = &mockAuthService{}
 		adminAPIKey = "test-admin-key"
-		h := handler.NewInvitationHandler(svc, adminAPIKey)
+		h := handler.NewInvitationHandler(svc, authSvc, adminAPIKey)
 
 		// Public routes
 		router.GET("/invites/validate", h.Validate)
@@ -202,6 +204,9 @@ var _ = Describe("InvitationHandler", func() {
 			svc.validateTokenFn = func(_ context.Context, _ string) (*model.Invitation, error) {
 				return nil, service.ErrInviteExpired
 			}
+			svc.getByTokenFn = func(_ context.Context, _ string) (*model.Invitation, error) {
+				return &model.Invitation{Email: "expired@example.com"}, nil
+			}
 
 			req := httptest.NewRequest(http.MethodGet, "/invites/validate?token=expired", nil)
 			w := httptest.NewRecorder()
@@ -219,6 +224,9 @@ var _ = Describe("InvitationHandler", func() {
 			svc.validateTokenFn = func(_ context.Context, _ string) (*model.Invitation, error) {
 				return nil, service.ErrInviteAlreadyUsed
 			}
+			svc.getByTokenFn = func(_ context.Context, _ string) (*model.Invitation, error) {
+				return &model.Invitation{Email: "used@example.com"}, nil
+			}
 
 			req := httptest.NewRequest(http.MethodGet, "/invites/validate?token=used", nil)
 			w := httptest.NewRecorder()
@@ -235,6 +243,9 @@ var _ = Describe("InvitationHandler", func() {
 		It("returns 410 when invitation was revoked", func() {
 			svc.validateTokenFn = func(_ context.Context, _ string) (*model.Invitation, error) {
 				return nil, service.ErrInviteRevoked
+			}
+			svc.getByTokenFn = func(_ context.Context, _ string) (*model.Invitation, error) {
+				return &model.Invitation{Email: "revoked@example.com"}, nil
 			}
 
 			req := httptest.NewRequest(http.MethodGet, "/invites/validate?token=revoked", nil)

@@ -97,7 +97,7 @@ func (h *AuthHandler) Callback(c *gin.Context) {
 		return
 	}
 
-	user, session, err := h.authService.HandleCallback(ctx, code)
+	result, err := h.authService.HandleCallback(ctx, code)
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to handle callback", "error", err)
 		if errors.Is(err, service.ErrInvalidCode) {
@@ -108,9 +108,9 @@ func (h *AuthHandler) Callback(c *gin.Context) {
 		return
 	}
 
-	h.setSessionCookie(c, session.ID)
+	h.setSessionCookie(c, result.Session.ID)
 
-	slog.InfoContext(ctx, "user logged in", "user_id", user.ID, "email", user.Email)
+	slog.InfoContext(ctx, "user logged in", "user_id", result.User.ID, "email", result.User.Email)
 
 	c.Redirect(http.StatusTemporaryRedirect, h.dashboardURL+"/dashboard")
 }
@@ -224,7 +224,13 @@ func (h *AuthHandler) GetAuthURL(c *gin.Context) {
 		return
 	}
 
-	authURL, err := h.authService.GetAuthorizationURL(state)
+	// Build auth URL options
+	var opts []service.AuthURLOption
+	if loginHint := c.Query("login_hint"); loginHint != "" {
+		opts = append(opts, service.WithLoginHint(loginHint))
+	}
+
+	authURL, err := h.authService.GetAuthorizationURL(state, opts...)
 	if err != nil {
 		slog.ErrorContext(c.Request.Context(), "failed to get authorization URL", "error", err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to get authorization URL"})
@@ -264,59 +270,76 @@ func (h *AuthHandler) Exchange(c *gin.Context) {
 		return
 	}
 
-	user, session, err := h.authService.HandleCallback(ctx, req.Code)
-	if err != nil {
-		slog.ErrorContext(ctx, "failed to exchange code", "error", err)
-		if errors.Is(err, service.ErrInvalidCode) {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid authorization code"})
+	var result *service.CallbackResult
+	var err error
+
+	if req.InviteToken != nil && *req.InviteToken != "" {
+		result, err = h.authService.HandleCallback(ctx, req.Code)
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to exchange code", "error", err)
+			if errors.Is(err, service.ErrInvalidCode) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid authorization code"})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to exchange code"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to exchange code"})
-		return
-	}
 
-	// If invite token is provided, validate and accept it
-	if req.InviteToken != nil && *req.InviteToken != "" {
+		user := result.User
+		session := result.Session
+
 		_, err := h.invitationService.Accept(ctx, *req.InviteToken, user)
 		if err != nil {
 			slog.WarnContext(ctx, "failed to accept invitation",
 				"error", err,
 				"user_email", user.Email,
 			)
+
 			// Map specific errors to user-friendly messages
 			switch {
 			case errors.Is(err, service.ErrEmailMismatch):
+				// For email mismatch, KEEP the session so user can logout properly.
+				// The session contains the WorkOS session ID needed for full logout.
+				// Return session_id so dashboard can set the cookie for logout flow.
 				c.JSON(http.StatusForbidden, gin.H{
-					"error": "The email you signed in with doesn't match the invitation",
-					"code":  "email_mismatch",
-				})
-				return
-			case errors.Is(err, service.ErrInviteExpired):
-				c.JSON(http.StatusGone, gin.H{
-					"error": "This invitation has expired",
-					"code":  "invite_expired",
-				})
-				return
-			case errors.Is(err, service.ErrInviteAlreadyUsed):
-				c.JSON(http.StatusGone, gin.H{
-					"error": "This invitation has already been used",
-					"code":  "invite_used",
-				})
-				return
-			case errors.Is(err, service.ErrInviteRevoked):
-				c.JSON(http.StatusGone, gin.H{
-					"error": "This invitation has been revoked",
-					"code":  "invite_revoked",
-				})
-				return
-			case errors.Is(err, service.ErrInviteNotFound):
-				c.JSON(http.StatusNotFound, gin.H{
-					"error": "Invitation not found",
-					"code":  "invite_not_found",
+					"error":      "The email you signed in with doesn't match the invitation",
+					"code":       "email_mismatch",
+					"session_id": strconv.FormatInt(session.ID, 10),
 				})
 				return
 			default:
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process invitation"})
+				// For all other invite errors, delete the session since user can't proceed
+				if delErr := h.authService.Logout(ctx, session.ID); delErr != nil {
+					slog.WarnContext(ctx, "failed to delete session after invite failure",
+						"error", delErr,
+						"session_id", session.ID,
+					)
+				}
+
+				switch {
+				case errors.Is(err, service.ErrInviteExpired):
+					c.JSON(http.StatusGone, gin.H{
+						"error": "This invitation has expired",
+						"code":  "invite_expired",
+					})
+				case errors.Is(err, service.ErrInviteAlreadyUsed):
+					c.JSON(http.StatusGone, gin.H{
+						"error": "This invitation has already been used",
+						"code":  "invite_used",
+					})
+				case errors.Is(err, service.ErrInviteRevoked):
+					c.JSON(http.StatusGone, gin.H{
+						"error": "This invitation has been revoked",
+						"code":  "invite_revoked",
+					})
+				case errors.Is(err, service.ErrInviteNotFound):
+					c.JSON(http.StatusNotFound, gin.H{
+						"error": "Invitation not found",
+						"code":  "invite_not_found",
+					})
+				default:
+					c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process invitation"})
+				}
 				return
 			}
 		}
@@ -324,18 +347,37 @@ func (h *AuthHandler) Exchange(c *gin.Context) {
 			"user_id", user.ID,
 			"email", user.Email,
 		)
+	} else {
+		result, err = h.authService.HandleSignIn(ctx, req.Code)
+		if err != nil {
+			slog.WarnContext(ctx, "sign-in failed", "error", err)
+			if errors.Is(err, service.ErrInvalidCode) {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid authorization code"})
+				return
+			}
+			if errors.Is(err, service.ErrUserNotFound) {
+				// User doesn't exist - they need an invite
+				c.JSON(http.StatusForbidden, gin.H{
+					"error": "Relay is invite-only. Please use an invitation link to sign up.",
+					"code":  "invite_only",
+				})
+				return
+			}
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sign in"})
+			return
+		}
 	}
 
-	slog.InfoContext(ctx, "user authenticated via exchange", "user_id", user.ID, "email", user.Email)
+	slog.InfoContext(ctx, "user authenticated via exchange", "user_id", result.User.ID, "email", result.User.Email)
 
 	c.JSON(http.StatusOK, ExchangeResponse{
 		User: UserResponse{
-			ID:        strconv.FormatInt(user.ID, 10),
-			Name:      user.Name,
-			Email:     user.Email,
-			AvatarURL: user.AvatarURL,
+			ID:        strconv.FormatInt(result.User.ID, 10),
+			Name:      result.User.Name,
+			Email:     result.User.Email,
+			AvatarURL: result.User.AvatarURL,
 		},
-		SessionID: strconv.FormatInt(session.ID, 10),
+		SessionID: strconv.FormatInt(result.Session.ID, 10),
 		ExpiresIn: sessionMaxAgeHours,
 	})
 }
@@ -397,6 +439,12 @@ func (h *AuthHandler) ValidateSession(c *gin.Context) {
 
 type LogoutRequest struct {
 	SessionID string `json:"session_id" binding:"required"`
+	ReturnTo  string `json:"return_to,omitempty"`
+}
+
+type LogoutResponse struct {
+	Message   string `json:"message"`
+	LogoutURL string `json:"logout_url,omitempty"`
 }
 
 func (h *AuthHandler) LogoutSession(c *gin.Context) {
@@ -414,9 +462,27 @@ func (h *AuthHandler) LogoutSession(c *gin.Context) {
 		return
 	}
 
+	// Get session first to retrieve WorkOS session ID for logout URL
+	// We fetch before deleting so we can build the WorkOS logout URL
+	session, err := h.authService.GetSessionByID(ctx, sessionID)
+	if err != nil {
+		slog.DebugContext(ctx, "session not found for logout URL", "error", err, "session_id", sessionID)
+	}
+
+	// Delete the session
 	if err := h.authService.Logout(ctx, sessionID); err != nil {
 		slog.WarnContext(ctx, "failed to delete session", "error", err, "session_id", sessionID)
 	}
 
-	c.JSON(http.StatusOK, gin.H{"message": "logged out"})
+	// Build response with optional WorkOS logout URL
+	resp := LogoutResponse{Message: "logged out"}
+	if session != nil && session.WorkOSSessionID != nil && *session.WorkOSSessionID != "" {
+		returnTo := req.ReturnTo
+		if returnTo == "" {
+			returnTo = h.dashboardURL
+		}
+		resp.LogoutURL = h.authService.GetLogoutURL(*session.WorkOSSessionID, returnTo)
+	}
+
+	c.JSON(http.StatusOK, resp)
 }

@@ -11,7 +11,7 @@ import (
 
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (id, name, email, avatar_url, workos_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, now(), now())
+VALUES ($1, $2, LOWER($3), $4, $5, now(), now())
 RETURNING id, name, email, avatar_url, workos_id, created_at, updated_at
 `
 
@@ -73,7 +73,7 @@ func (q *Queries) GetUser(ctx context.Context, id int64) (User, error) {
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, name, email, avatar_url, workos_id, created_at, updated_at FROM users WHERE email = $1
+SELECT id, name, email, avatar_url, workos_id, created_at, updated_at FROM users WHERE LOWER(email) = LOWER($1)
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
@@ -112,26 +112,26 @@ func (q *Queries) GetUserByWorkOSID(ctx context.Context, workosID *string) (User
 
 const updateUser = `-- name: UpdateUser :one
 UPDATE users
-SET name = $2, email = $3, avatar_url = $4, workos_id = $5, updated_at = now()
-WHERE id = $1
+SET name = $1, email = LOWER($2), avatar_url = $3, workos_id = $4, updated_at = now()
+WHERE id = $5
 RETURNING id, name, email, avatar_url, workos_id, created_at, updated_at
 `
 
 type UpdateUserParams struct {
-	ID        int64   `json:"id"`
 	Name      string  `json:"name"`
 	Email     string  `json:"email"`
 	AvatarUrl *string `json:"avatar_url"`
 	WorkosID  *string `json:"workos_id"`
+	ID        int64   `json:"id"`
 }
 
 func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, error) {
 	row := q.db.QueryRow(ctx, updateUser,
-		arg.ID,
 		arg.Name,
 		arg.Email,
 		arg.AvatarUrl,
 		arg.WorkosID,
+		arg.ID,
 	)
 	var i User
 	err := row.Scan(
@@ -148,7 +148,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 
 const upsertUser = `-- name: UpsertUser :one
 INSERT INTO users (id, name, email, avatar_url, workos_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, now(), now())
+VALUES ($1, $2, LOWER($3), $4, $5, now(), now())
 ON CONFLICT (email) DO UPDATE SET
   name = EXCLUDED.name,
   avatar_url = EXCLUDED.avatar_url,
@@ -188,10 +188,10 @@ func (q *Queries) UpsertUser(ctx context.Context, arg UpsertUserParams) (User, e
 
 const upsertUserByWorkOSID = `-- name: UpsertUserByWorkOSID :one
 INSERT INTO users (id, name, email, avatar_url, workos_id, created_at, updated_at)
-VALUES ($1, $2, $3, $4, $5, now(), now())
+VALUES ($1, $2, LOWER($3), $4, $5, now(), now())
 ON CONFLICT (workos_id) DO UPDATE SET
   name = EXCLUDED.name,
-  email = EXCLUDED.email,
+  email = LOWER(EXCLUDED.email),
   avatar_url = EXCLUDED.avatar_url,
   updated_at = now()
 RETURNING id, name, email, avatar_url, workos_id, created_at, updated_at

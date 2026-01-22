@@ -42,9 +42,10 @@ func (s *sessionStore) GetValid(ctx context.Context, id int64) (*model.Session, 
 
 func (s *sessionStore) Create(ctx context.Context, session *model.Session) error {
 	row, err := s.queries.CreateSession(ctx, sqlc.CreateSessionParams{
-		ID:        session.ID,
-		UserID:    session.UserID,
-		ExpiresAt: pgtype.Timestamptz{Time: session.ExpiresAt, Valid: true},
+		ID:              session.ID,
+		UserID:          session.UserID,
+		ExpiresAt:       pgtype.Timestamptz{Time: session.ExpiresAt, Valid: true},
+		WorkosSessionID: session.WorkOSSessionID,
 	})
 	if err != nil {
 		return err
@@ -75,10 +76,11 @@ func (s *sessionStore) ListByUser(ctx context.Context, userID int64) ([]model.Se
 
 func toSessionModel(row sqlc.Session) *model.Session {
 	return &model.Session{
-		ID:        row.ID,
-		UserID:    row.UserID,
-		CreatedAt: row.CreatedAt.Time,
-		ExpiresAt: row.ExpiresAt.Time,
+		ID:              row.ID,
+		UserID:          row.UserID,
+		CreatedAt:       row.CreatedAt.Time,
+		ExpiresAt:       row.ExpiresAt.Time,
+		WorkOSSessionID: row.WorkosSessionID,
 	}
 }
 

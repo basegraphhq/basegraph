@@ -180,10 +180,11 @@ type Repository struct {
 }
 
 type Session struct {
-	ID        int64              `json:"id"`
-	UserID    int64              `json:"user_id"`
-	CreatedAt pgtype.Timestamptz `json:"created_at"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	ID              int64              `json:"id"`
+	UserID          int64              `json:"user_id"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+	WorkosSessionID *string            `json:"workos_session_id"`
 }
 
 type User struct {

@@ -12,25 +12,32 @@ import (
 )
 
 const createSession = `-- name: CreateSession :one
-INSERT INTO sessions (id, user_id, created_at, expires_at)
-VALUES ($1, $2, now(), $3)
-RETURNING id, user_id, created_at, expires_at
+INSERT INTO sessions (id, user_id, created_at, expires_at, workos_session_id)
+VALUES ($1, $2, now(), $3, $4)
+RETURNING id, user_id, created_at, expires_at, workos_session_id
 `
 
 type CreateSessionParams struct {
-	ID        int64              `json:"id"`
-	UserID    int64              `json:"user_id"`
-	ExpiresAt pgtype.Timestamptz `json:"expires_at"`
+	ID              int64              `json:"id"`
+	UserID          int64              `json:"user_id"`
+	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
+	WorkosSessionID *string            `json:"workos_session_id"`
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
-	row := q.db.QueryRow(ctx, createSession, arg.ID, arg.UserID, arg.ExpiresAt)
+	row := q.db.QueryRow(ctx, createSession,
+		arg.ID,
+		arg.UserID,
+		arg.ExpiresAt,
+		arg.WorkosSessionID,
+	)
 	var i Session
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.WorkosSessionID,
 	)
 	return i, err
 }
@@ -63,7 +70,7 @@ func (q *Queries) DeleteSessionsByUser(ctx context.Context, userID int64) error 
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, user_id, created_at, expires_at FROM sessions WHERE id = $1
+SELECT id, user_id, created_at, expires_at, workos_session_id FROM sessions WHERE id = $1
 `
 
 func (q *Queries) GetSession(ctx context.Context, id int64) (Session, error) {
@@ -74,12 +81,13 @@ func (q *Queries) GetSession(ctx context.Context, id int64) (Session, error) {
 		&i.UserID,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.WorkosSessionID,
 	)
 	return i, err
 }
 
 const getValidSession = `-- name: GetValidSession :one
-SELECT id, user_id, created_at, expires_at FROM sessions 
+SELECT id, user_id, created_at, expires_at, workos_session_id FROM sessions 
 WHERE id = $1 AND expires_at > now()
 `
 
@@ -91,12 +99,13 @@ func (q *Queries) GetValidSession(ctx context.Context, id int64) (Session, error
 		&i.UserID,
 		&i.CreatedAt,
 		&i.ExpiresAt,
+		&i.WorkosSessionID,
 	)
 	return i, err
 }
 
 const listSessionsByUser = `-- name: ListSessionsByUser :many
-SELECT id, user_id, created_at, expires_at FROM sessions 
+SELECT id, user_id, created_at, expires_at, workos_session_id FROM sessions 
 WHERE user_id = $1 AND expires_at > now()
 ORDER BY created_at DESC
 `
@@ -115,6 +124,7 @@ func (q *Queries) ListSessionsByUser(ctx context.Context, userID int64) ([]Sessi
 			&i.UserID,
 			&i.CreatedAt,
 			&i.ExpiresAt,
+			&i.WorkosSessionID,
 		); err != nil {
 			return nil, err
 		}

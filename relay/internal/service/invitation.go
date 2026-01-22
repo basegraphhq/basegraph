@@ -32,6 +32,7 @@ var (
 type InvitationService interface {
 	Create(ctx context.Context, email string, invitedBy *int64) (*model.Invitation, string, error)
 	ValidateToken(ctx context.Context, token string) (*model.Invitation, error)
+	GetByToken(ctx context.Context, token string) (*model.Invitation, error)
 	Accept(ctx context.Context, token string, user *model.User) (*model.Invitation, error)
 	Revoke(ctx context.Context, id int64) (*model.Invitation, error)
 	List(ctx context.Context, limit, offset int32) ([]model.Invitation, error)
@@ -114,6 +115,17 @@ func (s *invitationService) ValidateToken(ctx context.Context, token string) (*m
 		return nil, fmt.Errorf("getting invitation: %w", err)
 	}
 
+	return inv, nil
+}
+
+func (s *invitationService) GetByToken(ctx context.Context, token string) (*model.Invitation, error) {
+	inv, err := s.invStore.GetByToken(ctx, token)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, ErrInviteNotFound
+		}
+		return nil, fmt.Errorf("getting invitation: %w", err)
+	}
 	return inv, nil
 }
 

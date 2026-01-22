@@ -26,7 +26,7 @@ func SetupRoutes(router *gin.Engine, services *service.Services, cfg RouterConfi
 	AuthRouter(router.Group("/auth"), authHandler)
 
 	// Invitation routes (public validation + admin management)
-	invitationHandler := handler.NewInvitationHandler(invitationService, cfg.AdminAPIKey)
+	invitationHandler := handler.NewInvitationHandler(invitationService, services.Auth(), cfg.AdminAPIKey)
 	InvitationRouter(router.Group("/invites"), router.Group("/admin/invites"), invitationHandler)
 
 	v1 := router.Group("/api/v1")

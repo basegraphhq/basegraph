@@ -11,8 +11,8 @@ WHERE user_id = $1 AND expires_at > now()
 ORDER BY created_at DESC;
 
 -- name: CreateSession :one
-INSERT INTO sessions (id, user_id, created_at, expires_at)
-VALUES ($1, $2, now(), $3)
+INSERT INTO sessions (id, user_id, created_at, expires_at, workos_session_id)
+VALUES ($1, $2, now(), $3, $4)
 RETURNING *;
 
 -- name: DeleteSession :exec
