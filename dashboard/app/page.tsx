@@ -19,11 +19,11 @@ export default function Home() {
 		},
 		description:
 			"Turn tickets into production-ready specs. Relay analyzes your tickets, gathers context from your team, and maps your codebase to generate specs that actually ship.",
-		url: "https://basegraph.app",
+		url: "https://basegraph.co",
 		creator: {
 			"@type": "Organization",
 			name: "Basegraph",
-			url: "https://basegraph.app",
+			url: "https://basegraph.co",
 			sameAs: ["https://x.com/basegraph"],
 		},
 		featureList: [

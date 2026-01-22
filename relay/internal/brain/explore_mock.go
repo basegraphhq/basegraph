@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"basegraph.app/relay/common/llm"
-	"basegraph.app/relay/common/logger"
+	"basegraph.co/relay/common/llm"
+	"basegraph.co/relay/common/logger"
 )
 
 // ExploreFixture represents a pre-written explore response for mock mode.

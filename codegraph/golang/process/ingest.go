@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"basegraph.app/relay/common/arangodb"
+	"basegraph.co/relay/common/arangodb"
 	"github.com/humanbeeng/lepo/prototypes/codegraph/extract"
 )
 

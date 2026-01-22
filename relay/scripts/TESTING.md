@@ -241,7 +241,7 @@ The retriever has 4 tools:
 
 4. **graph** - Query code relationships
    ```json
-   {"operation": "callers", "target": "basegraph.app/relay/internal/brain.NewRetriever", "depth": 1}
+   {"operation": "callers", "target": "basegraph.co/relay/internal/brain.NewRetriever", "depth": 1}
    ```
 
 ---

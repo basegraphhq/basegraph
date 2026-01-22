@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"basegraph.app/relay/common/id"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/common/id"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/store"
 )
 
 const (

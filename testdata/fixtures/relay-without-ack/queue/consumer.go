@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"time"
 
-	"basegraph.app/relay/common/logger"
+	"basegraph.co/relay/common/logger"
 	"github.com/redis/go-redis/v9"
 )
 

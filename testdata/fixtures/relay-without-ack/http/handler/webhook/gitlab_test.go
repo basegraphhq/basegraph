@@ -14,11 +14,11 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"basegraph.app/relay/internal/http/handler/webhook"
-	"basegraph.app/relay/internal/mapper"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/service"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/internal/http/handler/webhook"
+	"basegraph.co/relay/internal/mapper"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/service"
+	"basegraph.co/relay/internal/store"
 )
 
 type fakeCredStore struct {

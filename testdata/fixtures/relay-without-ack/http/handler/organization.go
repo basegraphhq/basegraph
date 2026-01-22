@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"net/http"
 
-	"basegraph.app/relay/internal/http/dto"
-	"basegraph.app/relay/internal/service"
+	"basegraph.co/relay/internal/http/dto"
+	"basegraph.co/relay/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5/pgconn"
 )

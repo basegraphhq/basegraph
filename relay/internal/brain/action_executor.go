@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"strconv"
 
-	"basegraph.app/relay/common/id"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/service/issue_tracker"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/common/id"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/service/issue_tracker"
+	"basegraph.co/relay/internal/store"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 

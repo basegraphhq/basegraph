@@ -1,12 +1,12 @@
 package service
 
 import (
-	"basegraph.app/relay/core/config"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/queue"
-	"basegraph.app/relay/internal/service/integration"
-	tracker "basegraph.app/relay/internal/service/issue_tracker"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/core/config"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/queue"
+	"basegraph.co/relay/internal/service/integration"
+	tracker "basegraph.co/relay/internal/service/issue_tracker"
+	"basegraph.co/relay/internal/store"
 )
 
 type ServicesConfig struct {

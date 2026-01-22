@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"basegraph.app/relay/common/llm"
-	"basegraph.app/relay/common/logger"
+	"basegraph.co/relay/common/llm"
+	"basegraph.co/relay/common/logger"
 )
 
 const (
@@ -29,7 +29,7 @@ const (
 type ExploreAgent struct {
 	llm        llm.AgentClient
 	tools      *ExploreTools
-	modulePath string // Go module path for constructing qnames (e.g., "basegraph.app/relay")
+	modulePath string // Go module path for constructing qnames (e.g., "basegraph.co/relay")
 	debugDir   string // Directory for debug logs (empty = no logging)
 }
 

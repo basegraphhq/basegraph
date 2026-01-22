@@ -5,7 +5,7 @@ go 1.24.0
 toolchain go1.24.5
 
 require (
-	basegraph.app/relay v0.0.0
+	basegraph.co/relay v0.0.0
 	github.com/joho/godotenv v1.5.1
 	golang.org/x/tools v0.38.0
 )
@@ -27,4 +27,4 @@ require (
 	golang.org/x/text v0.31.0 // indirect
 )
 
-replace basegraph.app/relay => ../../relay
+replace basegraph.co/relay => ../../relay

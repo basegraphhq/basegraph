@@ -7,9 +7,9 @@ import (
 	"os"
 	"strings"
 
-	"basegraph.app/relay/common/arangodb"
-	"basegraph.app/relay/common/llm"
-	"basegraph.app/relay/internal/brain"
+	"basegraph.co/relay/common/arangodb"
+	"basegraph.co/relay/common/llm"
+	"basegraph.co/relay/internal/brain"
 	"github.com/joho/godotenv"
 )
 
@@ -21,7 +21,7 @@ func main() {
 
 	// Repo config - defaults to relay codebase for easy testing
 	repoRoot := getEnv("REPO_ROOT", "/Users/nithin/basegraph/relay")
-	modulePath := getEnv("MODULE_PATH", "basegraph.app/relay")
+	modulePath := getEnv("MODULE_PATH", "basegraph.co/relay")
 
 	// LLM client - uses EXPLORE_LLM_* env vars (consistent with worker)
 	provider := getEnv("EXPLORE_LLM_PROVIDER", "openai")

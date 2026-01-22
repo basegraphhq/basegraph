@@ -3,7 +3,7 @@ package llm_test
 import (
 	"strings"
 
-	"basegraph.app/relay/common/llm"
+	"basegraph.co/relay/common/llm"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

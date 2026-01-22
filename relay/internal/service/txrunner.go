@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 
-	"basegraph.app/relay/core/db"
-	"basegraph.app/relay/core/db/sqlc"
-	"basegraph.app/relay/internal/service/integration"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/core/db"
+	"basegraph.co/relay/core/db/sqlc"
+	"basegraph.co/relay/internal/service/integration"
+	"basegraph.co/relay/internal/store"
 )
 
 // StoreProvider exposes only the stores needed by a transactional operation.

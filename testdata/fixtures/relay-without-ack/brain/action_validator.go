@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"strconv"
 
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/store"
 )
 
 const (

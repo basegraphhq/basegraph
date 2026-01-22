@@ -9,7 +9,7 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"basegraph.app/relay/internal/brain"
+	"basegraph.co/relay/internal/brain"
 )
 
 var _ = Describe("ExploreTools", func() {

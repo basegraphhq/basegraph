@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"basegraph.app/relay/common/llm"
-	"basegraph.app/relay/common/logger"
+	"basegraph.co/relay/common/llm"
+	"basegraph.co/relay/common/logger"
 )
 
 const (

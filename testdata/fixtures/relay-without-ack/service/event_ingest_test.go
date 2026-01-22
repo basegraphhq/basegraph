@@ -8,12 +8,12 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"basegraph.app/relay/common/id"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/queue"
-	"basegraph.app/relay/internal/service"
-	"basegraph.app/relay/internal/service/issue_tracker"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/common/id"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/queue"
+	"basegraph.co/relay/internal/service"
+	"basegraph.co/relay/internal/service/issue_tracker"
+	"basegraph.co/relay/internal/store"
 )
 
 // Mock IntegrationStore - now easy to mock since it's an interface

@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 
-	"basegraph.app/relay/internal/mapper"
+	"basegraph.co/relay/internal/mapper"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )

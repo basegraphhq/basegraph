@@ -8,9 +8,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/service"
-	issue_tracker "basegraph.app/relay/internal/service/issue_tracker"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/service"
+	issue_tracker "basegraph.co/relay/internal/service/issue_tracker"
 )
 
 var _ = Describe("Engagement Detector Mention Logic", func() {

@@ -3,7 +3,7 @@ package handler_test
 import (
 	"context"
 
-	"basegraph.app/relay/internal/model"
+	"basegraph.co/relay/internal/model"
 )
 
 type mockUserService struct {

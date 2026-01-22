@@ -85,7 +85,7 @@ row, err := s.queries.UpsertIssue(ctx, sqlc.UpsertIssueParams{
 
 #### 1) DB schema: add `issues.token_total`
 
-> This repo does **not** contain migrations/SQLC sources (Finding F2 tool output). You must apply the migration + sqlc query change in the repository that owns `basegraph.app/relay/core/db/sqlc`.
+> This repo does **not** contain migrations/SQLC sources (Finding F2 tool output). You must apply the migration + sqlc query change in the repository that owns `basegraph.co/relay/core/db/sqlc`.
 
 **Migration SQL (copy-paste):**
 ```sql
@@ -359,7 +359,7 @@ type IssueTokenStore interface {
 | # | Task | File | Done When | Blocked By |
 |---|------|------|-----------|------------|
 | 1 | Add DB column `issues.token_total` (BIGINT default 0) | (DB migrations repo) | Migration applied in a dev DB; `\d issues` shows `token_total` | DB migration workflow |
-| 2 | Add sqlc query `AddIssueTokens` + regenerate `basegraph.app/relay/core/db/sqlc` | (DB/sqlc repo) | Generated code exposes `AddIssueTokens(ctx, params)` and `Issue.TokenTotal` | Task #1 |
+| 2 | Add sqlc query `AddIssueTokens` + regenerate `basegraph.co/relay/core/db/sqlc` | (DB/sqlc repo) | Generated code exposes `AddIssueTokens(ctx, params)` and `Issue.TokenTotal` | Task #1 |
 | 3 | Add `TokenTotal int64` to `model.Issue` | `model/issue.go` | `go test ./...` compiles | Task #2 |
 | 4 | Implement `issueStore.AddTokens` and map `TokenTotal` in `toIssueModel` | `store/issue.go` | Unit tests compile; store method called successfully in a dev run | Task #2 |
 | 5 | Add `brain/TokenTracker` | `brain/token_tracker.go` | Unit tests for delta computation pass | - |
@@ -512,7 +512,7 @@ func TestIssueStore_AddTokens_Atomic(t *testing.T) {
 ## Assumptions
 | Assumption | If Wrong |
 |------------|----------|
-| The DB schema + sqlc sources live outside this repo (imports `basegraph.app/relay/core/db/sqlc`) | Create a `db/migrations` + `db/queries` structure in this repo, wire sqlc generation into CI, and update imports accordingly |
+| The DB schema + sqlc sources live outside this repo (imports `basegraph.co/relay/core/db/sqlc`) | Create a `db/migrations` + `db/queries` structure in this repo, wire sqlc generation into CI, and update imports accordingly |
 | `issueStore` is available to Orchestrator construction | If Orchestrator doesn’t have store access today, inject it via constructor params or create a small `TokenUsageStore` dependency passed to Planner/ExploreAgent |
 | `llm.AgentClient.ChatWithTools` responses always have integer `PromptTokens`/`CompletionTokens` | If tokens can be missing/nullable, guard with defaults and only record when present |
 

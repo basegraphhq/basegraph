@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"basegraph.app/relay/internal/model"
+	"basegraph.co/relay/internal/model"
 )
 
 type ActionType string

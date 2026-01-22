@@ -13,10 +13,10 @@ import (
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 	"go.opentelemetry.io/otel/trace"
 
-	"basegraph.app/relay/common/logger"
-	"basegraph.app/relay/internal/mapper"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/service"
+	"basegraph.co/relay/common/logger"
+	"basegraph.co/relay/internal/mapper"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/service"
 )
 
 type GitLabWebhookHandler struct {

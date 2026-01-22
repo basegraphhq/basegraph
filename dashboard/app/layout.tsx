@@ -10,7 +10,7 @@ import "./globals.css";
 const _geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-	metadataBase: new URL("https://basegraph.app"),
+	metadataBase: new URL("https://basegraph.co"),
 	title: {
 		default: "Relay by Basegraph - Turn Tickets into Production-Ready Specs",
 		template: "%s | Relay by Basegraph",
@@ -33,7 +33,7 @@ export const metadata: Metadata = {
 		"spec generation",
 		"codebase mapping",
 	],
-	authors: [{ name: "Basegraph", url: "https://basegraph.app" }],
+	authors: [{ name: "Basegraph", url: "https://basegraph.co" }],
 	creator: "Basegraph",
 	publisher: "Basegraph",
 	robots: {
@@ -50,7 +50,7 @@ export const metadata: Metadata = {
 	openGraph: {
 		type: "website",
 		locale: "en_US",
-		url: "https://basegraph.app",
+		url: "https://basegraph.co",
 		title: "Relay by Basegraph - Turn Tickets into Production-Ready Specs",
 		description:
 			"Turn tickets into production-ready specs. Relay analyzes your tickets, gathers context from your team, and maps your codebase to generate specs that actually ship.",
@@ -79,7 +79,7 @@ export const metadata: Metadata = {
 	},
 	manifest: "/site.webmanifest",
 	alternates: {
-		canonical: "https://basegraph.app",
+		canonical: "https://basegraph.co",
 	},
 };
 

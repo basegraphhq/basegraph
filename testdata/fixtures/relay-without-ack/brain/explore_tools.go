@@ -11,8 +11,8 @@ import (
 	"strconv"
 	"strings"
 
-	"basegraph.app/relay/common/arangodb"
-	"basegraph.app/relay/common/llm"
+	"basegraph.co/relay/common/arangodb"
+	"basegraph.co/relay/common/llm"
 )
 
 const (
@@ -46,7 +46,7 @@ type ReadParams struct {
 // GraphParams for the Graph tool.
 type GraphParams struct {
 	Operation string `json:"operation" jsonschema:"required,enum=callers,enum=callees,enum=implementations,enum=methods,enum=usages,enum=inheritors,description=Graph operation: callers, callees, implementations, methods, usages, inheritors"`
-	Target    string `json:"target" jsonschema:"required,description=Qualified name of the entity to query (e.g. 'basegraph.app/relay/internal/brain.Retriever')"`
+	Target    string `json:"target" jsonschema:"required,description=Qualified name of the entity to query (e.g. 'basegraph.co/relay/internal/brain.Retriever')"`
 	Depth     int    `json:"depth,omitempty" jsonschema:"description=Traversal depth for callers/callees (default 1, max 3)"`
 }
 

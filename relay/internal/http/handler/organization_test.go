@@ -12,8 +12,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"basegraph.app/relay/internal/http/handler"
-	"basegraph.app/relay/internal/model"
+	"basegraph.co/relay/internal/http/handler"
+	"basegraph.co/relay/internal/model"
 )
 
 var _ = Describe("OrganizationHandler", func() {

@@ -5,10 +5,10 @@ import (
 	"errors"
 	"fmt"
 
-	"basegraph.app/relay/common"
-	"basegraph.app/relay/common/id"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/common"
+	"basegraph.co/relay/common/id"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/store"
 )
 
 type OrganizationService interface {

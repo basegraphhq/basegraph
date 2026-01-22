@@ -5,7 +5,7 @@ import (
 	"errors"
 	"time"
 
-	"basegraph.app/relay/internal/model"
+	"basegraph.co/relay/internal/model"
 )
 
 var ErrNotFound = errors.New("not found")

@@ -6,5 +6,5 @@ Allow: /
 Disallow: /api/
 
 # Sitemap location
-Sitemap: https://basegraph.app/sitemap.xml
+Sitemap: https://basegraph.co/sitemap.xml
 

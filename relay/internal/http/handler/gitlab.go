@@ -7,8 +7,8 @@ import (
 	"strings"
 	"time"
 
-	"basegraph.app/relay/internal/http/dto"
-	"basegraph.app/relay/internal/service/integration"
+	"basegraph.co/relay/internal/http/dto"
+	"basegraph.co/relay/internal/service/integration"
 	"github.com/gin-gonic/gin"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )

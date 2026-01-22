@@ -81,8 +81,8 @@ cp "$RELAY_ROOT/go.mod" "$FIXTURE_PATH/go.mod"
 cp "$RELAY_ROOT/go.sum" "$FIXTURE_PATH/go.sum"
 
 # Update module path in go.mod
-MODULE_PATH="basegraph.app/$FIXTURE_NAME"
-sed -i '' "s|^module basegraph.app/relay|module $MODULE_PATH|" "$FIXTURE_PATH/go.mod"
+MODULE_PATH="basegraph.co/$FIXTURE_NAME"
+sed -i '' "s|^module basegraph.co/relay|module $MODULE_PATH|" "$FIXTURE_PATH/go.mod"
 
 echo -e "  → Module path: $MODULE_PATH"
 echo -e "  ${GREEN}✓${NC} Go module configured"
@@ -93,8 +93,8 @@ echo -e "${YELLOW}[4/5] Updating import paths...${NC}"
 
 # Find all .go files and update imports
 find "$FIXTURE_PATH" -name "*.go" -type f | while read -r file; do
-    # Replace basegraph.app/relay with the new module path
-    sed -i '' "s|\"basegraph.app/relay/|\"$MODULE_PATH/|g" "$file"
+    # Replace basegraph.co/relay with the new module path
+    sed -i '' "s|\"basegraph.co/relay/|\"$MODULE_PATH/|g" "$file"
 done
 
 echo -e "  ${GREEN}✓${NC} Import paths updated"

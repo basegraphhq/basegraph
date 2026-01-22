@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"time"
 
-	"basegraph.app/relay/common/id"
-	"basegraph.app/relay/core/config"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/common/id"
+	"basegraph.co/relay/core/config"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/store"
 	"github.com/workos/workos-go/v6/pkg/usermanagement"
 )
 

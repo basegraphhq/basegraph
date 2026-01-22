@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"basegraph.app/relay/core/config"
+	"basegraph.co/relay/core/config"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlplog/otlploghttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"

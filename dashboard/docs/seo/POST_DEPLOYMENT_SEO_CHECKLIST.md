@@ -14,42 +14,42 @@
 
 ### 2. Google Search Console Setup
 - [ ] Go to https://search.google.com/search-console
-- [ ] Add property: https://basegraph.app
+- [ ] Add property: https://basegraph.co
 - [ ] Verify ownership (DNS or HTML file method)
-- [ ] Submit sitemap: https://basegraph.app/sitemap.xml
+- [ ] Submit sitemap: https://basegraph.co/sitemap.xml
 - [ ] Request indexing for homepage
 
 ### 3. Test Social Media Cards
 - [ ] **Facebook OG Debugger**
   - URL: https://developers.facebook.com/tools/debug/
-  - Enter: https://basegraph.app
+  - Enter: https://basegraph.co
   - Click "Scrape Again" if needed
 
 - [ ] **Twitter Card Validator**
   - URL: https://cards-dev.twitter.com/validator
-  - Enter: https://basegraph.app
+  - Enter: https://basegraph.co
   - Verify card displays correctly
 
 - [ ] **LinkedIn Post Inspector**
   - URL: https://www.linkedin.com/post-inspector/
-  - Enter: https://basegraph.app
+  - Enter: https://basegraph.co
   - Check preview
 
 ### 4. Validate Structured Data
 - [ ] **Schema Markup Validator**
   - URL: https://validator.schema.org/
-  - Enter: https://basegraph.app
+  - Enter: https://basegraph.co
   - Verify no errors in JSON-LD
 
 - [ ] **Google Rich Results Test**
   - URL: https://search.google.com/test/rich-results
-  - Enter: https://basegraph.app
+  - Enter: https://basegraph.co
   - Check for eligible rich results
 
 ### 5. Performance Testing
 - [ ] **Google PageSpeed Insights**
   - URL: https://pagespeed.web.dev/
-  - Test: https://basegraph.app
+  - Test: https://basegraph.co
   - Aim for 90+ scores
   - Check Core Web Vitals
 

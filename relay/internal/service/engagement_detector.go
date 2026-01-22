@@ -9,9 +9,9 @@ import (
 	"regexp"
 	"strings"
 
-	"basegraph.app/relay/internal/model"
-	tracker "basegraph.app/relay/internal/service/issue_tracker"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/internal/model"
+	tracker "basegraph.co/relay/internal/service/issue_tracker"
+	"basegraph.co/relay/internal/store"
 )
 
 // mentionPattern matches @username mentions but not email addresses.

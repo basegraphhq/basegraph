@@ -9,8 +9,8 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"basegraph.app/relay/common/arangodb"
-	"basegraph.app/relay/internal/brain"
+	"basegraph.co/relay/common/arangodb"
+	"basegraph.co/relay/internal/brain"
 )
 
 type fakeArangoClient struct {

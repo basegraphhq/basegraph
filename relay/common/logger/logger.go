@@ -9,7 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"basegraph.app/relay/core/config"
+	"basegraph.co/relay/core/config"
 	"go.opentelemetry.io/contrib/bridges/otelslog"
 	"go.opentelemetry.io/otel/log/global"
 	"go.opentelemetry.io/otel/trace"

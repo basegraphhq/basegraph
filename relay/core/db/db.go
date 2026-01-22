@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"basegraph.app/relay/core/db/sqlc"
+	"basegraph.co/relay/core/db/sqlc"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 

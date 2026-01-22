@@ -10,12 +10,12 @@ import (
 	"log/slog"
 	"strconv"
 
-	"basegraph.app/relay/common/id"
-	"basegraph.app/relay/common/logger"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/queue"
-	tracker "basegraph.app/relay/internal/service/issue_tracker"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/common/id"
+	"basegraph.co/relay/common/logger"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/queue"
+	tracker "basegraph.co/relay/internal/service/issue_tracker"
+	"basegraph.co/relay/internal/store"
 )
 
 type EventIngestParams struct {

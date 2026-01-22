@@ -521,7 +521,7 @@ Run `make install-tools` to install development dependencies.
 ## Contact
 
 **Early Access**: Relay is in private beta  
-**Feedback**: nithinsj@basegraph.app, nithinsudarsan@basegraph.app  
+**Feedback**: nithinsj@basegraph.co, nithinsudarsan@basegraph.co  
 **Discord**: Join our Discord server  
 
 © 2025 Basegraph

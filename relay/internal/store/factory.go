@@ -1,7 +1,7 @@
 package store
 
 import (
-	"basegraph.app/relay/core/db/sqlc"
+	"basegraph.co/relay/core/db/sqlc"
 )
 
 type Stores struct {

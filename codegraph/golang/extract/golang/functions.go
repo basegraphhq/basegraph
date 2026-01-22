@@ -283,7 +283,7 @@ func (v *FunctionVisitor) astTypeString(expr ast.Expr) string {
 }
 
 // formatType simplifies fully qualified type names for readability.
-// e.g., "basegraph.app/relay/internal/model.Issue" -> "model.Issue"
+// e.g., "basegraph.co/relay/internal/model.Issue" -> "model.Issue"
 func formatType(t string) string {
 	// Handle pointer types
 	if strings.HasPrefix(t, "*") {

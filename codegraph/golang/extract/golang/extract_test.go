@@ -357,9 +357,9 @@ func TestFormatType(t *testing.T) {
 		{"*string", "*string"},
 		{"[]string", "[]string"},
 		{"*[]string", "*[]string"},
-		{"basegraph.app/relay/internal/model.Issue", "model.Issue"},
-		{"*basegraph.app/relay/internal/model.Issue", "*model.Issue"},
-		{"[]basegraph.app/relay/internal/model.Issue", "[]model.Issue"},
+		{"basegraph.co/relay/internal/model.Issue", "model.Issue"},
+		{"*basegraph.co/relay/internal/model.Issue", "*model.Issue"},
+		{"[]basegraph.co/relay/internal/model.Issue", "[]model.Issue"},
 		{"context.Context", "context.Context"},
 		{"map[string]int", "map[string]int"},
 	}

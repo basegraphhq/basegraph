@@ -3,9 +3,9 @@ package brain
 import (
 	"context"
 
-	"basegraph.app/relay/core/db"
-	"basegraph.app/relay/core/db/sqlc"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/core/db"
+	"basegraph.co/relay/core/db/sqlc"
+	"basegraph.co/relay/internal/store"
 )
 
 // StoreProvider exposes stores needed by transactional operations in the brain package.

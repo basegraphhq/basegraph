@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"basegraph.app/relay/internal/service"
+	"basegraph.co/relay/internal/service"
 	"github.com/gin-gonic/gin"
 )
 

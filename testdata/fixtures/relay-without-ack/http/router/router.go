@@ -1,10 +1,10 @@
 package router
 
 import (
-	"basegraph.app/relay/internal/http/handler"
-	"basegraph.app/relay/internal/http/handler/webhook"
-	"basegraph.app/relay/internal/mapper"
-	"basegraph.app/relay/internal/service"
+	"basegraph.co/relay/internal/http/handler"
+	"basegraph.co/relay/internal/http/handler/webhook"
+	"basegraph.co/relay/internal/mapper"
+	"basegraph.co/relay/internal/service"
 	"github.com/gin-gonic/gin"
 )
 

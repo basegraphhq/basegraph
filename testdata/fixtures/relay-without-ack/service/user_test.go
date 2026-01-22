@@ -7,9 +7,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"basegraph.app/relay/common/id"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/service"
+	"basegraph.co/relay/common/id"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/service"
 )
 
 var _ = Describe("UserService", func() {

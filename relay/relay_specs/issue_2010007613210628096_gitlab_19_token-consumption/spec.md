@@ -84,7 +84,7 @@ The system SHALL NOT introduce UI/product API surfaces for displaying token spen
 |---|------------|----------|
 | 1 | The DB has an `llm_evals` (or equivalent) table with `workspace_id`, `issue_id`, `prompt_tokens`, `completion_tokens`. | Adjust view/query to match the actual table/column names in the external DB/sqlc module. |
 | 2 | `workspace_id` is available and should be part of the grouping key to avoid cross-workspace collisions. | If issues are globally unique, grouping can omit workspace_id; otherwise keep it to prevent incorrect totals. |
-| 3 | We can land schema/sqlc changes in the external `basegraph.app/relay/core/db/sqlc` module used by this repo. | If upstream changes aren’t possible, document the raw SQL query only and skip sqlc/store additions in this repo. |
+| 3 | We can land schema/sqlc changes in the external `basegraph.co/relay/core/db/sqlc` module used by this repo. | If upstream changes aren’t possible, document the raw SQL query only and skip sqlc/store additions in this repo. |
 
 ## Design
 
@@ -144,12 +144,12 @@ GROUP BY workspace_id, issue_id;
 
 ## Implementation Plan
 
-> Important constraint: this repo imports generated queries from `basegraph.app/relay/core/db/sqlc` (Finding F3, F4), and workspace learnings confirm migrations/sqlc live outside this repo. Therefore, schema/view + sqlc query work must land in that upstream module first.
+> Important constraint: this repo imports generated queries from `basegraph.co/relay/core/db/sqlc` (Finding F3, F4), and workspace learnings confirm migrations/sqlc live outside this repo. Therefore, schema/view + sqlc query work must land in that upstream module first.
 
 | # | Task | Touch Points | Done When | Blocked By |
 |---|------|--------------|-----------|------------|
-| 1.1 | Add DB migration to create view `issue_token_consumption` (definition above, adjusted to real table/columns). | **External module** that provides `basegraph.app/relay/core/db/sqlc` (workspace learning; Finding F4 shows dependency) | In a dev DB, `SELECT * FROM issue_token_consumption ...` works and matches manual aggregation from raw eval rows. | Upstream repo access/ownership |
-| 1.2 | Add sqlc query `GetIssueTokenConsumption(workspace_id, issue_id)` (and optionally `ListIssueTokenConsumptionByWorkspace(workspace_id)`) reading from the view. | **External module** that generates `basegraph.app/relay/core/db/sqlc` | Generated `sqlc.Queries` exposes the new method(s). | 1.1 |
+| 1.1 | Add DB migration to create view `issue_token_consumption` (definition above, adjusted to real table/columns). | **External module** that provides `basegraph.co/relay/core/db/sqlc` (workspace learning; Finding F4 shows dependency) | In a dev DB, `SELECT * FROM issue_token_consumption ...` works and matches manual aggregation from raw eval rows. | Upstream repo access/ownership |
+| 1.2 | Add sqlc query `GetIssueTokenConsumption(workspace_id, issue_id)` (and optionally `ListIssueTokenConsumptionByWorkspace(workspace_id)`) reading from the view. | **External module** that generates `basegraph.co/relay/core/db/sqlc` | Generated `sqlc.Queries` exposes the new method(s). | 1.1 |
 | 2.1 | (Optional) Add model type for the aggregate result. | `model/issue_token_consumption.go` (new) | Model compiles; used by store method/tests. | - |
 | 2.2 | (Optional) Extend `LLMEvalStore` interface with `GetTokenConsumptionByIssue(...)`. | `store/interfaces.go` (Finding F2) | Interface updated; callers compile. | 1.2 (if implementation uses sqlc) |
 | 2.3 | (Optional) Implement store method that calls the new sqlc query and returns `nil` on no-row. | `store/llm_eval.go` (Finding F3) or `store/issue_token_consumption.go` (new) | Method returns correct aggregates and handles “no rows” deterministically. | 1.2, 2.1 |
@@ -205,14 +205,14 @@ GROUP BY workspace_id, issue_id;
 - Token fields are optional (`*int`) on `LLMEval` (Finding F1); always `COALESCE` to 0 in aggregates.
 - Keep grouping scoped by `workspace_id` to avoid collisions across workspaces (Assumption #2).
 - Use BIGINT for sums/counts to reduce overflow risk.
-- This repo does **not** contain the sqlc/migrations; it imports `basegraph.app/relay/core/db/sqlc` (Finding F3, F4). Plan work/PRs accordingly.
+- This repo does **not** contain the sqlc/migrations; it imports `basegraph.co/relay/core/db/sqlc` (Finding F3, F4). Plan work/PRs accordingly.
 
 ---
 
 ## Changelog
 - Updated spec to reflect confirmed constraints: persistence-only, lifetime totals, SQL query as success signal, best-effort attribution (Gaps #1–#5).
 - Replaced previously unverified “Finding” references with verified repo touch points: `model/llm_eval.go`, `store/interfaces.go`, `store/llm_eval.go`, `service/txrunner.go`.
-- Made the external-DB-module dependency explicit: migrations/sqlc live in `basegraph.app/relay/core/db/sqlc` (imported, not in this repo), so DB/view + sqlc query changes must land upstream.
+- Made the external-DB-module dependency explicit: migrations/sqlc live in `basegraph.co/relay/core/db/sqlc` (imported, not in this repo), so DB/view + sqlc query changes must land upstream.
 - Clarified PR sequencing (upstream DB/sqlc first, then this repo) and removed ambiguous “repo-specific migration path” placeholders.
 - Tightened scenarios around NULL token handling and workspace scoping; added clear “no rows” semantics.
 - Expanded test plan to include manual SQL verification plus optional store-level unit/integration tests if we add an accessor method.

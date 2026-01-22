@@ -7,7 +7,7 @@ import (
 
 	"github.com/joho/godotenv"
 
-	"basegraph.app/relay/core/db"
+	"basegraph.co/relay/core/db"
 )
 
 type Config struct {

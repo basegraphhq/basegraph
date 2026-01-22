@@ -3,7 +3,7 @@ package issue_tracker
 import (
 	"context"
 
-	"basegraph.app/relay/internal/model"
+	"basegraph.co/relay/internal/model"
 )
 
 type FetchIssueParams struct {

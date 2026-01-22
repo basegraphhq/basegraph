@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"basegraph.app/relay/core/db/sqlc"
-	"basegraph.app/relay/internal/model"
+	"basegraph.co/relay/core/db/sqlc"
+	"basegraph.co/relay/internal/model"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )

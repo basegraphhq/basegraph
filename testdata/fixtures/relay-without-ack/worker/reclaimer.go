@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"time"
 
-	"basegraph.app/relay/common/logger"
-	"basegraph.app/relay/internal/queue"
+	"basegraph.co/relay/common/logger"
+	"basegraph.co/relay/internal/queue"
 	"github.com/redis/go-redis/v9"
 )
 

@@ -118,7 +118,7 @@ Examples:
 ```
 
 ```json
-{"operation":"callees","qname":"basegraph.app/relay/internal/brain.Planner.Plan","depth":3}
+{"operation":"callees","qname":"basegraph.co/relay/internal/brain.Planner.Plan","depth":3}
 ```
 
 ### 5) `implementations`

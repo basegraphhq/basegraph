@@ -1,7 +1,7 @@
 package router
 
 import (
-	"basegraph.app/relay/internal/http/handler"
+	"basegraph.co/relay/internal/http/handler"
 	"github.com/gin-gonic/gin"
 )
 

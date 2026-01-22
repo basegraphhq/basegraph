@@ -8,10 +8,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"basegraph.app/relay/common/llm"
-	"basegraph.app/relay/internal/brain"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/common/llm"
+	"basegraph.co/relay/internal/brain"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/store"
 )
 
 // Mock stores for testing

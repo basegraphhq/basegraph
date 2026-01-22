@@ -12,13 +12,13 @@ import (
 	"strings"
 	"time"
 
-	"basegraph.app/relay/common/arangodb"
-	"basegraph.app/relay/common/llm"
-	"basegraph.app/relay/common/logger"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/queue"
-	"basegraph.app/relay/internal/service/issue_tracker"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/common/arangodb"
+	"basegraph.co/relay/common/llm"
+	"basegraph.co/relay/common/logger"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/queue"
+	"basegraph.co/relay/internal/service/issue_tracker"
+	"basegraph.co/relay/internal/store"
 )
 
 var ErrIssueNotFound = errors.New("issue not found")

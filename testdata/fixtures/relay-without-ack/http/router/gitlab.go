@@ -1,8 +1,8 @@
 package router
 
 import (
-	"basegraph.app/relay/internal/http/handler"
-	"basegraph.app/relay/internal/http/handler/webhook"
+	"basegraph.co/relay/internal/http/handler"
+	"basegraph.co/relay/internal/http/handler/webhook"
 	"github.com/gin-gonic/gin"
 )
 

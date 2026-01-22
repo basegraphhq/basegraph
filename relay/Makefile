@@ -24,14 +24,14 @@ run-worker:
 
 run-worker-testdata:
 	REPO_ROOT=$(CURDIR)/testdata/fixtures/relay-without-ack \
-	MODULE_PATH=basegraph.app/relay-without-ack \
+	MODULE_PATH=basegraph.co/relay-without-ack \
 	go run ./cmd/worker
 
 # Run worker with mock explore for A/B testing planner prompts
 # Uses pre-written fixtures instead of real codebase exploration
 run-worker-mock:
 	REPO_ROOT=$(CURDIR)/testdata/fixtures/relay-without-ack \
-	MODULE_PATH=basegraph.app/relay-without-ack \
+	MODULE_PATH=basegraph.co/relay-without-ack \
 	MOCK_EXPLORE_FIXTURES=$(CURDIR)/evals/fixtures/explore.json \
 	BRAIN_DEBUG_DIR=$(CURDIR)/debug_logs \
 	go run ./cmd/worker

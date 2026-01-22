@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"basegraph.app/relay/common/arangodb"
+	"basegraph.co/relay/common/arangodb"
 	"github.com/humanbeeng/lepo/prototypes/codegraph/extract"
 )
 

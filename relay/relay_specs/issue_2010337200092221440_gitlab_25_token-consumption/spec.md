@@ -117,9 +117,9 @@ import (
     "log/slog"
     "time"
 
-    "basegraph.app/relay/internal/logger"
-    "basegraph.app/relay/model"
-    "basegraph.app/relay/store"
+    "basegraph.co/relay/internal/logger"
+    "basegraph.co/relay/model"
+    "basegraph.co/relay/store"
 )
 
 type TokenUsageRecorder interface {
@@ -257,8 +257,8 @@ package llm
 import (
     "context"
 
-    commonllm "basegraph.app/relay/common/llm"
-    "basegraph.app/relay/service"
+    commonllm "basegraph.co/relay/common/llm"
+    "basegraph.co/relay/service"
 )
 
 type InstrumentedAgentClient struct {
@@ -325,7 +325,7 @@ import (
 
     "github.com/gin-gonic/gin"
 
-    "basegraph.app/relay/service"
+    "basegraph.co/relay/service"
 )
 
 type apiKeyContextKey string
@@ -389,7 +389,7 @@ package router
 import (
     "github.com/gin-gonic/gin"
 
-    "basegraph.app/relay/internal/http/handler"
+    "basegraph.co/relay/internal/http/handler"
 )
 
 func IssuesRouter(rg *gin.RouterGroup, h *handler.IssuesHandler) {
@@ -407,7 +407,7 @@ import (
 
     "github.com/gin-gonic/gin"
 
-    "basegraph.app/relay/service"
+    "basegraph.co/relay/service"
 )
 
 type IssuesHandler struct {
@@ -447,7 +447,7 @@ import (
     "context"
     "database/sql"
 
-    "basegraph.app/relay/store"
+    "basegraph.co/relay/store"
 )
 
 type IssuesService interface {
@@ -555,9 +555,9 @@ import (
 
     "github.com/stretchr/testify/require"
 
-    "basegraph.app/relay/internal/logger"
-    "basegraph.app/relay/model"
-    "basegraph.app/relay/service"
+    "basegraph.co/relay/internal/logger"
+    "basegraph.co/relay/model"
+    "basegraph.co/relay/service"
 )
 
 type fakeLLMEvalStore struct{ created *model.LLMEval }
@@ -630,8 +630,8 @@ import (
 
     "github.com/stretchr/testify/require"
 
-    commonllm "basegraph.app/relay/common/llm"
-    internalllm "basegraph.app/relay/internal/llm"
+    commonllm "basegraph.co/relay/common/llm"
+    internalllm "basegraph.co/relay/internal/llm"
 )
 
 type fakeRecorder struct{ prompt, completion int; gotErr bool }
@@ -660,7 +660,7 @@ func TestInstrumentedAgentClient_RecordsOnError(t *testing.T) {
 ## Gotchas
 - **No API-key middleware exists today**: current `RequireAuth` uses `relay_session` cookie (`internal/http/middleware/auth.go`). Don’t accidentally ship the endpoint using session auth; it must be API-key auth per Gap #2.
 - **Attribution relies on context**: we’re extracting IssueID via `logger.GetLogFields(ctx)` (Finding F4). Ensure all issue runs attach IssueID to context early (orchestrator does: `brain/orchestrator.go:94-115`). If some stage runs without IssueID, token rows will be skipped.
-- **Failed/retried accounting limitations**: the decorator only sees one `ChatWithTools` invocation. If the underlying `common/llm` client retries internally and doesn’t expose per-attempt usage, we can’t count intermediate attempts. If this becomes a problem, we must move instrumentation into `basegraph.app/relay/common/llm`.
+- **Failed/retried accounting limitations**: the decorator only sees one `ChatWithTools` invocation. If the underlying `common/llm` client retries internally and doesn’t expose per-attempt usage, we can’t count intermediate attempts. If this becomes a problem, we must move instrumentation into `basegraph.co/relay/common/llm`.
 - **404 vs 0**: requirement is **404 when no data yet** (Gap #1). But a real total can be `0` if we store rows with 0 tokens (unlikely). Prefer distinguishing “no rows / NULL SUM” vs “sum is 0”.
 - **Don’t break production on accounting failures**: persistence should be best-effort; errors should be logged/metrics but never fail planning/explore.
 
@@ -690,7 +690,7 @@ func TestInstrumentedAgentClient_RecordsOnError(t *testing.T) {
 |--------|------|------|---------|
 | Only log tokens (status quo) and build totals from logs | No DB changes | Not queryable/accurate; hard to aggregate; no API | Doesn’t satisfy “API endpoint returns lifetime total” |
 | Store per-issue totals in a dedicated `issue_token_usage` table and increment | Fast reads | Requires atomic increments + backfill; harder to include per-call details/debugging | `LLMEval` already exists and supports later breakdowns |
-| Instrument inside `basegraph.app/relay/common/llm` | Captures retries accurately | Out-of-repo change; larger blast radius | Start with in-repo decorator; revisit if undercount observed |
+| Instrument inside `basegraph.co/relay/common/llm` | Captures retries accurately | Out-of-repo change; larger blast radius | Start with in-repo decorator; revisit if undercount observed |
 
 ## Assumptions
 | Assumption | If Wrong |

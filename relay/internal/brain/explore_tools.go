@@ -14,8 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"basegraph.app/relay/common/arangodb"
-	"basegraph.app/relay/common/llm"
+	"basegraph.co/relay/common/arangodb"
+	"basegraph.co/relay/common/llm"
 )
 
 const (

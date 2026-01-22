@@ -7,9 +7,9 @@ import (
 	"sort"
 	"strings"
 
-	"basegraph.app/relay/common/llm"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/common/llm"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/store"
 )
 
 const maxDiscussions = 100

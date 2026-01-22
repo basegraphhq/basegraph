@@ -1,4 +1,4 @@
-module basegraph.app/relay
+module basegraph.co/relay
 
 go 1.24.0
 

@@ -4,9 +4,9 @@ import (
 	"context"
 	"errors"
 
-	"basegraph.app/relay/common/id"
-	"basegraph.app/relay/core/db/sqlc"
-	"basegraph.app/relay/internal/model"
+	"basegraph.co/relay/common/id"
+	"basegraph.co/relay/core/db/sqlc"
+	"basegraph.co/relay/internal/model"
 	"github.com/jackc/pgx/v5"
 )
 

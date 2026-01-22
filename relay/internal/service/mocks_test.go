@@ -3,9 +3,9 @@ package service_test
 import (
 	"context"
 
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/service"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/service"
+	"basegraph.co/relay/internal/store"
 )
 
 type mockUserStore struct {

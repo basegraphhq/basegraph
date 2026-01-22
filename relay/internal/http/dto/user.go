@@ -3,7 +3,7 @@ package dto
 import (
 	"time"
 
-	"basegraph.app/relay/internal/model"
+	"basegraph.co/relay/internal/model"
 )
 
 type CreateUserRequest struct {

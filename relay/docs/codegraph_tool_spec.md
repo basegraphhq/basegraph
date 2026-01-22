@@ -176,16 +176,16 @@ OPERATIONS:
    codegraph(operation="search", name="Handler*", file="api.go")
 
 2. callers - Find functions that call this function
-   codegraph(operation="callers", qname="basegraph.app/relay/internal/brain.Planner.Plan")
+   codegraph(operation="callers", qname="basegraph.co/relay/internal/brain.Planner.Plan")
 
 3. callees - Find functions called by this function
    codegraph(operation="callees", qname="...", depth=2)
 
 4. implementations - Find types that implement this interface
-   codegraph(operation="implementations", qname="basegraph.app/relay/store.IssueStore")
+   codegraph(operation="implementations", qname="basegraph.co/relay/store.IssueStore")
 
 5. usages - Find where this type is used (params, returns)
-   codegraph(operation="usages", qname="basegraph.app/relay/internal/model.Issue")
+   codegraph(operation="usages", qname="basegraph.co/relay/internal/model.Issue")
 
 WORKFLOW: Use search first to find the correct qname, then use relationship operations.
 
@@ -202,9 +202,9 @@ For unsupported languages, use grep/read instead.`,
 ```
 Found 3 symbols matching "Plan" (kind=method):
 
-  basegraph.app/relay/internal/brain.Planner.Plan (internal/brain/planner.go:445)
-  basegraph.app/relay/internal/brain.ExploreAgent.Run (internal/brain/explore_agent.go:145)
-  basegraph.app/relay/internal/model.PlanAction (internal/model/action.go:12)
+  basegraph.co/relay/internal/brain.Planner.Plan (internal/brain/planner.go:445)
+  basegraph.co/relay/internal/brain.ExploreAgent.Run (internal/brain/explore_agent.go:145)
+  basegraph.co/relay/internal/model.PlanAction (internal/model/action.go:12)
 
 Use qname with callers/callees/implementations/usages operations.
 ```
@@ -213,16 +213,16 @@ Use qname with callers/callees/implementations/usages operations.
 ```
 Showing 10 of 47 symbols matching "Handle". Refine with kind or file filter.
 
-  basegraph.app/relay/internal/brain.Orchestrator.HandleEngagement (internal/brain/orchestrator.go:153)
+  basegraph.co/relay/internal/brain.Orchestrator.HandleEngagement (internal/brain/orchestrator.go:153)
   ...
 ```
 
 **Relationship results**:
 ```
-Callers of basegraph.app/relay/internal/brain.Planner.Plan (depth 1) - 3 results:
+Callers of basegraph.co/relay/internal/brain.Planner.Plan (depth 1) - 3 results:
 
 - HandleEngagement (function)
-  qname: basegraph.app/relay/internal/brain.Orchestrator.HandleEngagement
+  qname: basegraph.co/relay/internal/brain.Orchestrator.HandleEngagement
   file: internal/brain/orchestrator.go:307
   signature: func (o *Orchestrator) HandleEngagement(ctx context.Context, input EngagementInput) error
 
@@ -254,7 +254,7 @@ Codegraph is not available. Use grep and read tools instead.
 4. **Integration test**: With real ArangoDB data:
    ```
    codegraph(operation="search", name="Plan", kind="method")
-   codegraph(operation="callers", qname="basegraph.app/relay/internal/brain.Planner.Plan")
+   codegraph(operation="callers", qname="basegraph.co/relay/internal/brain.Planner.Plan")
    ```
 5. **Manual test**: Run worker, trigger ExploreAgent, observe codegraph tool usage
 

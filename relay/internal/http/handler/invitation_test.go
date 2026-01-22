@@ -12,9 +12,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"basegraph.app/relay/internal/http/handler"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/service"
+	"basegraph.co/relay/internal/http/handler"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/service"
 )
 
 var _ = Describe("InvitationHandler", func() {
@@ -57,7 +57,7 @@ var _ = Describe("InvitationHandler", func() {
 						Token:     "generated-token",
 						Status:    model.InvitationStatusPending,
 						ExpiresAt: time.Now().Add(7 * 24 * time.Hour),
-					}, "https://basegraph.app/invite?token=generated-token", nil
+					}, "https://basegraph.co/invite?token=generated-token", nil
 				}
 
 				body, _ := json.Marshal(map[string]string{

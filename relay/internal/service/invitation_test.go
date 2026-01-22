@@ -7,10 +7,10 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
-	"basegraph.app/relay/common/id"
-	"basegraph.app/relay/internal/model"
-	"basegraph.app/relay/internal/service"
-	"basegraph.app/relay/internal/store"
+	"basegraph.co/relay/common/id"
+	"basegraph.co/relay/internal/model"
+	"basegraph.co/relay/internal/service"
+	"basegraph.co/relay/internal/store"
 )
 
 var _ = Describe("InvitationService", func() {
@@ -24,7 +24,7 @@ var _ = Describe("InvitationService", func() {
 	BeforeEach(func() {
 		ctx = context.Background()
 		mockStore = &mockInvitationStore{}
-		dashboardURL = "https://basegraph.app"
+		dashboardURL = "https://basegraph.co"
 
 		err := id.Init(1)
 		Expect(err).NotTo(HaveOccurred())

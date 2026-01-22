@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"strings"
 
-	"basegraph.app/relay/internal/model"
+	"basegraph.co/relay/internal/model"
 )
 
 type ActionType string
