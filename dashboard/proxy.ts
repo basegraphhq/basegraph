@@ -158,5 +158,6 @@ export const config = {
 		// API routes (excluding public auth endpoints)
 		"/api/organization/:path*",
 		"/api/integrations/:path*",
+		"/api/agent-status/:path*",
 	],
 };
