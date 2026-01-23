@@ -52,6 +52,8 @@ func (s *repoStore) Create(ctx context.Context, repo *model.Repository) error {
 		Url:            repo.URL,
 		Description:    repo.Description,
 		ExternalRepoID: repo.ExternalRepoID,
+		IsEnabled:      repo.IsEnabled,
+		DefaultBranch:  repo.DefaultBranch,
 	})
 	if err != nil {
 		return err
@@ -94,12 +96,56 @@ func (s *repoStore) ListByWorkspace(ctx context.Context, workspaceID int64) ([]m
 	return toRepoModels(rows), nil
 }
 
+func (s *repoStore) ListEnabledByWorkspace(ctx context.Context, workspaceID int64) ([]model.Repository, error) {
+	rows, err := s.queries.ListEnabledRepositoriesByWorkspace(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	return toRepoModels(rows), nil
+}
+
 func (s *repoStore) ListByIntegration(ctx context.Context, integrationID int64) ([]model.Repository, error) {
 	rows, err := s.queries.ListRepositoriesByIntegration(ctx, integrationID)
 	if err != nil {
 		return nil, err
 	}
 	return toRepoModels(rows), nil
+}
+
+func (s *repoStore) ListEnabledByIntegration(ctx context.Context, integrationID int64) ([]model.Repository, error) {
+	rows, err := s.queries.ListEnabledRepositoriesByIntegration(ctx, integrationID)
+	if err != nil {
+		return nil, err
+	}
+	return toRepoModels(rows), nil
+}
+
+func (s *repoStore) SetEnabled(ctx context.Context, id int64, enabled bool) (*model.Repository, error) {
+	row, err := s.queries.SetRepositoryEnabled(ctx, sqlc.SetRepositoryEnabledParams{
+		ID:        id,
+		IsEnabled: enabled,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return toRepoModel(row), nil
+}
+
+func (s *repoStore) UpdateDefaultBranch(ctx context.Context, id int64, branch *string) (*model.Repository, error) {
+	row, err := s.queries.UpdateRepositoryDefaultBranch(ctx, sqlc.UpdateRepositoryDefaultBranchParams{
+		ID:            id,
+		DefaultBranch: branch,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return toRepoModel(row), nil
 }
 
 func toRepoModel(row sqlc.Repository) *model.Repository {
@@ -112,6 +158,8 @@ func toRepoModel(row sqlc.Repository) *model.Repository {
 		URL:            row.Url,
 		Description:    row.Description,
 		ExternalRepoID: row.ExternalRepoID,
+		IsEnabled:      row.IsEnabled,
+		DefaultBranch:  row.DefaultBranch,
 		CreatedAt:      row.CreatedAt.Time,
 		UpdatedAt:      row.UpdatedAt.Time,
 	}

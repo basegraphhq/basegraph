@@ -22,13 +22,15 @@ import (
 type GitLabWebhookHandler struct {
 	credentialService service.IntegrationCredentialService
 	eventIngest       service.EventIngestService
+	repoSync          service.RepoSyncService
 	mapper            mapper.EventMapper
 }
 
-func NewGitLabWebhookHandler(credentialService service.IntegrationCredentialService, eventIngest service.EventIngestService, mapper mapper.EventMapper) *GitLabWebhookHandler {
+func NewGitLabWebhookHandler(credentialService service.IntegrationCredentialService, eventIngest service.EventIngestService, repoSync service.RepoSyncService, mapper mapper.EventMapper) *GitLabWebhookHandler {
 	return &GitLabWebhookHandler{
 		credentialService: credentialService,
 		eventIngest:       eventIngest,
+		repoSync:          repoSync,
 		mapper:            mapper,
 	}
 }
@@ -82,6 +84,29 @@ func (h *GitLabWebhookHandler) HandleEvent(c *gin.Context) {
 	var payload gitlabWebhookPayload
 	if err := json.Unmarshal(body, &payload); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid payload"})
+		return
+	}
+
+	if payload.ObjectKind == "push" {
+		result, err := h.handlePushEvent(ctx, integrationID, payload)
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to process gitlab push event",
+				"error", err,
+				"project_id", payload.Project.ID,
+				"ref", payload.Ref,
+			)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to process push event"})
+			return
+		}
+
+		slog.InfoContext(ctx, "gitlab push webhook handled",
+			"project_id", payload.Project.ID,
+			"ref", payload.Ref,
+			"branch", result.Branch,
+			"enqueued", result.Enqueued,
+			"reason", result.Reason,
+		)
+		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 		return
 	}
 
@@ -199,8 +224,30 @@ func (h *GitLabWebhookHandler) processEvent(ctx context.Context, integrationID i
 	return h.eventIngest.Ingest(ctx, params)
 }
 
+func (h *GitLabWebhookHandler) handlePushEvent(ctx context.Context, integrationID int64, payload gitlabWebhookPayload) (*service.RepoSyncResult, error) {
+	if payload.Project.ID == 0 {
+		return nil, fmt.Errorf("missing project id")
+	}
+
+	var traceID *string
+	if span := trace.SpanFromContext(ctx); span.SpanContext().IsValid() {
+		id := span.SpanContext().TraceID().String()
+		traceID = &id
+	}
+
+	return h.repoSync.Enqueue(ctx, service.RepoSyncParams{
+		IntegrationID:  integrationID,
+		ExternalRepoID: strconv.FormatInt(payload.Project.ID, 10),
+		Ref:            payload.Ref,
+		After:          payload.After,
+		TraceID:        traceID,
+	})
+}
+
 type gitlabWebhookPayload struct {
 	ObjectKind string `json:"object_kind"`
+	Ref        string `json:"ref"`
+	After      string `json:"after"`
 	Project    struct {
 		ID     int64  `json:"id"`
 		WebURL string `json:"web_url"`

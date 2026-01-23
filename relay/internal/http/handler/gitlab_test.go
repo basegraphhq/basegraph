@@ -14,13 +14,27 @@ import (
 
 	"basegraph.co/relay/internal/http/handler"
 	"basegraph.co/relay/internal/service/integration"
+	"basegraph.co/relay/internal/service"
 )
 
 type mockGitLabService struct {
 	listProjectsFn     func(ctx context.Context, instanceURL, token string) ([]integration.GitLabProject, error)
 	setupIntegrationFn func(ctx context.Context, params integration.SetupIntegrationParams) (*integration.SetupResult, error)
+	enableReposFn      func(ctx context.Context, params integration.EnableRepositoriesParams) (*integration.EnableRepositoriesResult, error)
+	listEnabledFn      func(ctx context.Context, workspaceID int64) ([]int64, error)
 	statusFn           func(ctx context.Context, workspaceID int64) (*integration.StatusResult, error)
 	refreshFn          func(ctx context.Context, workspaceID int64, webhookBaseURL string) (*integration.SetupResult, error)
+}
+
+type mockWorkspaceSetupService struct {
+	enqueueFn func(ctx context.Context, workspaceID int64) (*service.WorkspaceSetupResult, error)
+}
+
+func (m *mockWorkspaceSetupService) Enqueue(ctx context.Context, workspaceID int64) (*service.WorkspaceSetupResult, error) {
+	if m.enqueueFn != nil {
+		return m.enqueueFn(ctx, workspaceID)
+	}
+	return &service.WorkspaceSetupResult{RunID: 1}, nil
 }
 
 func (m *mockGitLabService) ListProjects(ctx context.Context, instanceURL, token string) ([]integration.GitLabProject, error) {
@@ -35,6 +49,20 @@ func (m *mockGitLabService) SetupIntegration(ctx context.Context, params integra
 		return m.setupIntegrationFn(ctx, params)
 	}
 	return nil, nil
+}
+
+func (m *mockGitLabService) EnableRepositories(ctx context.Context, params integration.EnableRepositoriesParams) (*integration.EnableRepositoriesResult, error) {
+	if m.enableReposFn != nil {
+		return m.enableReposFn(ctx, params)
+	}
+	return nil, nil
+}
+
+func (m *mockGitLabService) ListEnabledProjectIDs(ctx context.Context, workspaceID int64) ([]int64, error) {
+	if m.listEnabledFn != nil {
+		return m.listEnabledFn(ctx, workspaceID)
+	}
+	return []int64{}, nil
 }
 
 func (m *mockGitLabService) Status(ctx context.Context, workspaceID int64) (*integration.StatusResult, error) {
@@ -55,16 +83,19 @@ var _ = Describe("GitLabHandler", func() {
 	var (
 		router *gin.Engine
 		svc    *mockGitLabService
+		setup  *mockWorkspaceSetupService
 	)
 
 	BeforeEach(func() {
 		gin.SetMode(gin.TestMode)
 		router = gin.New()
 		svc = &mockGitLabService{}
-		h := handler.NewGitLabHandler(svc, "https://relay")
+		setup = &mockWorkspaceSetupService{}
+		h := handler.NewGitLabHandler(svc, setup, "https://relay")
 
 		router.POST("/integrations/gitlab/projects", h.ListProjects)
 		router.POST("/integrations/gitlab/setup", h.SetupIntegration)
+		router.POST("/integrations/gitlab/repos/enable", h.EnableRepositories)
 	})
 
 	It("lists projects", func() {
@@ -161,6 +192,31 @@ var _ = Describe("GitLabHandler", func() {
 		Expect(json.Unmarshal(w.Body.Bytes(), &resp)).To(Succeed())
 		Expect(resp["integration_id"]).To(Equal("42"))
 		Expect(resp["webhooks_created"]).To(Equal(float64(1)))
+	})
+
+	It("enables repositories and enqueues workspace setup", func() {
+		svc.enableReposFn = func(_ context.Context, params integration.EnableRepositoriesParams) (*integration.EnableRepositoriesResult, error) {
+			return &integration.EnableRepositoriesResult{IntegrationID: 10}, nil
+		}
+		called := false
+		setup.enqueueFn = func(_ context.Context, workspaceID int64) (*service.WorkspaceSetupResult, error) {
+			called = true
+			Expect(workspaceID).To(Equal(int64(42)))
+			return &service.WorkspaceSetupResult{RunID: 99}, nil
+		}
+
+		body, _ := json.Marshal(map[string]any{
+			"workspace_id": "42",
+			"project_ids":  []int64{1, 2},
+		})
+		req := httptest.NewRequest(http.MethodPost, "/integrations/gitlab/repos/enable", bytes.NewBuffer(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(http.StatusOK))
+		Expect(called).To(BeTrue())
 	})
 
 	It("returns 502 when setup fails with generic error", func() {

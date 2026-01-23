@@ -7,7 +7,10 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@/components/ui/toaster";
 import "./globals.css";
 
-const _geistMono = Geist_Mono({ subsets: ["latin"] });
+const geistMono = Geist_Mono({
+	subsets: ["latin"],
+	variable: "--font-mono",
+});
 
 export const metadata: Metadata = {
 	metadataBase: new URL("https://basegraph.co"),
@@ -96,7 +99,7 @@ export default function RootLayout({
 }>) {
 	return (
 		<html lang="en" suppressHydrationWarning>
-			<body className={`font-serif antialiased`}>
+			<body className={`${geistMono.variable} font-serif antialiased`}>
 				<ThemeProvider
 					attribute="class"
 					defaultTheme="light"

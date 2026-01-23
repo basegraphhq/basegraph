@@ -4,6 +4,7 @@ export type GitLabProject = {
 	path_with_namespace: string;
 	web_url: string;
 	description?: string;
+	default_branch?: string;
 };
 
 export type GitLabSetupResponse = {
@@ -41,6 +42,17 @@ export type GitLabRefreshResponse = {
 	repositories_added: number;
 	errors?: string[];
 	synced: boolean;
+};
+
+export type GitLabEnableReposResponse = {
+	integration_id: string;
+	repositories_added: number;
+	webhooks_created: number;
+	errors?: string[];
+};
+
+export type GitLabEnabledReposResponse = {
+	project_ids: number[];
 };
 
 class ApiError extends Error {
@@ -127,6 +139,27 @@ export const api = {
 				credentials: "include",
 			});
 			return handleResponse<GitLabRefreshResponse>(response);
+		},
+		async enableRepos(projectIds: number[]): Promise<GitLabEnableReposResponse> {
+			const response = await fetch("/api/integrations/gitlab/repos/enable", {
+				method: "POST",
+				credentials: "include",
+				headers: {
+					"Content-Type": "application/json",
+				},
+				body: JSON.stringify({
+					project_ids: projectIds,
+				}),
+			});
+			return handleResponse<GitLabEnableReposResponse>(response);
+		},
+		async enabledRepos(): Promise<GitLabEnabledReposResponse> {
+			const response = await fetch("/api/integrations/gitlab/repos/enabled", {
+				method: "GET",
+				credentials: "include",
+				cache: "no-store",
+			});
+			return handleResponse<GitLabEnabledReposResponse>(response);
 		},
 	},
 };

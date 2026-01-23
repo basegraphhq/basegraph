@@ -17,6 +17,7 @@ type SetupResponse = {
 		path_with_namespace: string;
 		web_url: string;
 		description?: string;
+		default_branch?: string;
 	}>;
 	webhooks_created: number;
 	repositories_added: number;

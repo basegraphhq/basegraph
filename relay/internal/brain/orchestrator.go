@@ -245,7 +245,8 @@ func (o *Orchestrator) HandleEngagement(ctx context.Context, input EngagementInp
 			return
 		}
 
-		if err := o.queueProducer.Enqueue(ctx, queue.Event{
+		if err := o.queueProducer.Enqueue(ctx, queue.Task{
+			TaskType:        queue.TaskTypeIssueEvent,
 			EventLogID:      followUpEventID,
 			IssueID:         input.IssueID,
 			EventType:       followUpEventType,

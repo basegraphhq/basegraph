@@ -29,6 +29,11 @@ SET name = $2, slug = $3, description = $4, updated_at = now()
 WHERE id = $1 AND is_deleted = false
 RETURNING *;
 
+-- name: SetWorkspaceRepoReadyAt :one
+UPDATE workspaces
+SET repo_ready_at = $2, updated_at = now()
+WHERE id = $1 AND is_deleted = false
+RETURNING *;
+
 -- name: SoftDeleteWorkspace :exec
 UPDATE workspaces SET is_deleted = true, updated_at = now() WHERE id = $1;
-

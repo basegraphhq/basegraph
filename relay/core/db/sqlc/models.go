@@ -174,6 +174,8 @@ type Repository struct {
 	Slug           string             `json:"slug"`
 	Url            string             `json:"url"`
 	Description    *string            `json:"description"`
+	IsEnabled      bool               `json:"is_enabled"`
+	DefaultBranch  *string            `json:"default_branch"`
 	ExternalRepoID string             `json:"external_repo_id"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
@@ -182,9 +184,9 @@ type Repository struct {
 type Session struct {
 	ID              int64              `json:"id"`
 	UserID          int64              `json:"user_id"`
+	WorkosSessionID *string            `json:"workos_session_id"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	ExpiresAt       pgtype.Timestamptz `json:"expires_at"`
-	WorkosSessionID *string            `json:"workos_session_id"`
 }
 
 type User struct {
@@ -205,7 +207,23 @@ type Workspace struct {
 	Name           string             `json:"name"`
 	Slug           string             `json:"slug"`
 	Description    *string            `json:"description"`
+	RepoReadyAt    pgtype.Timestamptz `json:"repo_ready_at"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 	IsDeleted      bool               `json:"is_deleted"`
+}
+
+type WorkspaceEventLog struct {
+	ID             int64              `json:"id"`
+	WorkspaceID    int64              `json:"workspace_id"`
+	OrganizationID int64              `json:"organization_id"`
+	RepoID         *int64             `json:"repo_id"`
+	EventType      string             `json:"event_type"`
+	Status         string             `json:"status"`
+	Error          *string            `json:"error"`
+	Metadata       []byte             `json:"metadata"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	FinishedAt     pgtype.Timestamptz `json:"finished_at"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }

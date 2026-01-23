@@ -20,9 +20,10 @@
      TYPOGRAPHY TOKENS
      ========================================================================== */
 
-	/* Font Families */
+	/* Font Families
+	   --font-mono is set by Next.js font loader in layout.tsx
+	   --font-serif uses @fontsource import */
 	--font-serif: "Libertinus Serif", Georgia, serif;
-	--font-mono: "Geist Mono", "Fira Code", Consolas, monospace;
 	--font-sans: system-ui, -apple-system, sans-serif;
 
 	/* Type Scale (modular scale ~1.25 ratio) */

@@ -7,7 +7,9 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"os/exec"
 	"runtime/debug"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -41,6 +43,11 @@ func main() {
 
 	fmt.Printf("%s\n", banner)
 	logger.Setup(cfg)
+
+	if err := checkExternalDependencies(ctx); err != nil {
+		slog.ErrorContext(ctx, "missing required worker dependencies", "error", err)
+		os.Exit(1)
+	}
 
 	slog.InfoContext(ctx, "relay worker starting",
 		"env", cfg.Env,
@@ -151,40 +158,85 @@ func main() {
 		"model", cfg.SpecGeneratorLLM.Model,
 		"reasoning_effort", cfg.SpecGeneratorLLM.ReasoningEffort)
 
-	repoRoot := os.Getenv("REPO_ROOT")
-	if repoRoot == "" {
-		slog.ErrorContext(ctx, "REPO_ROOT environment variable is required")
+	workspaceIDStr := os.Getenv("WORKSPACE_ID")
+	if workspaceIDStr == "" {
+		slog.ErrorContext(ctx, "WORKSPACE_ID environment variable is required")
 		os.Exit(1)
 	}
-
-	modulePath := os.Getenv("MODULE_PATH")
-	if modulePath == "" {
-		slog.ErrorContext(ctx, "MODULE_PATH environment variable is required")
-		os.Exit(1)
-	}
-	slog.InfoContext(ctx, "repo configured", "root", repoRoot, "module", modulePath)
-
-	if !cfg.ArangoDB.Enabled() {
-		slog.ErrorContext(ctx, "ArangoDB configuration is required")
-		os.Exit(1)
-	}
-	arangoClient, err := arangodb.New(ctx, arangodb.Config{
-		URL:      cfg.ArangoDB.URL,
-		Username: cfg.ArangoDB.Username,
-		Password: cfg.ArangoDB.Password,
-		Database: cfg.ArangoDB.Database,
-	})
+	workspaceID, err := strconv.ParseInt(workspaceIDStr, 10, 64)
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to create ArangoDB client", "error", err)
+		slog.ErrorContext(ctx, "invalid WORKSPACE_ID", "error", err)
 		os.Exit(1)
 	}
-	if err := arangoClient.EnsureDatabase(ctx); err != nil {
-		slog.ErrorContext(ctx, "failed to ensure ArangoDB database", "error", err)
-		os.Exit(1)
-	}
-	slog.InfoContext(ctx, "arangodb connected", "database", cfg.ArangoDB.Database)
 
 	stores := store.NewStores(database.Queries())
+
+	taskRunner, err := worker.NewTaskRunner(ctx, worker.TaskRunnerConfig{
+		WorkspaceID: workspaceID,
+		DataDir:     os.Getenv("DATA_DIR"),
+		Stores:      stores,
+		Redis:       redisClient,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to initialize workspace task runner", "error", err)
+		os.Exit(1)
+	}
+
+	repoRoot := taskRunner.RepoRoot()
+	modulePath := os.Getenv("MODULE_PATH")
+	if modulePath == "" {
+		slog.InfoContext(ctx, "MODULE_PATH not set; continuing without module path")
+	}
+
+	org := taskRunner.Organization()
+	workspace := taskRunner.Workspace()
+	if org != nil && workspace != nil {
+		slog.InfoContext(ctx, "workspace context loaded",
+			"workspace_id", workspace.ID,
+			"workspace_slug", workspace.Slug,
+			"org_id", org.ID,
+			"org_slug", org.Slug,
+			"repo_root", repoRoot)
+	}
+
+	if repos, err := stores.Repos().ListEnabledByWorkspace(ctx, workspaceID); err == nil {
+		repoNames := make([]string, 0, len(repos))
+		for _, repo := range repos {
+			repoNames = append(repoNames, repo.Slug)
+		}
+		slog.InfoContext(ctx, "enabled repositories loaded",
+			"count", len(repoNames),
+			"repos", repoNames)
+	} else {
+		slog.WarnContext(ctx, "failed to list enabled repositories", "error", err)
+	}
+
+	var arangoClient arangodb.Client
+	if cfg.ArangoDB.Enabled() {
+		arangoClient, err = arangodb.New(ctx, arangodb.Config{
+			URL:      cfg.ArangoDB.URL,
+			Username: cfg.ArangoDB.Username,
+			Password: cfg.ArangoDB.Password,
+			Database: cfg.ArangoDB.Database,
+		})
+		if err != nil {
+			slog.ErrorContext(ctx, "failed to create ArangoDB client", "error", err)
+			os.Exit(1)
+		}
+		if err := arangoClient.EnsureDatabase(ctx); err != nil {
+			slog.ErrorContext(ctx, "failed to ensure ArangoDB database", "error", err)
+			os.Exit(1)
+		}
+		slog.InfoContext(ctx, "arangodb connected", "database", cfg.ArangoDB.Database)
+	} else {
+		slog.InfoContext(ctx, "arangodb disabled; codegraph unavailable")
+	}
+
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		slog.ErrorContext(ctx, "failed to create repo root", "error", err, "path", repoRoot)
+		os.Exit(1)
+	}
+
 	txRunner := brain.NewTxRunner(database)
 
 	issueTrackers := map[model.Provider]issue_tracker.IssueTrackerService{
@@ -253,7 +305,7 @@ func main() {
 		issueTrackers,
 	)
 
-	processMessage := newMessageProcessor(consumer, orchestrator)
+	processMessage := newMessageProcessor(consumer, orchestrator, taskRunner)
 
 	reclaimer := worker.NewRedisReclaimer(redisClient, worker.RedisReclaimerConfig{
 		Stream:    cfg.Pipeline.RedisStream,
@@ -310,11 +362,61 @@ func main() {
 	}
 
 	slog.InfoContext(ctx, "closing arangodb connection")
-	if err := arangoClient.Close(); err != nil {
-		slog.ErrorContext(ctx, "arangodb close error", "error", err)
+	if arangoClient != nil {
+		if err := arangoClient.Close(); err != nil {
+			slog.ErrorContext(ctx, "arangodb close error", "error", err)
+		}
 	}
 
 	slog.InfoContext(ctx, "shutdown complete")
+}
+
+func checkExternalDependencies(ctx context.Context) error {
+	ctx = logger.WithLogFields(ctx, logger.LogFields{
+		Component: "relay.worker.deps",
+	})
+
+	type dep struct {
+		name string
+		args []string
+	}
+
+	deps := []dep{
+		{name: "git", args: []string{"--version"}},
+		{name: "ssh", args: []string{"-V"}},
+		{name: "ssh-keygen"},
+		{name: "ssh-keyscan"},
+		{name: "rg", args: []string{"--version"}},
+	}
+
+	for _, d := range deps {
+		if _, err := exec.LookPath(d.name); err != nil {
+			return fmt.Errorf("%s not found in PATH: %w", d.name, err)
+		}
+
+		if len(d.args) == 0 {
+			slog.InfoContext(ctx, "dependency available", "name", d.name)
+			continue
+		}
+
+		// Best-effort version logging (some commands output version to stderr).
+		cmd := exec.CommandContext(ctx, d.name, d.args...)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			slog.WarnContext(ctx, "dependency check command failed",
+				"name", d.name,
+				"error", err,
+				"output", string(out))
+			continue
+		}
+		if len(out) > 0 {
+			slog.InfoContext(ctx, "dependency available", "name", d.name, "output", string(out))
+		} else {
+			slog.InfoContext(ctx, "dependency available", "name", d.name)
+		}
+	}
+
+	return nil
 }
 
 func runLoop(ctx context.Context, wg *sync.WaitGroup, consumer *queue.RedisConsumer, process queue.MessageProcessor) {
@@ -375,10 +477,11 @@ func createMessageContext(ctx context.Context, msg queue.Message) (context.Conte
 
 	// Enrich context with message metadata for automatic logging
 	ctx = logger.WithLogFields(ctx, logger.LogFields{
-		IssueID:    &msg.IssueID,
-		EventLogID: &msg.EventLogID,
+		IssueID:    msg.IssueID,
+		EventLogID: msg.EventLogID,
 		MessageID:  &msg.ID,
 		EventType:  &msg.EventType,
+		WorkspaceID: msg.WorkspaceID,
 		Component:  "relay.worker.processor",
 	})
 
@@ -413,20 +516,61 @@ func processMessageSafe(ctx context.Context, msg queue.Message, process queue.Me
 	return process(ctx, msg)
 }
 
-func newMessageProcessor(consumer *queue.RedisConsumer, orchestrator *brain.Orchestrator) queue.MessageProcessor {
+func newMessageProcessor(consumer *queue.RedisConsumer, orchestrator *brain.Orchestrator, taskRunner *worker.TaskRunner) queue.MessageProcessor {
 	return func(ctx context.Context, msg queue.Message) error {
 		slog.InfoContext(ctx, "processing message",
+			"task_type", msg.TaskType,
 			"attempt", msg.Attempt)
 
-		input := brain.EngagementInput{
-			IssueID:         msg.IssueID,
-			EventLogID:      msg.EventLogID,
-			EventType:       msg.EventType,
-			TriggerThreadID: msg.TriggerThreadID,
-		}
+		switch msg.TaskType {
+		case queue.TaskTypeIssueEvent:
+			if msg.IssueID == nil || msg.EventLogID == nil {
+				return fmt.Errorf("missing issue fields")
+			}
 
-		if err := orchestrator.HandleEngagement(ctx, input); err != nil {
-			return err
+			ready, reason, err := taskRunner.EnsureIssueReady(ctx, *msg.IssueID)
+			if err != nil {
+				return err
+			}
+			if !ready {
+				if err := consumer.RequeueWithAttempt(ctx, msg, msg.Attempt, reason); err != nil {
+					return err
+				}
+				return nil
+			}
+
+			input := brain.EngagementInput{
+				IssueID:         *msg.IssueID,
+				EventLogID:      *msg.EventLogID,
+				EventType:       msg.EventType,
+				TriggerThreadID: msg.TriggerThreadID,
+			}
+
+			if err := orchestrator.HandleEngagement(ctx, input); err != nil {
+				return err
+			}
+		case queue.TaskTypeWorkspaceSetup:
+			if msg.RunID == nil {
+				return fmt.Errorf("missing run_id")
+			}
+			if err := taskRunner.HandleWorkspaceSetup(ctx, *msg.RunID); err != nil {
+				return err
+			}
+		case queue.TaskTypeRepoSync:
+			if msg.RunID == nil || msg.RepoID == nil {
+				return fmt.Errorf("missing run_id or repo_id")
+			}
+			if err := taskRunner.HandleRepoSync(ctx, *msg.RunID, *msg.RepoID, msg.Branch); err != nil {
+				if errors.Is(err, worker.ErrRepoNotReady) || errors.Is(err, worker.ErrDefaultBranchRequired) {
+					if err := consumer.RequeueWithAttempt(ctx, msg, msg.Attempt, err.Error()); err != nil {
+						return err
+					}
+					return nil
+				}
+				return err
+			}
+		default:
+			return fmt.Errorf("unsupported task_type: %s", msg.TaskType)
 		}
 
 		if err := consumer.Ack(ctx, msg); err != nil {

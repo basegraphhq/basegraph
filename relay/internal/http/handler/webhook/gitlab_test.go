@@ -113,11 +113,29 @@ func (f *fakeEventIngestService) Ingest(ctx context.Context, params service.Even
 	}, nil
 }
 
+type fakeRepoSyncService struct {
+	capturedParams *service.RepoSyncParams
+	result         *service.RepoSyncResult
+	err            error
+}
+
+func (f *fakeRepoSyncService) Enqueue(ctx context.Context, params service.RepoSyncParams) (*service.RepoSyncResult, error) {
+	f.capturedParams = &params
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.result != nil {
+		return f.result, nil
+	}
+	return &service.RepoSyncResult{Enqueued: true}, nil
+}
+
 var _ = Describe("GitLabWebhookHandler", func() {
 	var (
 		router      *gin.Engine
 		buf         *bytes.Buffer
 		eventIngest *fakeEventIngestService
+		repoSync    *fakeRepoSyncService
 	)
 
 	BeforeEach(func() {
@@ -133,8 +151,9 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		}
 
 		eventIngest = &fakeEventIngestService{}
+		repoSync = &fakeRepoSyncService{}
 		mapper := mapper.NewGitLabEventMapper()
-		h := webhook.NewGitLabWebhookHandler(store, eventIngest, mapper)
+		h := webhook.NewGitLabWebhookHandler(store, eventIngest, repoSync, mapper)
 		router.POST("/webhooks/gitlab/:integration_id", h.HandleEvent)
 	})
 
@@ -173,6 +192,33 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		Expect(logStr).To(ContainSubstring(`"event_published":true`))
 	})
 
+	It("processes push events for repo sync", func() {
+		body := map[string]any{
+			"object_kind": "push",
+			"ref":         "refs/heads/main",
+			"after":       "abc123",
+			"project": map[string]any{
+				"id": 42,
+			},
+		}
+		payload, _ := json.Marshal(body)
+
+		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBuffer(payload))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Gitlab-Token", "secret")
+		w := httptest.NewRecorder()
+
+		router.ServeHTTP(w, req)
+
+		Expect(w.Code).To(Equal(http.StatusOK))
+		Expect(repoSync.capturedParams).NotTo(BeNil())
+		Expect(repoSync.capturedParams.IntegrationID).To(Equal(int64(123)))
+		Expect(repoSync.capturedParams.ExternalRepoID).To(Equal("42"))
+		Expect(repoSync.capturedParams.Ref).To(Equal("refs/heads/main"))
+		Expect(repoSync.capturedParams.After).To(Equal("abc123"))
+		Expect(eventIngest.capturedParams).To(BeNil())
+	})
+
 	It("rejects invalid token", func() {
 		req := httptest.NewRequest(http.MethodPost, "/webhooks/gitlab/123", bytes.NewBuffer([]byte("{}")))
 		req.Header.Set("Content-Type", "application/json")
@@ -205,6 +251,7 @@ var _ = Describe("GitLabWebhookHandler", func() {
 		Expect(w.Code).To(Equal(http.StatusOK))
 		logStr := buf.String()
 		Expect(logStr).To(ContainSubstring("gitlab wiki webhook received"))
+		Expect(repoSync.capturedParams).To(BeNil())
 	})
 
 	Context("Provider handling", func() {

@@ -52,6 +52,10 @@ func (s *Stores) EventLogs() EventLogStore {
 	return newEventLogStore(s.queries)
 }
 
+func (s *Stores) WorkspaceEventLogs() WorkspaceEventLogStore {
+	return newWorkspaceEventLogStore(s.queries)
+}
+
 func (s *Stores) Learnings() LearningStore {
 	return newLearningStore(s.queries)
 }

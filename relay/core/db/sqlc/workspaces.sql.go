@@ -7,6 +7,8 @@ package sqlc
 
 import (
 	"context"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createWorkspace = `-- name: CreateWorkspace :one
@@ -15,7 +17,7 @@ INSERT INTO workspaces (
     name, slug, description, created_at, updated_at
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, now(), now())
-RETURNING id, admin_user_id, organization_id, user_id, name, slug, description, created_at, updated_at, is_deleted
+RETURNING id, admin_user_id, organization_id, user_id, name, slug, description, repo_ready_at, created_at, updated_at, is_deleted
 `
 
 type CreateWorkspaceParams struct {
@@ -47,6 +49,7 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 		&i.Name,
 		&i.Slug,
 		&i.Description,
+		&i.RepoReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsDeleted,
@@ -55,7 +58,7 @@ func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams
 }
 
 const getWorkspace = `-- name: GetWorkspace :one
-SELECT id, admin_user_id, organization_id, user_id, name, slug, description, created_at, updated_at, is_deleted FROM workspaces WHERE id = $1 AND is_deleted = false
+SELECT id, admin_user_id, organization_id, user_id, name, slug, description, repo_ready_at, created_at, updated_at, is_deleted FROM workspaces WHERE id = $1 AND is_deleted = false
 `
 
 func (q *Queries) GetWorkspace(ctx context.Context, id int64) (Workspace, error) {
@@ -69,6 +72,7 @@ func (q *Queries) GetWorkspace(ctx context.Context, id int64) (Workspace, error)
 		&i.Name,
 		&i.Slug,
 		&i.Description,
+		&i.RepoReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsDeleted,
@@ -77,7 +81,7 @@ func (q *Queries) GetWorkspace(ctx context.Context, id int64) (Workspace, error)
 }
 
 const getWorkspaceByOrgAndSlug = `-- name: GetWorkspaceByOrgAndSlug :one
-SELECT id, admin_user_id, organization_id, user_id, name, slug, description, created_at, updated_at, is_deleted FROM workspaces 
+SELECT id, admin_user_id, organization_id, user_id, name, slug, description, repo_ready_at, created_at, updated_at, is_deleted FROM workspaces 
 WHERE organization_id = $1 AND slug = $2 AND is_deleted = false
 `
 
@@ -97,6 +101,7 @@ func (q *Queries) GetWorkspaceByOrgAndSlug(ctx context.Context, arg GetWorkspace
 		&i.Name,
 		&i.Slug,
 		&i.Description,
+		&i.RepoReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsDeleted,
@@ -105,7 +110,7 @@ func (q *Queries) GetWorkspaceByOrgAndSlug(ctx context.Context, arg GetWorkspace
 }
 
 const listWorkspacesByOrganization = `-- name: ListWorkspacesByOrganization :many
-SELECT id, admin_user_id, organization_id, user_id, name, slug, description, created_at, updated_at, is_deleted FROM workspaces 
+SELECT id, admin_user_id, organization_id, user_id, name, slug, description, repo_ready_at, created_at, updated_at, is_deleted FROM workspaces 
 WHERE organization_id = $1 AND is_deleted = false
 ORDER BY created_at DESC
 `
@@ -127,6 +132,7 @@ func (q *Queries) ListWorkspacesByOrganization(ctx context.Context, organization
 			&i.Name,
 			&i.Slug,
 			&i.Description,
+			&i.RepoReadyAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.IsDeleted,
@@ -142,7 +148,7 @@ func (q *Queries) ListWorkspacesByOrganization(ctx context.Context, organization
 }
 
 const listWorkspacesByUser = `-- name: ListWorkspacesByUser :many
-SELECT id, admin_user_id, organization_id, user_id, name, slug, description, created_at, updated_at, is_deleted FROM workspaces 
+SELECT id, admin_user_id, organization_id, user_id, name, slug, description, repo_ready_at, created_at, updated_at, is_deleted FROM workspaces 
 WHERE user_id = $1 AND is_deleted = false
 ORDER BY created_at DESC
 `
@@ -164,6 +170,7 @@ func (q *Queries) ListWorkspacesByUser(ctx context.Context, userID int64) ([]Wor
 			&i.Name,
 			&i.Slug,
 			&i.Description,
+			&i.RepoReadyAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.IsDeleted,
@@ -176,6 +183,37 @@ func (q *Queries) ListWorkspacesByUser(ctx context.Context, userID int64) ([]Wor
 		return nil, err
 	}
 	return items, nil
+}
+
+const setWorkspaceRepoReadyAt = `-- name: SetWorkspaceRepoReadyAt :one
+UPDATE workspaces
+SET repo_ready_at = $2, updated_at = now()
+WHERE id = $1 AND is_deleted = false
+RETURNING id, admin_user_id, organization_id, user_id, name, slug, description, repo_ready_at, created_at, updated_at, is_deleted
+`
+
+type SetWorkspaceRepoReadyAtParams struct {
+	ID          int64              `json:"id"`
+	RepoReadyAt pgtype.Timestamptz `json:"repo_ready_at"`
+}
+
+func (q *Queries) SetWorkspaceRepoReadyAt(ctx context.Context, arg SetWorkspaceRepoReadyAtParams) (Workspace, error) {
+	row := q.db.QueryRow(ctx, setWorkspaceRepoReadyAt, arg.ID, arg.RepoReadyAt)
+	var i Workspace
+	err := row.Scan(
+		&i.ID,
+		&i.AdminUserID,
+		&i.OrganizationID,
+		&i.UserID,
+		&i.Name,
+		&i.Slug,
+		&i.Description,
+		&i.RepoReadyAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.IsDeleted,
+	)
+	return i, err
 }
 
 const softDeleteWorkspace = `-- name: SoftDeleteWorkspace :exec
@@ -191,7 +229,7 @@ const updateWorkspace = `-- name: UpdateWorkspace :one
 UPDATE workspaces
 SET name = $2, slug = $3, description = $4, updated_at = now()
 WHERE id = $1 AND is_deleted = false
-RETURNING id, admin_user_id, organization_id, user_id, name, slug, description, created_at, updated_at, is_deleted
+RETURNING id, admin_user_id, organization_id, user_id, name, slug, description, repo_ready_at, created_at, updated_at, is_deleted
 `
 
 type UpdateWorkspaceParams struct {
@@ -217,6 +255,7 @@ func (q *Queries) UpdateWorkspace(ctx context.Context, arg UpdateWorkspaceParams
 		&i.Name,
 		&i.Slug,
 		&i.Description,
+		&i.RepoReadyAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.IsDeleted,

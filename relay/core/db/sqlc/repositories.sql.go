@@ -13,10 +13,11 @@ const createRepository = `-- name: CreateRepository :one
 INSERT INTO repositories (
     id, workspace_id, integration_id,
     name, slug, url, description, external_repo_id,
+    is_enabled, default_branch,
     created_at, updated_at
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), now())
-RETURNING id, workspace_id, integration_id, name, slug, url, description, external_repo_id, created_at, updated_at
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, now(), now())
+RETURNING id, workspace_id, integration_id, name, slug, url, description, is_enabled, default_branch, external_repo_id, created_at, updated_at
 `
 
 type CreateRepositoryParams struct {
@@ -28,6 +29,8 @@ type CreateRepositoryParams struct {
 	Url            string  `json:"url"`
 	Description    *string `json:"description"`
 	ExternalRepoID string  `json:"external_repo_id"`
+	IsEnabled      bool    `json:"is_enabled"`
+	DefaultBranch  *string `json:"default_branch"`
 }
 
 func (q *Queries) CreateRepository(ctx context.Context, arg CreateRepositoryParams) (Repository, error) {
@@ -40,6 +43,8 @@ func (q *Queries) CreateRepository(ctx context.Context, arg CreateRepositoryPara
 		arg.Url,
 		arg.Description,
 		arg.ExternalRepoID,
+		arg.IsEnabled,
+		arg.DefaultBranch,
 	)
 	var i Repository
 	err := row.Scan(
@@ -50,6 +55,8 @@ func (q *Queries) CreateRepository(ctx context.Context, arg CreateRepositoryPara
 		&i.Slug,
 		&i.Url,
 		&i.Description,
+		&i.IsEnabled,
+		&i.DefaultBranch,
 		&i.ExternalRepoID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -76,7 +83,7 @@ func (q *Queries) DeleteRepository(ctx context.Context, id int64) error {
 }
 
 const getRepository = `-- name: GetRepository :one
-SELECT id, workspace_id, integration_id, name, slug, url, description, external_repo_id, created_at, updated_at FROM repositories WHERE id = $1
+SELECT id, workspace_id, integration_id, name, slug, url, description, is_enabled, default_branch, external_repo_id, created_at, updated_at FROM repositories WHERE id = $1
 `
 
 func (q *Queries) GetRepository(ctx context.Context, id int64) (Repository, error) {
@@ -90,6 +97,8 @@ func (q *Queries) GetRepository(ctx context.Context, id int64) (Repository, erro
 		&i.Slug,
 		&i.Url,
 		&i.Description,
+		&i.IsEnabled,
+		&i.DefaultBranch,
 		&i.ExternalRepoID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -98,7 +107,7 @@ func (q *Queries) GetRepository(ctx context.Context, id int64) (Repository, erro
 }
 
 const getRepositoryByExternalID = `-- name: GetRepositoryByExternalID :one
-SELECT id, workspace_id, integration_id, name, slug, url, description, external_repo_id, created_at, updated_at FROM repositories 
+SELECT id, workspace_id, integration_id, name, slug, url, description, is_enabled, default_branch, external_repo_id, created_at, updated_at FROM repositories 
 WHERE integration_id = $1 AND external_repo_id = $2
 `
 
@@ -118,6 +127,8 @@ func (q *Queries) GetRepositoryByExternalID(ctx context.Context, arg GetReposito
 		&i.Slug,
 		&i.Url,
 		&i.Description,
+		&i.IsEnabled,
+		&i.DefaultBranch,
 		&i.ExternalRepoID,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -125,8 +136,86 @@ func (q *Queries) GetRepositoryByExternalID(ctx context.Context, arg GetReposito
 	return i, err
 }
 
+const listEnabledRepositoriesByIntegration = `-- name: ListEnabledRepositoriesByIntegration :many
+SELECT id, workspace_id, integration_id, name, slug, url, description, is_enabled, default_branch, external_repo_id, created_at, updated_at FROM repositories
+WHERE integration_id = $1 AND is_enabled = true
+ORDER BY name ASC
+`
+
+func (q *Queries) ListEnabledRepositoriesByIntegration(ctx context.Context, integrationID int64) ([]Repository, error) {
+	rows, err := q.db.Query(ctx, listEnabledRepositoriesByIntegration, integrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Repository
+	for rows.Next() {
+		var i Repository
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.IntegrationID,
+			&i.Name,
+			&i.Slug,
+			&i.Url,
+			&i.Description,
+			&i.IsEnabled,
+			&i.DefaultBranch,
+			&i.ExternalRepoID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listEnabledRepositoriesByWorkspace = `-- name: ListEnabledRepositoriesByWorkspace :many
+SELECT id, workspace_id, integration_id, name, slug, url, description, is_enabled, default_branch, external_repo_id, created_at, updated_at FROM repositories
+WHERE workspace_id = $1 AND is_enabled = true
+ORDER BY name ASC
+`
+
+func (q *Queries) ListEnabledRepositoriesByWorkspace(ctx context.Context, workspaceID int64) ([]Repository, error) {
+	rows, err := q.db.Query(ctx, listEnabledRepositoriesByWorkspace, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Repository
+	for rows.Next() {
+		var i Repository
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.IntegrationID,
+			&i.Name,
+			&i.Slug,
+			&i.Url,
+			&i.Description,
+			&i.IsEnabled,
+			&i.DefaultBranch,
+			&i.ExternalRepoID,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRepositoriesByIntegration = `-- name: ListRepositoriesByIntegration :many
-SELECT id, workspace_id, integration_id, name, slug, url, description, external_repo_id, created_at, updated_at FROM repositories 
+SELECT id, workspace_id, integration_id, name, slug, url, description, is_enabled, default_branch, external_repo_id, created_at, updated_at FROM repositories 
 WHERE integration_id = $1
 ORDER BY name ASC
 `
@@ -148,6 +237,8 @@ func (q *Queries) ListRepositoriesByIntegration(ctx context.Context, integration
 			&i.Slug,
 			&i.Url,
 			&i.Description,
+			&i.IsEnabled,
+			&i.DefaultBranch,
 			&i.ExternalRepoID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -163,7 +254,7 @@ func (q *Queries) ListRepositoriesByIntegration(ctx context.Context, integration
 }
 
 const listRepositoriesByWorkspace = `-- name: ListRepositoriesByWorkspace :many
-SELECT id, workspace_id, integration_id, name, slug, url, description, external_repo_id, created_at, updated_at FROM repositories 
+SELECT id, workspace_id, integration_id, name, slug, url, description, is_enabled, default_branch, external_repo_id, created_at, updated_at FROM repositories 
 WHERE workspace_id = $1
 ORDER BY name ASC
 `
@@ -185,6 +276,8 @@ func (q *Queries) ListRepositoriesByWorkspace(ctx context.Context, workspaceID i
 			&i.Slug,
 			&i.Url,
 			&i.Description,
+			&i.IsEnabled,
+			&i.DefaultBranch,
 			&i.ExternalRepoID,
 			&i.CreatedAt,
 			&i.UpdatedAt,
@@ -199,11 +292,43 @@ func (q *Queries) ListRepositoriesByWorkspace(ctx context.Context, workspaceID i
 	return items, nil
 }
 
+const setRepositoryEnabled = `-- name: SetRepositoryEnabled :one
+UPDATE repositories
+SET is_enabled = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, workspace_id, integration_id, name, slug, url, description, is_enabled, default_branch, external_repo_id, created_at, updated_at
+`
+
+type SetRepositoryEnabledParams struct {
+	ID        int64 `json:"id"`
+	IsEnabled bool  `json:"is_enabled"`
+}
+
+func (q *Queries) SetRepositoryEnabled(ctx context.Context, arg SetRepositoryEnabledParams) (Repository, error) {
+	row := q.db.QueryRow(ctx, setRepositoryEnabled, arg.ID, arg.IsEnabled)
+	var i Repository
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IntegrationID,
+		&i.Name,
+		&i.Slug,
+		&i.Url,
+		&i.Description,
+		&i.IsEnabled,
+		&i.DefaultBranch,
+		&i.ExternalRepoID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateRepository = `-- name: UpdateRepository :one
 UPDATE repositories
 SET name = $2, slug = $3, url = $4, description = $5, updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, integration_id, name, slug, url, description, external_repo_id, created_at, updated_at
+RETURNING id, workspace_id, integration_id, name, slug, url, description, is_enabled, default_branch, external_repo_id, created_at, updated_at
 `
 
 type UpdateRepositoryParams struct {
@@ -231,6 +356,40 @@ func (q *Queries) UpdateRepository(ctx context.Context, arg UpdateRepositoryPara
 		&i.Slug,
 		&i.Url,
 		&i.Description,
+		&i.IsEnabled,
+		&i.DefaultBranch,
+		&i.ExternalRepoID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateRepositoryDefaultBranch = `-- name: UpdateRepositoryDefaultBranch :one
+UPDATE repositories
+SET default_branch = $2, updated_at = now()
+WHERE id = $1
+RETURNING id, workspace_id, integration_id, name, slug, url, description, is_enabled, default_branch, external_repo_id, created_at, updated_at
+`
+
+type UpdateRepositoryDefaultBranchParams struct {
+	ID            int64   `json:"id"`
+	DefaultBranch *string `json:"default_branch"`
+}
+
+func (q *Queries) UpdateRepositoryDefaultBranch(ctx context.Context, arg UpdateRepositoryDefaultBranchParams) (Repository, error) {
+	row := q.db.QueryRow(ctx, updateRepositoryDefaultBranch, arg.ID, arg.DefaultBranch)
+	var i Repository
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IntegrationID,
+		&i.Name,
+		&i.Slug,
+		&i.Url,
+		&i.Description,
+		&i.IsEnabled,
+		&i.DefaultBranch,
 		&i.ExternalRepoID,
 		&i.CreatedAt,
 		&i.UpdatedAt,

@@ -3,10 +3,12 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	"basegraph.co/relay/core/db/sqlc"
 	"basegraph.co/relay/internal/model"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type workspaceStore struct {
@@ -76,6 +78,23 @@ func (s *workspaceStore) Update(ctx context.Context, ws *model.Workspace) error 
 	return nil
 }
 
+func (s *workspaceStore) SetRepoReadyAt(ctx context.Context, id int64, readyAt time.Time) (*model.Workspace, error) {
+	row, err := s.queries.SetWorkspaceRepoReadyAt(ctx, sqlc.SetWorkspaceRepoReadyAtParams{
+		ID: id,
+		RepoReadyAt: pgtype.Timestamptz{
+			Time:  readyAt,
+			Valid: true,
+		},
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, ErrNotFound
+		}
+		return nil, err
+	}
+	return toWorkspaceModel(row), nil
+}
+
 func (s *workspaceStore) Delete(ctx context.Context, id int64) error {
 	return s.queries.SoftDeleteWorkspace(ctx, id)
 }
@@ -97,6 +116,12 @@ func (s *workspaceStore) ListByUser(ctx context.Context, userID int64) ([]model.
 }
 
 func toWorkspaceModel(row sqlc.Workspace) *model.Workspace {
+	var repoReadyAt *time.Time
+	if row.RepoReadyAt.Valid {
+		t := row.RepoReadyAt.Time
+		repoReadyAt = &t
+	}
+
 	return &model.Workspace{
 		ID:             row.ID,
 		AdminUserID:    row.AdminUserID,
@@ -108,6 +133,7 @@ func toWorkspaceModel(row sqlc.Workspace) *model.Workspace {
 		CreatedAt:      row.CreatedAt.Time,
 		UpdatedAt:      row.UpdatedAt.Time,
 		IsDeleted:      row.IsDeleted,
+		RepoReadyAt:    repoReadyAt,
 	}
 }
 

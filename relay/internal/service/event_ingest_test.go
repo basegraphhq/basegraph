@@ -220,12 +220,13 @@ func (m *mockEventLogStore) MarkBatchProcessed(ctx context.Context, ids []int64)
 
 // Mock QueueProducer
 type mockQueueProducer struct {
-	enqueueFn func(ctx context.Context, event queue.Event) error
+	enqueueFn func(ctx context.Context, task queue.Task) error
 }
 
-func (m *mockQueueProducer) Enqueue(ctx context.Context, event queue.Event) error {
+
+func (m *mockQueueProducer) Enqueue(ctx context.Context, task queue.Task) error {
 	if m.enqueueFn != nil {
-		return m.enqueueFn(ctx, event)
+		return m.enqueueFn(ctx, task)
 	}
 	return nil
 }

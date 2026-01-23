@@ -35,6 +35,7 @@ type WorkspaceStore interface {
 	GetByOrgAndSlug(ctx context.Context, orgID int64, slug string) (*model.Workspace, error)
 	Create(ctx context.Context, ws *model.Workspace) error
 	Update(ctx context.Context, ws *model.Workspace) error
+	SetRepoReadyAt(ctx context.Context, id int64, readyAt time.Time) (*model.Workspace, error)
 	Delete(ctx context.Context, id int64) error // soft delete
 	ListByOrganization(ctx context.Context, orgID int64) ([]model.Workspace, error)
 	ListByUser(ctx context.Context, userID int64) ([]model.Workspace, error)
@@ -83,10 +84,14 @@ type RepoStore interface {
 	GetByExternalID(ctx context.Context, integrationID int64, externalRepoID string) (*model.Repository, error)
 	Create(ctx context.Context, repo *model.Repository) error
 	Update(ctx context.Context, repo *model.Repository) error
+	SetEnabled(ctx context.Context, id int64, enabled bool) (*model.Repository, error)
+	UpdateDefaultBranch(ctx context.Context, id int64, branch *string) (*model.Repository, error)
 	Delete(ctx context.Context, id int64) error
 	DeleteByIntegration(ctx context.Context, integrationID int64) error
 	ListByWorkspace(ctx context.Context, workspaceID int64) ([]model.Repository, error)
+	ListEnabledByWorkspace(ctx context.Context, workspaceID int64) ([]model.Repository, error)
 	ListByIntegration(ctx context.Context, integrationID int64) ([]model.Repository, error)
+	ListEnabledByIntegration(ctx context.Context, integrationID int64) ([]model.Repository, error)
 }
 
 type SessionStore interface {
@@ -141,6 +146,13 @@ type EventLogStore interface {
 	ListUnprocessedByIssue(ctx context.Context, issueID int64) ([]model.EventLog, error)
 	// MarkBatchProcessed marks multiple event logs as processed atomically.
 	MarkBatchProcessed(ctx context.Context, ids []int64) error
+}
+
+type WorkspaceEventLogStore interface {
+	GetByID(ctx context.Context, id int64) (*model.WorkspaceEventLog, error)
+	ListByWorkspace(ctx context.Context, workspaceID int64, limit int32) ([]model.WorkspaceEventLog, error)
+	Create(ctx context.Context, log *model.WorkspaceEventLog) (*model.WorkspaceEventLog, error)
+	Update(ctx context.Context, log *model.WorkspaceEventLog, startedAt *time.Time, finishedAt *time.Time) (*model.WorkspaceEventLog, error)
 }
 
 type LearningStore interface {
