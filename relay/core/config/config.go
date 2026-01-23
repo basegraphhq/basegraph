@@ -163,10 +163,10 @@ func Load(serviceType ServiceType) (Config, error) {
 			ReasoningEffort: getEnv("PLANNER_LLM_REASONING_EFFORT", "medium"),
 		},
 		ArangoDB: ArangoDBConfig{
-			URL:      getEnv("ARANGO_URL", "http://localhost:8529"),
-			Username: getEnv("ARANGO_USERNAME", "root"),
+			URL:      getEnv("ARANGO_URL", ""),
+			Username: getEnv("ARANGO_USERNAME", ""),
 			Password: getEnv("ARANGO_PASSWORD", ""),
-			Database: getEnv("ARANGO_DATABASE", "codegraph"),
+			Database: getEnv("ARANGO_DATABASE", ""),
 		},
 		Features: Features{},
 	}
