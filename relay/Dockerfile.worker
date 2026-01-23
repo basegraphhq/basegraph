@@ -5,13 +5,13 @@ WORKDIR /app
 
 # Copy go.mod and go.sum first for better layer caching
 COPY go.mod go.sum ./
-COPY vendor/ vendor/
+RUN go mod download
 
 # Copy source code
 COPY . .
 
 # Build the worker binary
-RUN go build -o bin/worker ./cmd/worker
+RUN CGO_ENABLED=0 go build -o bin/worker ./cmd/worker
 
 # Runtime stage
 FROM debian:bookworm-slim

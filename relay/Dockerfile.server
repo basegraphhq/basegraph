@@ -5,13 +5,13 @@ WORKDIR /app
 
 # Copy go.mod and go.sum first for better layer caching
 COPY go.mod go.sum ./
-COPY vendor/ vendor/
+RUN go mod download
 
 # Copy source code
 COPY . .
 
 # Build the server binary
-RUN go build -o bin/server ./cmd/server
+RUN CGO_ENABLED=0 go build -o bin/server ./cmd/server
 
 # Runtime stage
 FROM debian:bookworm-slim
