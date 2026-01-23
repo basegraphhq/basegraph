@@ -1,0 +1,40 @@
+# Build stage
+FROM golang:1.24-bookworm AS builder
+
+WORKDIR /app
+
+# Copy go.mod and go.sum first for better layer caching
+COPY go.mod go.sum ./
+COPY vendor/ vendor/
+
+# Copy source code
+COPY . .
+
+# Build the server binary
+RUN go build -o bin/server ./cmd/server
+
+# Runtime stage
+FROM debian:bookworm-slim
+
+# Install minimal runtime dependencies
+# - ca-certificates: HTTPS connections to external services
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user for security
+RUN useradd -m -s /bin/bash server
+
+WORKDIR /app
+
+# Copy binary from builder
+COPY --from=builder /app/bin/server /app/server
+
+# Switch to non-root user
+USER server
+
+# Expose default port
+EXPOSE 8080
+
+# Default command
+CMD ["/app/server"]
