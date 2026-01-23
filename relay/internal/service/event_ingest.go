@@ -263,13 +263,16 @@ func (s *eventIngestService) Ingest(ctx context.Context, params EventIngestParam
 		// Only send Redis message when issue transitions idle→queued.
 		// If issue is already queued/processing, the active worker will pick up
 		// new events before transitioning back to idle.
-		if err := s.producer.Enqueue(ctx, queue.Event{
+		if err := s.producer.Enqueue(ctx, queue.Task{
+			TaskType:        queue.TaskTypeIssueEvent,
 			EventLogID:      eventLog.ID,
 			IssueID:         resultIssue.ID,
 			EventType:       params.EventType,
 			TraceID:         params.TraceID,
 			Attempt:         1,
 			TriggerThreadID: params.DiscussionID,
+			WorkspaceID:     &integration.WorkspaceID,
+			OrganizationID:  &integration.OrganizationID,
 		}); err != nil {
 			return nil, fmt.Errorf("enqueueing event: %w", err)
 		}

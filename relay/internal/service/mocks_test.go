@@ -2,6 +2,7 @@ package service_test
 
 import (
 	"context"
+	"time"
 
 	"basegraph.co/relay/internal/model"
 	"basegraph.co/relay/internal/service"
@@ -143,6 +144,10 @@ func (m *mockWorkspaceStore) GetByID(ctx context.Context, id int64) (*model.Work
 
 func (m *mockWorkspaceStore) Update(ctx context.Context, ws *model.Workspace) error {
 	return nil
+}
+
+func (m *mockWorkspaceStore) SetRepoReadyAt(ctx context.Context, id int64, readyAt time.Time) (*model.Workspace, error) {
+	return nil, nil
 }
 
 func (m *mockWorkspaceStore) Delete(ctx context.Context, id int64) error {

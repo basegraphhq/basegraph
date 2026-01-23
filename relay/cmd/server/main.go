@@ -78,7 +78,12 @@ func main() {
 	}
 	slog.InfoContext(ctx, "redis connected", "stream", cfg.Pipeline.RedisStream)
 
-	eventProducer := queue.NewRedisProducer(redisClient, cfg.Pipeline.RedisStream)
+	eventProducer := queue.NewRedisProducerWithResolver(redisClient, func(task queue.Task) (string, error) {
+		if task.WorkspaceID == nil || task.OrganizationID == nil {
+			return "", fmt.Errorf("missing workspace or organization id")
+		}
+		return queue.WorkspaceStreamName(*task.OrganizationID, *task.WorkspaceID), nil
+	})
 	defer eventProducer.Close()
 
 	stores := store.NewStores(database.Queries())
@@ -90,13 +95,15 @@ func main() {
 		DashboardURL:  cfg.DashboardURL,
 		WebhookCfg:    cfg.EventWebhook,
 		EventProducer: eventProducer,
+		RedisClient:   redisClient,
+		RedisGroup:    cfg.Pipeline.RedisGroup,
 	})
 
 	if cfg.IsProduction() {
 		gin.SetMode(gin.ReleaseMode)
 	}
 
-	router := setupRouter(cfg, services)
+	router := setupRouter(cfg, services, redisClient)
 	server := &http.Server{
 		Addr:              ":" + cfg.Port,
 		Handler:           router,
@@ -136,7 +143,7 @@ func main() {
 	slog.InfoContext(shutdownCtx, "shutdown complete")
 }
 
-func setupRouter(cfg config.Config, services *service.Services) *gin.Engine {
+func setupRouter(cfg config.Config, services *service.Services, redisClient *redis.Client) *gin.Engine {
 	router := gin.New()
 
 	// Order matters: OTel creates span → Recovery catches panics → Logger logs with trace context
@@ -151,6 +158,7 @@ func setupRouter(cfg config.Config, services *service.Services) *gin.Engine {
 		IsProduction:    cfg.IsProduction(),
 		TraceHeaderName: cfg.Pipeline.TraceHeaderName,
 		AdminAPIKey:     cfg.AdminAPIKey,
+		RedisClient:     redisClient,
 	})
 
 	return router

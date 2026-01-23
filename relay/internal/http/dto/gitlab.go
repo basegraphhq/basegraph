@@ -21,6 +21,11 @@ type SetupGitLabIntegrationRequest struct {
 	SetupByUserID  int64  `json:"setup_by_user_id,string" binding:"required"`
 }
 
+type EnableGitLabRepositoriesRequest struct {
+	WorkspaceID int64   `json:"workspace_id,string" binding:"required"`
+	ProjectIDs  []int64 `json:"project_ids" binding:"required"`
+}
+
 type SetupGitLabIntegrationResponse struct {
 	Projects          []GitLabProjectResponse `json:"projects"`
 	Errors            []string                `json:"errors,omitempty"`
@@ -48,4 +53,11 @@ type GitLabSyncStatus struct {
 type RefreshGitLabIntegrationResponse struct {
 	SetupGitLabIntegrationResponse
 	Synced bool `json:"synced"`
+}
+
+type EnableGitLabRepositoriesResponse struct {
+	Errors            []string `json:"errors,omitempty"`
+	IntegrationID     int64    `json:"integration_id,string"`
+	RepositoriesAdded int      `json:"repositories_added"`
+	WebhooksCreated   int      `json:"webhooks_created"`
 }

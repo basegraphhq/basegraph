@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"basegraph.co/relay/internal/http/dto"
+	"basegraph.co/relay/internal/service"
 	"basegraph.co/relay/internal/service/integration"
 	"github.com/gin-gonic/gin"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
@@ -15,12 +16,14 @@ import (
 
 type GitLabHandler struct {
 	gitlabService  integration.GitLabService
+	workspaceSetup service.WorkspaceSetupService
 	webhookBaseURL string
 }
 
-func NewGitLabHandler(gitlabService integration.GitLabService, webhookBaseURL string) *GitLabHandler {
+func NewGitLabHandler(gitlabService integration.GitLabService, workspaceSetup service.WorkspaceSetupService, webhookBaseURL string) *GitLabHandler {
 	return &GitLabHandler{
 		gitlabService:  gitlabService,
+		workspaceSetup: workspaceSetup,
 		webhookBaseURL: webhookBaseURL,
 	}
 }
@@ -143,6 +146,28 @@ func (h *GitLabHandler) GetStatus(c *gin.Context) {
 	})
 }
 
+func (h *GitLabHandler) ListEnabledRepos(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var req gitLabWorkspaceQuery
+	if err := c.ShouldBindQuery(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	projectIDs, err := h.gitlabService.ListEnabledProjectIDs(ctx, req.WorkspaceID)
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to list enabled gitlab repositories", "error", err)
+		statusCode, errorMsg := mapGitLabError(err)
+		c.JSON(statusCode, gin.H{"error": errorMsg})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"project_ids": projectIDs,
+	})
+}
+
 type gitLabWorkspaceBody struct {
 	WorkspaceID int64 `json:"workspace_id,string" binding:"required"`
 }
@@ -187,6 +212,43 @@ func (h *GitLabHandler) RefreshIntegration(c *gin.Context) {
 			Errors:            result.Errors,
 		},
 		Synced: synced,
+	})
+}
+
+func (h *GitLabHandler) EnableRepositories(c *gin.Context) {
+	ctx := c.Request.Context()
+
+	var req dto.EnableGitLabRepositoriesRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	result, err := h.gitlabService.EnableRepositories(ctx, integration.EnableRepositoriesParams{
+		WorkspaceID:    req.WorkspaceID,
+		ProjectIDs:     req.ProjectIDs,
+		WebhookBaseURL: h.webhookBaseURL,
+	})
+	if err != nil {
+		slog.ErrorContext(ctx, "failed to enable gitlab repositories", "error", err)
+		statusCode, errorMsg := mapGitLabError(err)
+		c.JSON(statusCode, gin.H{"error": errorMsg})
+		return
+	}
+
+	if h.workspaceSetup != nil {
+		if _, err := h.workspaceSetup.Enqueue(ctx, req.WorkspaceID); err != nil {
+			slog.ErrorContext(ctx, "failed to enqueue workspace setup", "error", err, "workspace_id", req.WorkspaceID)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to queue workspace setup"})
+			return
+		}
+	}
+
+	c.JSON(http.StatusOK, dto.EnableGitLabRepositoriesResponse{
+		IntegrationID:     result.IntegrationID,
+		RepositoriesAdded: result.RepositoriesAdded,
+		WebhooksCreated:   result.WebhooksCreated,
+		Errors:            result.Errors,
 	})
 }
 

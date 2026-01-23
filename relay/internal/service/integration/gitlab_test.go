@@ -52,7 +52,7 @@ var _ = Describe("GitLabService", func() {
 		Expect(projects[2].Name).To(Equal("p3"))
 	})
 
-	It("sets up integration and creates credentials and hooks", func() {
+	It("sets up integration and enables repositories with hooks", func() {
 		mock := newGitLabAPIMock()
 		mock.projects = []gitlabProject{
 			{ID: 10, Name: "p10", PathWithNamespace: "g/p10", WebURL: "http://git/p10"},
@@ -85,13 +85,23 @@ var _ = Describe("GitLabService", func() {
 			WebhookBaseURL: "https://relay",
 		})
 		Expect(err).NotTo(HaveOccurred())
-		Expect(result.WebhooksCreated).To(Equal(1))
+		Expect(result.WebhooksCreated).To(Equal(0))
 		Expect(result.Errors).To(BeEmpty())
 
 		Expect(intStore.created).To(HaveLen(1))
 		Expect(credStore.created).To(HaveLen(2))
 		Expect(findCredentialType(credStore.created, model.CredentialTypeAPIKey)).To(BeTrue())
 		Expect(findCredentialType(credStore.created, model.CredentialTypeWebhookSecret)).To(BeTrue())
+
+		enableResult, err := svc.EnableRepositories(ctx, EnableRepositoriesParams{
+			WorkspaceID:    1,
+			ProjectIDs:     []int64{10},
+			WebhookBaseURL: "https://relay",
+		})
+		Expect(err).NotTo(HaveOccurred())
+		Expect(enableResult.WebhooksCreated).To(Equal(1))
+		Expect(enableResult.Errors).To(BeEmpty())
+
 		Expect(mock.hookCalls).To(Equal([]int64{10}))
 		Expect(mock.addHookCalls).To(HaveLen(1))
 		Expect(mock.addHookCalls[0].Name).To(Equal("Relay"))
@@ -124,12 +134,19 @@ var _ = Describe("GitLabService", func() {
 			repoStore: repoStore,
 		}
 
-		result, err := svc.SetupIntegration(ctx, SetupIntegrationParams{
+		_, err := svc.SetupIntegration(ctx, SetupIntegrationParams{
 			InstanceURL:    mock.baseURL(),
 			Token:          "pat",
 			WorkspaceID:    1,
 			OrganizationID: 2,
 			SetupByUserID:  3,
+			WebhookBaseURL: "https://relay",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := svc.EnableRepositories(ctx, EnableRepositoriesParams{
+			WorkspaceID:    1,
+			ProjectIDs:     []int64{100, 200},
 			WebhookBaseURL: "https://relay",
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -171,6 +188,13 @@ var _ = Describe("GitLabService", func() {
 			WorkspaceID:    1,
 			OrganizationID: 2,
 			SetupByUserID:  3,
+			WebhookBaseURL: "https://relay",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		_, err = svc.EnableRepositories(ctx, EnableRepositoriesParams{
+			WorkspaceID:    1,
+			ProjectIDs:     []int64{1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007},
 			WebhookBaseURL: "https://relay",
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -231,12 +255,19 @@ var _ = Describe("GitLabService", func() {
 			repoStore: repoStore,
 		}
 
-		result, err := svc.SetupIntegration(ctx, SetupIntegrationParams{
+		_, err := svc.SetupIntegration(ctx, SetupIntegrationParams{
 			InstanceURL:    mock.baseURL(),
 			Token:          "pat",
 			WorkspaceID:    1,
 			OrganizationID: 2,
 			SetupByUserID:  3,
+			WebhookBaseURL: "https://relay",
+		})
+		Expect(err).NotTo(HaveOccurred())
+
+		result, err := svc.EnableRepositories(ctx, EnableRepositoriesParams{
+			WorkspaceID:    1,
+			ProjectIDs:     []int64{10},
 			WebhookBaseURL: "https://relay",
 		})
 		Expect(err).NotTo(HaveOccurred())
@@ -255,6 +286,7 @@ var _ = Describe("GitLabService", func() {
 		err = json.Unmarshal(webhookConfig.Value, &cfg)
 		Expect(err).NotTo(HaveOccurred())
 		Expect(cfg.Events).To(ContainElement("wiki_page_events"))
+		Expect(cfg.Events).To(ContainElement("push_events"))
 	})
 })
 
@@ -265,6 +297,7 @@ type gitlabProject struct {
 	PathWithNamespace string `json:"path_with_namespace"`
 	WebURL            string `json:"web_url,omitempty"`
 	Description       string `json:"description,omitempty"`
+	DefaultBranch     string `json:"default_branch,omitempty"`
 	ID                int64  `json:"id"`
 }
 
@@ -484,6 +517,7 @@ func (f *fakeIntegrationStore) Create(ctx context.Context, integration *model.In
 	defer f.mu.Unlock()
 	copy := *integration
 	f.created = append(f.created, &copy)
+	f.existing = &copy
 	return nil
 }
 
@@ -548,6 +582,7 @@ func (f *fakeCredentialStore) Create(ctx context.Context, cred *model.Integratio
 	defer f.mu.Unlock()
 	copy := *cred
 	f.created = append(f.created, copy)
+	f.existing = append(f.existing, copy)
 	return nil
 }
 
@@ -576,7 +611,13 @@ func (f *fakeCredentialStore) ListByIntegration(ctx context.Context, integration
 }
 
 func (f *fakeCredentialStore) ListActiveByIntegration(ctx context.Context, integrationID int64) ([]model.IntegrationCredential, error) {
-	return nil, nil
+	var result []model.IntegrationCredential
+	for _, c := range f.existing {
+		if c.IntegrationID == integrationID && c.RevokedAt == nil {
+			result = append(result, c)
+		}
+	}
+	return result, nil
 }
 
 func findCredentialType(creds []model.IntegrationCredential, t model.CredentialType) bool {
@@ -661,6 +702,10 @@ func (f *fakeRepoStore) ListByWorkspace(ctx context.Context, workspaceID int64) 
 	return nil, nil
 }
 
+func (f *fakeRepoStore) ListEnabledByWorkspace(ctx context.Context, workspaceID int64) ([]model.Repository, error) {
+	return nil, nil
+}
+
 func (f *fakeRepoStore) ListByIntegration(ctx context.Context, integrationID int64) ([]model.Repository, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -668,6 +713,18 @@ func (f *fakeRepoStore) ListByIntegration(ctx context.Context, integrationID int
 	out = append(out, f.existing...)
 	out = append(out, f.created...)
 	return out, nil
+}
+
+func (f *fakeRepoStore) ListEnabledByIntegration(ctx context.Context, integrationID int64) ([]model.Repository, error) {
+	return f.ListByIntegration(ctx, integrationID)
+}
+
+func (f *fakeRepoStore) SetEnabled(ctx context.Context, id int64, enabled bool) (*model.Repository, error) {
+	return nil, nil
+}
+
+func (f *fakeRepoStore) UpdateDefaultBranch(ctx context.Context, id int64, branch *string) (*model.Repository, error) {
+	return nil, nil
 }
 
 type fakeIntegrationConfigStore struct {
@@ -724,6 +781,7 @@ func (f *fakeIntegrationConfigStore) Create(ctx context.Context, config *model.I
 	defer f.mu.Unlock()
 	copy := *config
 	f.created = append(f.created, copy)
+	f.existing = append(f.existing, copy)
 	return nil
 }
 

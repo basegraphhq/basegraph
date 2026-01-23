@@ -7,6 +7,7 @@ import (
 	"basegraph.co/relay/internal/service/integration"
 	tracker "basegraph.co/relay/internal/service/issue_tracker"
 	"basegraph.co/relay/internal/store"
+	"github.com/redis/go-redis/v9"
 )
 
 type ServicesConfig struct {
@@ -16,6 +17,8 @@ type ServicesConfig struct {
 	DashboardURL  string
 	WebhookCfg    config.EventWebhookConfig
 	EventProducer queue.Producer
+	RedisClient   *redis.Client
+	RedisGroup    string
 }
 
 type Services struct {
@@ -25,6 +28,8 @@ type Services struct {
 	dashboardURL string
 	webhookCfg   config.EventWebhookConfig
 	producer     queue.Producer
+	redis        *redis.Client
+	redisGroup   string
 }
 
 // Services is a factory that initializes all services with their dependencies.
@@ -42,6 +47,8 @@ func NewServices(cfg ServicesConfig) *Services {
 		workOSCfg:    cfg.WorkOS,
 		dashboardURL: cfg.DashboardURL,
 		webhookCfg:   cfg.WebhookCfg,
+		redis:        cfg.RedisClient,
+		redisGroup:   cfg.RedisGroup,
 	}
 }
 
@@ -109,6 +116,26 @@ func (s *Services) EventIngest() EventIngestService {
 		s.EngagementDetector(),
 	)
 }
+
+func (s *Services) RepoSync() RepoSyncService {
+	return NewRepoSyncService(
+		s.stores.Integrations(),
+		s.stores.Repos(),
+		s.stores.WorkspaceEventLogs(),
+		s.producer,
+	)
+}
+
+func (s *Services) WorkspaceSetup() WorkspaceSetupService {
+	return NewWorkspaceSetupService(
+		s.stores.Workspaces(),
+		s.stores.WorkspaceEventLogs(),
+		s.producer,
+		s.redis,
+		s.redisGroup,
+	)
+}
+
 
 func (s *Services) Invitations() InvitationService {
 	return NewInvitationService(s.stores.Invitations(), s.dashboardURL)

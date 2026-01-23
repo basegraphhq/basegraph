@@ -9,6 +9,8 @@ import (
 func GitLabRouter(router *gin.RouterGroup, handler *handler.GitLabHandler) {
 	router.POST("/projects", handler.ListProjects)
 	router.POST("/setup", handler.SetupIntegration)
+	router.POST("/repos/enable", handler.EnableRepositories)
+	router.GET("/repos/enabled", handler.ListEnabledRepos)
 	router.GET("/status", handler.GetStatus)
 	router.POST("/refresh", handler.RefreshIntegration)
 }

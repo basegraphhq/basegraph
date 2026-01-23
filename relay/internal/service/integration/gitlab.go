@@ -21,6 +21,8 @@ import (
 type GitLabService interface {
 	ListProjects(ctx context.Context, instanceURL, token string) ([]GitLabProject, error)
 	SetupIntegration(ctx context.Context, params SetupIntegrationParams) (*SetupResult, error)
+	EnableRepositories(ctx context.Context, params EnableRepositoriesParams) (*EnableRepositoriesResult, error)
+	ListEnabledProjectIDs(ctx context.Context, workspaceID int64) ([]int64, error)
 	Status(ctx context.Context, workspaceID int64) (*StatusResult, error)
 	RefreshIntegration(ctx context.Context, workspaceID int64, webhookBaseURL string) (*SetupResult, error)
 }
@@ -30,6 +32,7 @@ type GitLabProject struct {
 	PathWithNS  string // e.g. "acme-corp/backend/api-service"
 	WebURL      string // e.g. "https://gitlab.com/acme-corp/backend/api-service"
 	Description string // e.g. "API service for the Acme Corp backend"
+	DefaultBranch string
 	ID          int64
 }
 
@@ -49,6 +52,20 @@ type SetupResult struct {
 	RepositoriesAdded int
 	WebhooksCreated   int
 	IsNewIntegration  bool
+}
+
+type EnableRepositoriesParams struct {
+	WorkspaceID    int64
+	ProjectIDs     []int64
+	WebhookBaseURL string
+}
+
+type EnableRepositoriesResult struct {
+	Projects          []GitLabProject
+	Errors            []string
+	IntegrationID     int64
+	RepositoriesAdded int
+	WebhooksCreated   int
 }
 
 type StatusResult struct {
@@ -122,6 +139,7 @@ func (s *gitLabService) ListProjects(ctx context.Context, instanceURL, token str
 				PathWithNS:  p.PathWithNamespace,
 				WebURL:      p.WebURL,
 				Description: p.Description,
+				DefaultBranch: p.DefaultBranch,
 			})
 		}
 
@@ -331,35 +349,183 @@ func (s *gitLabService) SetupIntegration(ctx context.Context, params SetupIntegr
 		"user_id", user.ID,
 	)
 
+	return &SetupResult{
+		IntegrationID:     integration.ID,
+		IsNewIntegration:  isNewIntegration,
+		Projects:          projects,
+		RepositoriesAdded: 0,
+		WebhooksCreated:   0,
+		Errors:            nil,
+	}, nil
+}
+
+func (s *gitLabService) EnableRepositories(ctx context.Context, params EnableRepositoriesParams) (*EnableRepositoriesResult, error) {
+	if params.WebhookBaseURL == "" {
+		return nil, fmt.Errorf("webhook base URL is required")
+	}
+
+	var (
+		integration      *model.Integration
+		primaryCred      *model.IntegrationCredential
+		webhookSecret    string
+		webhookConfigs   map[string]webhookConfigValue
+	)
+
+	if err := s.txRunner.WithTx(ctx, func(stores StoreProvider) error {
+		var err error
+		integration, err = stores.Integrations().GetByWorkspaceAndProvider(ctx, params.WorkspaceID, model.ProviderGitLab)
+		if err != nil {
+			return fmt.Errorf("fetching integration: %w", err)
+		}
+
+		primaryCred, err = stores.IntegrationCredentials().GetPrimaryByIntegration(ctx, integration.ID)
+		if err != nil {
+			return fmt.Errorf("fetching primary credential: %w", err)
+		}
+
+		webhookSecret, err = ensureWebhookSecret(ctx, stores.IntegrationCredentials(), integration.ID)
+		if err != nil {
+			return fmt.Errorf("ensuring webhook secret: %w", err)
+		}
+
+		configs, err := stores.IntegrationConfigs().ListByIntegrationAndType(ctx, integration.ID, "webhook")
+		if err != nil {
+			return fmt.Errorf("listing webhook configs: %w", err)
+		}
+
+		webhookConfigs = make(map[string]webhookConfigValue, len(configs))
+		for _, cfg := range configs {
+			var val webhookConfigValue
+			if err := json.Unmarshal(cfg.Value, &val); err != nil {
+				continue
+			}
+			webhookConfigs[cfg.Key] = val
+		}
+		return nil
+	}); err != nil {
+		return nil, err
+	}
+
+	instanceURL := ""
+	if integration.ProviderBaseURL != nil {
+		instanceURL = *integration.ProviderBaseURL
+	}
+
+	projects, err := s.ListProjects(ctx, instanceURL, primaryCred.AccessToken)
+	if err != nil {
+		return nil, fmt.Errorf("listing projects: %w", err)
+	}
+
+	projectByID := make(map[int64]GitLabProject, len(projects))
+	for _, project := range projects {
+		projectByID[project.ID] = project
+	}
+
+	selectedProjects := make([]GitLabProject, 0, len(params.ProjectIDs))
+	var errs []string
+	for _, id := range params.ProjectIDs {
+		project, ok := projectByID[id]
+		if !ok {
+			errs = append(errs, fmt.Sprintf("project %d: not found", id))
+			continue
+		}
+		selectedProjects = append(selectedProjects, project)
+	}
+
 	webhookURL := strings.TrimSuffix(params.WebhookBaseURL, "/") + fmt.Sprintf("/webhooks/gitlab/%d", integration.ID)
+	webhookName := "Relay"
+	webhookDescription := "Relay outbound webhook"
+	events := []string{"issues_events", "merge_requests_events", "note_events", "wiki_page_events", "push_events"}
 
 	existingRepos, err := s.repoStore.ListByIntegration(ctx, integration.ID)
 	if err != nil {
 		return nil, fmt.Errorf("listing repositories: %w", err)
 	}
 
-	existingExternalIDs := make(map[string]struct{}, len(existingRepos))
+	existingByExternal := make(map[string]model.Repository, len(existingRepos))
 	for _, repo := range existingRepos {
-		existingExternalIDs[repo.ExternalRepoID] = struct{}{}
+		existingByExternal[repo.ExternalRepoID] = repo
 	}
 
-	var (
-		webhooksCreated   int
-		repositoriesAdded int
-		errs              []string
-		successes         []struct {
-			project   GitLabProject
-			webhookID int64
-		}
-	)
-
-	events := []string{"issues_events", "merge_requests_events", "note_events", "wiki_page_events"}
-	webhookName := "Relay"
-	webhookDescription := "Relay outbound webhook"
-
-	for _, project := range projects {
+	selectedExternal := make(map[string]struct{}, len(selectedProjects))
+	for _, project := range selectedProjects {
 		externalID := strconv.FormatInt(project.ID, 10)
-		if _, exists := existingExternalIDs[externalID]; exists {
+		selectedExternal[externalID] = struct{}{}
+	}
+
+	for _, repo := range existingRepos {
+		if _, ok := selectedExternal[repo.ExternalRepoID]; ok {
+			continue
+		}
+		if !repo.IsEnabled {
+			continue
+		}
+		if _, err := s.repoStore.SetEnabled(ctx, repo.ID, false); err != nil {
+			errs = append(errs, fmt.Sprintf("repo %s: disable failed: %v", repo.Slug, err))
+		}
+	}
+
+	var webhooksCreated int
+	var repositoriesAdded int
+
+	client, err := s.newClient(instanceURL, primaryCred.AccessToken)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, project := range selectedProjects {
+		externalID := strconv.FormatInt(project.ID, 10)
+		repo, exists := existingByExternal[externalID]
+
+		repoDefaults := func() *string {
+			if strings.TrimSpace(project.DefaultBranch) == "" {
+				return nil
+			}
+			branch := project.DefaultBranch
+			return &branch
+		}()
+
+		if exists {
+			repo.Name = project.Name
+			repo.Slug = project.PathWithNS
+			repo.URL = project.WebURL
+			repo.Description = nil
+			if desc := strings.TrimSpace(project.Description); desc != "" {
+				repo.Description = &desc
+			}
+			if err := s.repoStore.Update(ctx, &repo); err != nil {
+				errs = append(errs, fmt.Sprintf("project %s: updating repository: %v", project.PathWithNS, err))
+			} else if _, err := s.repoStore.SetEnabled(ctx, repo.ID, true); err != nil {
+				errs = append(errs, fmt.Sprintf("project %s: enabling repository: %v", project.PathWithNS, err))
+			}
+			if repoDefaults != nil {
+				if _, err := s.repoStore.UpdateDefaultBranch(ctx, repo.ID, repoDefaults); err != nil {
+					errs = append(errs, fmt.Sprintf("project %s: updating default branch: %v", project.PathWithNS, err))
+				}
+			}
+		} else {
+			repo := &model.Repository{
+				ID:             id.New(),
+				WorkspaceID:    integration.WorkspaceID,
+				IntegrationID:  integration.ID,
+				Name:           project.Name,
+				Slug:           project.PathWithNS,
+				URL:            project.WebURL,
+				ExternalRepoID: externalID,
+				IsEnabled:      true,
+				DefaultBranch:  repoDefaults,
+			}
+			if desc := strings.TrimSpace(project.Description); desc != "" {
+				repo.Description = &desc
+			}
+			if err := s.repoStore.Create(ctx, repo); err != nil {
+				errs = append(errs, fmt.Sprintf("project %s: storing repository: %v", project.PathWithNS, err))
+			} else {
+				repositoriesAdded++
+			}
+		}
+
+		if _, ok := webhookConfigs[externalID]; ok {
 			continue
 		}
 
@@ -371,6 +537,7 @@ func (s *gitLabService) SetupIntegration(ctx context.Context, params SetupIntegr
 			MergeRequestsEvents:   gitlab.Ptr(true),
 			NoteEvents:            gitlab.Ptr(true),
 			WikiPageEvents:        gitlab.Ptr(true),
+			PushEvents:            gitlab.Ptr(true),
 			Token:                 gitlab.Ptr(webhookSecret),
 			EnableSSLVerification: gitlab.Ptr(true),
 		}, gitlab.WithContext(ctx))
@@ -386,69 +553,30 @@ func (s *gitLabService) SetupIntegration(ctx context.Context, params SetupIntegr
 			hookID = hook.ID
 		}
 
-		successes = append(successes, struct {
-			project   GitLabProject
-			webhookID int64
-		}{
-			project:   project,
-			webhookID: hookID,
+		value, err := json.Marshal(webhookConfigValue{
+			WebhookID:   hookID,
+			ProjectPath: project.PathWithNS,
+			Events:      events,
 		})
-	}
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("project %s: serializing config: %v", project.PathWithNS, err))
+			continue
+		}
 
-	if len(successes) > 0 {
 		if err := s.txRunner.WithTx(ctx, func(stores StoreProvider) error {
-			for _, success := range successes {
-				project := success.project
-				externalID := strconv.FormatInt(project.ID, 10)
-
-				repo := &model.Repository{
-					ID:             id.New(),
-					WorkspaceID:    params.WorkspaceID,
-					IntegrationID:  integration.ID,
-					Name:           project.Name,
-					Slug:           project.PathWithNS,
-					URL:            project.WebURL,
-					ExternalRepoID: externalID,
-				}
-
-				if desc := strings.TrimSpace(project.Description); desc != "" {
-					repo.Description = &desc
-				}
-
-				if err := stores.Repos().Create(ctx, repo); err != nil {
-					errs = append(errs, fmt.Sprintf("project %s: storing repository: %v", project.PathWithNS, err))
-					continue
-				}
-
-				repositoriesAdded++
-
-				value, err := json.Marshal(webhookConfigValue{
-					WebhookID:   success.webhookID,
-					ProjectPath: project.PathWithNS,
-					Events:      events,
-				})
-				if err != nil {
-					errs = append(errs, fmt.Sprintf("project %s: serializing config: %v", project.PathWithNS, err))
-					continue
-				}
-
-				config := &model.IntegrationConfig{
-					ID:            id.New(),
-					IntegrationID: integration.ID,
-					Key:           externalID,
-					Value:         value,
-					ConfigType:    "webhook",
-				}
-
-				if err := stores.IntegrationConfigs().Create(ctx, config); err != nil {
-					errs = append(errs, fmt.Sprintf("project %s: storing config: %v", project.PathWithNS, err))
-					continue
-				}
+			config := &model.IntegrationConfig{
+				ID:            id.New(),
+				IntegrationID: integration.ID,
+				Key:           externalID,
+				Value:         value,
+				ConfigType:    "webhook",
 			}
-
+			if err := stores.IntegrationConfigs().Create(ctx, config); err != nil {
+				return fmt.Errorf("storing config: %w", err)
+			}
 			return nil
 		}); err != nil {
-			return nil, err
+			errs = append(errs, fmt.Sprintf("project %s: storing config: %v", project.PathWithNS, err))
 		}
 	}
 
@@ -492,10 +620,9 @@ func (s *gitLabService) SetupIntegration(ctx context.Context, params SetupIntegr
 		return nil, err
 	}
 
-	return &SetupResult{
+	return &EnableRepositoriesResult{
 		IntegrationID:     integration.ID,
-		IsNewIntegration:  isNewIntegration,
-		Projects:          projects,
+		Projects:          selectedProjects,
 		RepositoriesAdded: repositoriesAdded,
 		WebhooksCreated:   webhooksCreated,
 		Errors:            errs,
@@ -578,7 +705,7 @@ func (s *gitLabService) RefreshIntegration(ctx context.Context, workspaceID int6
 
 	s.updateExistingWebhooksWithWikiEvents(ctx, integration.ID, instanceURL, primary.AccessToken)
 
-	return s.SetupIntegration(ctx, SetupIntegrationParams{
+	setupResult, err := s.SetupIntegration(ctx, SetupIntegrationParams{
 		InstanceURL:    instanceURL,
 		Token:          primary.AccessToken,
 		WorkspaceID:    integration.WorkspaceID,
@@ -586,6 +713,61 @@ func (s *gitLabService) RefreshIntegration(ctx context.Context, workspaceID int6
 		SetupByUserID:  integration.SetupByUserID,
 		WebhookBaseURL: webhookBaseURL,
 	})
+	if err != nil {
+		return nil, err
+	}
+
+	repos, err := s.repoStore.ListEnabledByIntegration(ctx, integration.ID)
+	if err != nil {
+		return nil, fmt.Errorf("listing enabled repositories: %w", err)
+	}
+
+	projectIDs := make([]int64, 0, len(repos))
+	for _, repo := range repos {
+		projectID, err := strconv.ParseInt(repo.ExternalRepoID, 10, 64)
+		if err != nil {
+			continue
+		}
+		projectIDs = append(projectIDs, projectID)
+	}
+
+	if len(projectIDs) > 0 {
+		if _, err := s.EnableRepositories(ctx, EnableRepositoriesParams{
+			WorkspaceID:    workspaceID,
+			ProjectIDs:     projectIDs,
+			WebhookBaseURL: webhookBaseURL,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
+	return setupResult, nil
+}
+
+func (s *gitLabService) ListEnabledProjectIDs(ctx context.Context, workspaceID int64) ([]int64, error) {
+	integration, err := s.stores.Integrations().GetByWorkspaceAndProvider(ctx, workspaceID, model.ProviderGitLab)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return []int64{}, nil
+		}
+		return nil, err
+	}
+
+	repos, err := s.repoStore.ListEnabledByIntegration(ctx, integration.ID)
+	if err != nil {
+		return nil, fmt.Errorf("listing enabled repositories: %w", err)
+	}
+
+	projectIDs := make([]int64, 0, len(repos))
+	for _, repo := range repos {
+		projectID, err := strconv.ParseInt(repo.ExternalRepoID, 10, 64)
+		if err != nil {
+			continue
+		}
+		projectIDs = append(projectIDs, projectID)
+	}
+
+	return projectIDs, nil
 }
 
 func (s *gitLabService) updateExistingWebhooksWithWikiEvents(ctx context.Context, integrationID int64, instanceURL, token string) {
@@ -702,4 +884,35 @@ func generateSecret() (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(buf), nil
+}
+
+func ensureWebhookSecret(ctx context.Context, credentialStore store.IntegrationCredentialStore, integrationID int64) (string, error) {
+	creds, err := credentialStore.ListActiveByIntegration(ctx, integrationID)
+	if err != nil {
+		return "", err
+	}
+	for _, cred := range creds {
+		if cred.CredentialType == model.CredentialTypeWebhookSecret {
+			return cred.AccessToken, nil
+		}
+	}
+
+	secret, err := generateSecret()
+	if err != nil {
+		return "", err
+	}
+
+	secretCred := &model.IntegrationCredential{
+		ID:             id.New(),
+		IntegrationID:  integrationID,
+		CredentialType: model.CredentialTypeWebhookSecret,
+		AccessToken:    secret,
+		IsPrimary:      false,
+	}
+
+	if err := credentialStore.Create(ctx, secretCred); err != nil {
+		return "", err
+	}
+
+	return secret, nil
 }

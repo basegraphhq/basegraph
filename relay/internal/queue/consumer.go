@@ -25,12 +25,18 @@ type ConsumerConfig struct {
 
 type Message struct {
 	ID              string
-	EventLogID      int64
-	IssueID         int64
+	TaskType        TaskType
+	EventLogID      *int64
+	IssueID         *int64
 	EventType       string
 	Attempt         int
 	TraceID         string
 	TriggerThreadID string
+	WorkspaceID     *int64
+	OrganizationID  *int64
+	RunID           *int64
+	RepoID          *int64
+	Branch          string
 	Raw             redis.XMessage
 }
 
@@ -124,23 +130,22 @@ func (c *RedisConsumer) Ack(ctx context.Context, msg Message) error {
 
 func (c *RedisConsumer) Requeue(ctx context.Context, msg Message, errMsg string) error {
 	nextAttempt := msg.Attempt + 1
+	return c.RequeueWithAttempt(ctx, msg, nextAttempt, errMsg)
+}
+
+func (c *RedisConsumer) RequeueWithAttempt(ctx context.Context, msg Message, attempt int, errMsg string) error {
+	if attempt <= 0 {
+		attempt = msg.Attempt
+		if attempt <= 0 {
+			attempt = 1
+		}
+	}
 
 	if err := c.Ack(ctx, msg); err != nil {
 		return fmt.Errorf("acking failed message for requeue: %w", err)
 	}
 
-	values := map[string]any{
-		"event_log_id": msg.EventLogID,
-		"issue_id":     msg.IssueID,
-		"event_type":   msg.EventType,
-		"attempt":      nextAttempt,
-	}
-	if msg.TraceID != "" {
-		values["trace_id"] = msg.TraceID
-	}
-	if msg.TriggerThreadID != "" {
-		values["trigger_thread_id"] = msg.TriggerThreadID
-	}
+	values := messageValues(msg, attempt)
 	if errMsg != "" {
 		values["last_error"] = errMsg
 	}
@@ -157,7 +162,7 @@ func (c *RedisConsumer) Requeue(ctx context.Context, msg Message, errMsg string)
 	}
 
 	slog.InfoContext(ctx, "message requeued for retry",
-		"next_attempt", nextAttempt,
+		"next_attempt", attempt,
 		"reason", errMsg)
 	return nil
 }
@@ -167,16 +172,8 @@ func (c *RedisConsumer) SendDLQ(ctx context.Context, msg Message, errMsg string)
 		return fmt.Errorf("acking failed message for dlq: %w", err)
 	}
 
-	values := map[string]any{
-		"event_log_id": msg.EventLogID,
-		"issue_id":     msg.IssueID,
-		"event_type":   msg.EventType,
-		"attempt":      msg.Attempt,
-		"error":        errMsg,
-	}
-	if msg.TraceID != "" {
-		values["trace_id"] = msg.TraceID
-	}
+	values := messageValues(msg, msg.Attempt)
+	values["error"] = errMsg
 
 	if err := c.client.XAdd(ctx, &redis.XAddArgs{
 		Stream: c.cfg.DLQStream,
@@ -192,33 +189,104 @@ func (c *RedisConsumer) SendDLQ(ctx context.Context, msg Message, errMsg string)
 }
 
 func ParseMessage(msg redis.XMessage) (Message, error) {
-	eventLogID, err := parseInt64(msg.Values, "event_log_id")
+	eventLogID, err := parseOptionalInt64(msg.Values, "event_log_id")
 	if err != nil {
 		return Message{}, err
 	}
-	issueID, err := parseInt64(msg.Values, "issue_id")
+	issueID, err := parseOptionalInt64(msg.Values, "issue_id")
 	if err != nil {
 		return Message{}, err
 	}
-	eventType, err := parseString(msg.Values, "event_type")
+	runID, err := parseOptionalInt64(msg.Values, "run_id")
 	if err != nil {
 		return Message{}, err
 	}
-	attempt, err := parseInt(msg.Values, "attempt")
+	workspaceID, err := parseOptionalInt64(msg.Values, "workspace_id")
 	if err != nil {
+		return Message{}, err
+	}
+	organizationID, err := parseOptionalInt64(msg.Values, "organization_id")
+	if err != nil {
+		return Message{}, err
+	}
+	repoID, err := parseOptionalInt64(msg.Values, "repo_id")
+	if err != nil {
+		return Message{}, err
+	}
+
+	branch, err := parseOptionalString(msg.Values, "branch")
+	if err != nil {
+		return Message{}, err
+	}
+	eventType, err := parseOptionalString(msg.Values, "event_type")
+	if err != nil {
+		return Message{}, err
+	}
+	traceID, err := parseOptionalString(msg.Values, "trace_id")
+	if err != nil {
+		return Message{}, err
+	}
+	triggerThreadID, err := parseOptionalString(msg.Values, "trigger_thread_id")
+	if err != nil {
+		return Message{}, err
+	}
+
+	attempt, err := parseOptionalInt(msg.Values, "attempt")
+	if err != nil {
+		return Message{}, err
+	}
+	if attempt == 0 {
 		attempt = 1
 	}
-	traceID, _ := parseString(msg.Values, "trace_id")
-	triggerThreadID, _ := parseString(msg.Values, "trigger_thread_id")
+
+	taskTypeStr, err := parseOptionalString(msg.Values, "task_type")
+	if err != nil {
+		return Message{}, err
+	}
+
+	taskType := TaskType(taskTypeStr)
+	if taskType == "" {
+		if eventLogID != nil && issueID != nil {
+			taskType = TaskTypeIssueEvent
+		} else {
+			return Message{}, fmt.Errorf("missing task_type")
+		}
+	}
+
+	switch taskType {
+	case TaskTypeIssueEvent:
+		if eventLogID == nil || issueID == nil {
+			return Message{}, fmt.Errorf("missing event_log_id or issue_id")
+		}
+		if eventType == "" {
+			return Message{}, fmt.Errorf("missing event_type")
+		}
+	case TaskTypeWorkspaceSetup:
+		if runID == nil {
+			return Message{}, fmt.Errorf("missing run_id")
+		}
+	case TaskTypeRepoSync:
+		if runID == nil || repoID == nil {
+			return Message{}, fmt.Errorf("missing run_id or repo_id")
+		}
+	default:
+		return Message{}, fmt.Errorf("unknown task_type %q", taskType)
+	}
 
 	return Message{
 		ID:              msg.ID,
+		TaskType:        taskType,
 		EventLogID:      eventLogID,
 		IssueID:         issueID,
 		EventType:       eventType,
 		Attempt:         attempt,
 		TraceID:         traceID,
 		TriggerThreadID: triggerThreadID,
+		WorkspaceID:     workspaceID,
+		OrganizationID:  organizationID,
+		RunID:           runID,
+		RepoID:          repoID,
+		Branch:          branch,
 		Raw:             msg,
 	}, nil
 }
@@ -255,4 +323,86 @@ func parseString(values map[string]any, key string) (string, error) {
 		return "", fmt.Errorf("missing %s", key)
 	}
 	return fmt.Sprint(raw), nil
+}
+
+func parseOptionalInt64(values map[string]any, key string) (*int64, error) {
+	raw, ok := values[key]
+	if !ok {
+		return nil, nil
+	}
+	str := fmt.Sprint(raw)
+	num, err := strconv.ParseInt(str, 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", key, err)
+	}
+	return &num, nil
+}
+
+func parseOptionalInt(values map[string]any, key string) (int, error) {
+	raw, ok := values[key]
+	if !ok {
+		return 0, nil
+	}
+	str := fmt.Sprint(raw)
+	num, err := strconv.Atoi(str)
+	if err != nil {
+		return 0, fmt.Errorf("parsing %s: %w", key, err)
+	}
+	return num, nil
+}
+
+func parseOptionalString(values map[string]any, key string) (string, error) {
+	raw, ok := values[key]
+	if !ok {
+		return "", nil
+	}
+	return fmt.Sprint(raw), nil
+}
+
+func messageValues(msg Message, attempt int) map[string]any {
+	values := map[string]any{
+		"task_type": string(msg.TaskType),
+		"attempt":   attempt,
+	}
+
+	if msg.TaskType == "" {
+		values["task_type"] = string(TaskTypeIssueEvent)
+	}
+
+	if msg.TaskType == TaskTypeIssueEvent || msg.TaskType == "" {
+		if msg.EventLogID != nil {
+			values["event_log_id"] = *msg.EventLogID
+		}
+		if msg.IssueID != nil {
+			values["issue_id"] = *msg.IssueID
+		}
+		if msg.EventType != "" {
+			values["event_type"] = msg.EventType
+		}
+	}
+
+	if msg.WorkspaceID != nil {
+		values["workspace_id"] = *msg.WorkspaceID
+	}
+	if msg.OrganizationID != nil {
+		values["organization_id"] = *msg.OrganizationID
+	}
+	if msg.RunID != nil {
+		values["run_id"] = *msg.RunID
+	}
+	if msg.RepoID != nil {
+		values["repo_id"] = *msg.RepoID
+	}
+	if msg.Branch != "" {
+		values["branch"] = msg.Branch
+	}
+
+	if msg.TraceID != "" {
+		values["trace_id"] = msg.TraceID
+	}
+	if msg.TriggerThreadID != "" {
+		values["trigger_thread_id"] = msg.TriggerThreadID
+	}
+
+	return values
 }

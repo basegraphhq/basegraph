@@ -62,6 +62,8 @@ create table workspaces(
     name text not null,
     slug text not null,
     description text,
+
+    repo_ready_at timestamptz,
     
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
@@ -138,6 +140,8 @@ create table repositories(
     url text not null,
     description text,
 
+    is_enabled boolean not null default false,
+    default_branch text,
 
     external_repo_id text not null,
 
@@ -150,6 +154,7 @@ create table repositories(
 create index idx_repositories_integration_id on repositories (integration_id);
 create index idx_repositories_workspace_id on repositories (workspace_id);
 create index idx_repositories_external_repo_id on repositories (external_repo_id);
+create index idx_repositories_enabled on repositories (workspace_id) where is_enabled = true;
 
 
 create table integration_configs(
@@ -236,6 +241,29 @@ create index idx_event_logs_workspace_source on event_logs (workspace_id, source
 create index idx_event_logs_created_at on event_logs (created_at);
 create unique index unq_event_logs_workspace_dedupe_key on event_logs (workspace_id, dedupe_key);
 create index idx_event_logs_issue_unprocessed on event_logs (issue_id, created_at) where processed_at is null;
+
+
+create table workspace_event_logs(
+    id bigint primary key,
+    workspace_id bigint not null references workspaces(id),
+    organization_id bigint not null references organizations(id),
+    repo_id bigint references repositories(id),
+
+    event_type text not null,
+    status text not null,
+
+    error text,
+    metadata jsonb,
+
+    started_at timestamptz,
+    finished_at timestamptz,
+
+    created_at timestamptz not null default now(),
+    updated_at timestamptz not null default now()
+);
+
+create index idx_workspace_event_logs_workspace_created on workspace_event_logs (workspace_id, created_at);
+create index idx_workspace_event_logs_repo_created on workspace_event_logs (repo_id, created_at);
 
 create table sessions (
     id              bigint primary key,
@@ -355,6 +383,7 @@ drop table if exists gaps;
 drop table if exists learnings;
 drop table if exists sessions;
 drop table if exists event_logs;
+drop table if exists workspace_event_logs;
 drop table if exists issues;
 drop table if exists integration_configs;
 drop table if exists repositories;

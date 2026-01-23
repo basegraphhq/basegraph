@@ -14,7 +14,7 @@ import (
 const createSession = `-- name: CreateSession :one
 INSERT INTO sessions (id, user_id, created_at, expires_at, workos_session_id)
 VALUES ($1, $2, now(), $3, $4)
-RETURNING id, user_id, created_at, expires_at, workos_session_id
+RETURNING id, user_id, workos_session_id, created_at, expires_at
 `
 
 type CreateSessionParams struct {
@@ -35,9 +35,9 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.WorkosSessionID,
 		&i.CreatedAt,
 		&i.ExpiresAt,
-		&i.WorkosSessionID,
 	)
 	return i, err
 }
@@ -70,7 +70,7 @@ func (q *Queries) DeleteSessionsByUser(ctx context.Context, userID int64) error 
 }
 
 const getSession = `-- name: GetSession :one
-SELECT id, user_id, created_at, expires_at, workos_session_id FROM sessions WHERE id = $1
+SELECT id, user_id, workos_session_id, created_at, expires_at FROM sessions WHERE id = $1
 `
 
 func (q *Queries) GetSession(ctx context.Context, id int64) (Session, error) {
@@ -79,15 +79,15 @@ func (q *Queries) GetSession(ctx context.Context, id int64) (Session, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.WorkosSessionID,
 		&i.CreatedAt,
 		&i.ExpiresAt,
-		&i.WorkosSessionID,
 	)
 	return i, err
 }
 
 const getValidSession = `-- name: GetValidSession :one
-SELECT id, user_id, created_at, expires_at, workos_session_id FROM sessions 
+SELECT id, user_id, workos_session_id, created_at, expires_at FROM sessions 
 WHERE id = $1 AND expires_at > now()
 `
 
@@ -97,15 +97,15 @@ func (q *Queries) GetValidSession(ctx context.Context, id int64) (Session, error
 	err := row.Scan(
 		&i.ID,
 		&i.UserID,
+		&i.WorkosSessionID,
 		&i.CreatedAt,
 		&i.ExpiresAt,
-		&i.WorkosSessionID,
 	)
 	return i, err
 }
 
 const listSessionsByUser = `-- name: ListSessionsByUser :many
-SELECT id, user_id, created_at, expires_at, workos_session_id FROM sessions 
+SELECT id, user_id, workos_session_id, created_at, expires_at FROM sessions 
 WHERE user_id = $1 AND expires_at > now()
 ORDER BY created_at DESC
 `
@@ -122,9 +122,9 @@ func (q *Queries) ListSessionsByUser(ctx context.Context, userID int64) ([]Sessi
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
+			&i.WorkosSessionID,
 			&i.CreatedAt,
 			&i.ExpiresAt,
-			&i.WorkosSessionID,
 		); err != nil {
 			return nil, err
 		}

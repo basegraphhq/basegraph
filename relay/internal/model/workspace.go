@@ -13,4 +13,5 @@ type Workspace struct {
 	OrganizationID int64     `json:"organization_id"`
 	UserID         int64     `json:"user_id"`
 	IsDeleted      bool      `json:"-"`
+	RepoReadyAt    *time.Time `json:"repo_ready_at,omitempty"`
 }
