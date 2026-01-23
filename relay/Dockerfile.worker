@@ -21,26 +21,30 @@ FROM debian:bookworm-slim
 # - openssh-client: ssh, ssh-keygen, ssh-keyscan for git over SSH
 # - ripgrep: rg for code search (ExploreTools)
 # - ca-certificates: HTTPS connections
+# - gosu: drop privileges safely (industry standard for Docker)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
+    gosu \
     openssh-client \
     ripgrep \
+    tini \
     && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user for security
+# Create non-root user
 RUN useradd -m -s /bin/bash worker
 
-# Create data directory for workspace files
-RUN mkdir -p /data && chown worker:worker /data
+# Create data directory
+RUN mkdir -p /data
 
 WORKDIR /app
 
-# Copy binary from builder
+# Copy binary and entrypoint from builder
 COPY --from=builder /app/bin/worker /app/worker
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-# Switch to non-root user
-USER worker
-
-# Default command
+# tini as PID 1 for proper signal handling and zombie reaping
+# Entrypoint fixes permissions and drops to worker user
+ENTRYPOINT ["tini", "--", "docker-entrypoint.sh"]
 CMD ["/app/worker"]
