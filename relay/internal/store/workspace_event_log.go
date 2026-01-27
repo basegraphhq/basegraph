@@ -64,10 +64,10 @@ func (s *workspaceEventLogStore) Create(ctx context.Context, log *model.Workspac
 
 func (s *workspaceEventLogStore) Update(ctx context.Context, log *model.WorkspaceEventLog, startedAt *time.Time, finishedAt *time.Time) (*model.WorkspaceEventLog, error) {
 	row, err := s.queries.UpdateWorkspaceEventLog(ctx, sqlc.UpdateWorkspaceEventLogParams{
-		ID:       log.ID,
-		Status:   log.Status,
-		Error:    log.Error,
-		Metadata: []byte(log.Metadata),
+		ID:         log.ID,
+		Status:     log.Status,
+		Error:      log.Error,
+		Metadata:   []byte(log.Metadata),
 		StartedAt:  toNullableTimestamp(startedAt),
 		FinishedAt: toNullableTimestamp(finishedAt),
 	})

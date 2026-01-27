@@ -17,8 +17,8 @@ type Producer interface {
 type StreamResolver func(task Task) (string, error)
 
 type redisProducer struct {
-	client *redis.Client
-	stream string
+	client  *redis.Client
+	stream  string
 	resolve StreamResolver
 }
 
@@ -64,7 +64,7 @@ func (p *redisProducer) Enqueue(ctx context.Context, task Task) error {
 
 	fields := map[string]any{
 		"task_type": string(taskType),
-		"attempt":      attempt,
+		"attempt":   attempt,
 	}
 
 	if taskType == TaskTypeIssueEvent {

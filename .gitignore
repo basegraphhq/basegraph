@@ -212,6 +212,7 @@ playwright/.cache/
 opencode/
 read-only/
 .gocache/
+temp
 
 
 demos/

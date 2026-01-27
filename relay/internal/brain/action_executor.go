@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 
 	"basegraph.co/relay/common/id"
 	"basegraph.co/relay/internal/model"
@@ -337,11 +338,21 @@ func (e *actionExecutor) executeReadyForSpecGeneration(ctx context.Context, issu
 		return err
 	}
 
+	// Check handoff structure quality
+	hasFilesTable := strings.Contains(data.ContextSummary, "## Files to Modify")
+	hasCodePatterns := strings.Contains(data.ContextSummary, "## Code Patterns")
+	hasSignatures := strings.Contains(data.ContextSummary, "## Function Signatures")
+	hasDecisions := strings.Contains(data.ContextSummary, "## Key Decisions")
+
 	slog.InfoContext(ctx, "ready_for_spec_generation received",
 		"issue_id", issue.ID,
 		"closed_gaps", len(data.ClosedGaps),
 		"relevant_findings", len(data.RelevantFindings),
 		"context_summary_length", len(data.ContextSummary),
+		"has_files_table", hasFilesTable,
+		"has_code_patterns", hasCodePatterns,
+		"has_signatures", hasSignatures,
+		"has_decisions", hasDecisions,
 		"proceed_signal", data.ProceedSignal)
 
 	// Refresh issue to avoid overwriting concurrent updates (e.g., findings)

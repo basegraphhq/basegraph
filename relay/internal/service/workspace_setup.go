@@ -23,11 +23,11 @@ type WorkspaceSetupResult struct {
 }
 
 type workspaceSetupService struct {
-	workspaces          store.WorkspaceStore
-	workspaceEventLogs  store.WorkspaceEventLogStore
-	producer            queue.Producer
-	redis               *redis.Client
-	redisGroup          string
+	workspaces         store.WorkspaceStore
+	workspaceEventLogs store.WorkspaceEventLogStore
+	producer           queue.Producer
+	redis              *redis.Client
+	redisGroup         string
 }
 
 func NewWorkspaceSetupService(
@@ -81,11 +81,11 @@ func (s *workspaceSetupService) Enqueue(ctx context.Context, workspaceID int64) 
 	}
 
 	if err := s.producer.Enqueue(ctx, queue.Task{
-		TaskType:        queue.TaskTypeWorkspaceSetup,
-		WorkspaceID:     &workspace.ID,
-		OrganizationID:  &workspace.OrganizationID,
-		RunID:           &runID,
-		Attempt:         1,
+		TaskType:       queue.TaskTypeWorkspaceSetup,
+		WorkspaceID:    &workspace.ID,
+		OrganizationID: &workspace.OrganizationID,
+		RunID:          &runID,
+		Attempt:        1,
 	}); err != nil {
 		errMsg := err.Error()
 		log.Status = string(model.WorkspaceEventStatusFailed)

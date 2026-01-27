@@ -18,6 +18,7 @@ import (
 const (
 	maxSpecIterations        = 30 // Safety limit for spec generation loop
 	maxParallelSpecExplorers = 5  // Parallel exploration during spec generation
+	maxLocateCalls           = 8  // Hard cap on locate calls for spec generation
 )
 
 // SubmitSpecParams defines the schema for the submit_spec tool.
@@ -85,7 +86,7 @@ func (s *SpecGenerator) Generate(ctx context.Context, input SpecGeneratorInput) 
 	iterations := 0
 	totalPromptTokens := 0
 	totalCompletionTokens := 0
-	exploreCallCount := 0
+	locateCallCount := 0
 
 	defer func() {
 		slog.InfoContext(ctx, "spec generator completed",
@@ -93,7 +94,7 @@ func (s *SpecGenerator) Generate(ctx context.Context, input SpecGeneratorInput) 
 			"iterations", iterations,
 			"total_prompt_tokens", totalPromptTokens,
 			"total_completion_tokens", totalCompletionTokens,
-			"explore_calls", exploreCallCount)
+			"locate_calls", locateCallCount)
 		s.writeDebugLog(sessionID, debugLog.String())
 	}()
 
@@ -176,14 +177,38 @@ func (s *SpecGenerator) Generate(ctx context.Context, input SpecGeneratorInput) 
 			ToolCalls: resp.ToolCalls,
 		})
 
-		// Count explore calls
+		// Count locate calls for this batch
+		batchLocateCalls := 0
 		for _, tc := range resp.ToolCalls {
-			if tc.Name == "explore" {
-				exploreCallCount++
+			if tc.Name == "locate" {
+				batchLocateCalls++
 			}
 		}
 
-		// Execute explore calls in parallel
+		// Check hard limit BEFORE executing
+		if locateCallCount+batchLocateCalls > maxLocateCalls {
+			slog.WarnContext(ctx, "spec generator hit locate limit",
+				"locate_calls", locateCallCount,
+				"batch_calls", batchLocateCalls,
+				"limit", maxLocateCalls)
+
+			debugLog.WriteString(fmt.Sprintf("\n=== LOCATE LIMIT REACHED (%d/%d) ===\n",
+				locateCallCount+batchLocateCalls, maxLocateCalls))
+
+			messages = append(messages, llm.Message{
+				Role: "user",
+				Content: fmt.Sprintf(`⚠️ LOCATE LIMIT REACHED (%d/%d)
+
+You must submit your spec now using submit_spec. No more location calls allowed.
+Trust the findings from the planner and write your spec based on available context.`,
+					locateCallCount+batchLocateCalls, maxLocateCalls),
+			})
+			continue
+		}
+
+		locateCallCount += batchLocateCalls
+
+		// Execute locate calls in parallel
 		results := s.executeExploresParallel(ctx, resp.ToolCalls)
 
 		for _, r := range results {
@@ -295,7 +320,8 @@ type specExploreResult struct {
 	report string
 }
 
-// executeExploresParallel runs multiple explore calls concurrently.
+// executeExploresParallel runs multiple locate calls concurrently.
+// Spec generator only uses ModeLocate for quick file verification.
 func (s *SpecGenerator) executeExploresParallel(ctx context.Context, toolCalls []llm.ToolCall) []specExploreResult {
 	results := make([]specExploreResult, len(toolCalls))
 	var wg sync.WaitGroup
@@ -303,10 +329,10 @@ func (s *SpecGenerator) executeExploresParallel(ctx context.Context, toolCalls [
 	sem := make(chan struct{}, maxParallelSpecExplorers)
 
 	for i, tc := range toolCalls {
-		if tc.Name != "explore" {
+		if tc.Name != "locate" {
 			results[i] = specExploreResult{
 				callID: tc.ID,
-				report: fmt.Sprintf("Unknown tool: %s", tc.Name),
+				report: fmt.Sprintf("Unknown tool: %s. Only 'locate' is available for spec generation.", tc.Name),
 			}
 			continue
 		}
@@ -327,15 +353,16 @@ func (s *SpecGenerator) executeExploresParallel(ctx context.Context, toolCalls [
 				return
 			}
 
-			slog.DebugContext(ctx, "spec generator spawning explore agent",
+			slog.DebugContext(ctx, "spec generator spawning locate agent",
 				"query", logger.Truncate(params.Query, 100))
 
-			report, err := s.explore.Explore(ctx, params.Query)
+			// Use ModeLocate for fast file finding
+			report, err := s.explore.ExploreWithMode(ctx, params.Query, ModeLocate)
 			if err != nil {
-				slog.WarnContext(ctx, "spec generator explore failed",
+				slog.WarnContext(ctx, "spec generator locate failed",
 					"error", err,
 					"query", logger.Truncate(params.Query, 100))
-				report = fmt.Sprintf("Explore error: %s", err)
+				report = fmt.Sprintf("Locate error: %s", err)
 			}
 
 			results[idx] = specExploreResult{
@@ -352,16 +379,17 @@ func (s *SpecGenerator) executeExploresParallel(ctx context.Context, toolCalls [
 func (s *SpecGenerator) tools() []llm.Tool {
 	return []llm.Tool{
 		{
-			Name: "explore",
-			Description: `Verify code details before including them in the spec.
+			Name: "locate",
+			Description: `Verify file locations before including them in the spec.
 
-Use this to confirm:
-- File paths exist and are correct
-- Function signatures match what you'll document
-- Architectural patterns you're referencing
-- Edge cases or constraints you want to highlight
+⚠️ LIMITED to 8 calls. Most specs need 0-3.
+The planner already explored and provided findings. Trust them first.
 
-Keep queries focused — you're verifying, not exploring from scratch.`,
+Only use locate if:
+- A file path in findings seems incorrect
+- You need to verify a location exists
+
+You're verifying locations, not exploring from scratch.`,
 			Parameters: llm.GenerateSchemaFrom(ExploreParams{}),
 		},
 		{
@@ -526,19 +554,17 @@ func DoThing(ctx context.Context, input Input) (Output, error) {
 
 # Tools
 
-## explore(query)
-RARELY NEEDED. The planner already explored and provided findings.
+## locate(query) — RARELY NEEDED
+⚠️ LIMITED to 8 calls. Most specs need 0-3.
 
-Only use explore if:
-- A finding references something that seems incomplete or contradictory
-- The handoff report mentions an area but no finding covers it
-- You genuinely cannot write a correct spec without this information
+The planner already explored and provided findings. Trust them first.
 
-If you use explore, keep queries conceptual (delegation style):
-- "Explore how the auth middleware chains work"
-- "Trace the webhook flow from ingestion to processing"
+Only use locate if:
+- A file path in findings seems incorrect
+- You need to verify a specific location exists
 
-Most specs should need 0 explore calls. If you find yourself wanting to explore frequently, re-read the handoff report and findings — the answer is likely already there.
+You cannot analyze code deeply — only locate files.
+If you find yourself wanting to explore frequently, re-read the handoff report and findings — the answer is likely already there.
 
 ## submit_spec(spec)
 Submit your final spec. The spec MUST be valid markdown with proper newlines and formatting.

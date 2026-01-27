@@ -136,7 +136,6 @@ func (s *Services) WorkspaceSetup() WorkspaceSetupService {
 	)
 }
 
-
 func (s *Services) Invitations() InvitationService {
 	return NewInvitationService(s.stores.Invitations(), s.dashboardURL)
 }

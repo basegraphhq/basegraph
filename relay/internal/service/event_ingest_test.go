@@ -223,7 +223,6 @@ type mockQueueProducer struct {
 	enqueueFn func(ctx context.Context, task queue.Task) error
 }
 
-
 func (m *mockQueueProducer) Enqueue(ctx context.Context, task queue.Task) error {
 	if m.enqueueFn != nil {
 		return m.enqueueFn(ctx, task)

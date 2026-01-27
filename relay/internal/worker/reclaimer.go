@@ -158,8 +158,8 @@ func (r *RedisReclaimer) reclaimMessage(ctx context.Context, pending redis.XPend
 
 	// Enrich context with parsed message fields
 	ctx = logger.WithLogFields(ctx, logger.LogFields{
-		IssueID:    parsed.IssueID,
-		EventLogID: parsed.EventLogID,
+		IssueID:     parsed.IssueID,
+		EventLogID:  parsed.EventLogID,
 		WorkspaceID: parsed.WorkspaceID,
 	})
 

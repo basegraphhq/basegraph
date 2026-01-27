@@ -30,6 +30,19 @@ const (
 	ThoughnessThorough Thoroughness = "thorough" // Comprehensive search, ~120 iterations, ~80k soft / ~120k hard
 )
 
+// ExploreMode determines the agent's behavior and system prompt.
+type ExploreMode string
+
+const (
+	// ModeLocate finds file locations quickly without deep analysis.
+	// Uses ThoroughnessQuick. Good for "where is X?" questions.
+	ModeLocate ExploreMode = "locate"
+
+	// ModeAnalyze performs deep code analysis with file reading.
+	// Uses ThoughnessMedium. Good for "how does X work?" questions.
+	ModeAnalyze ExploreMode = "analyze"
+)
+
 // ThoroughnessConfig defines limits and behavior for each thoroughness level.
 // Following Anthropic's guidance: give model autonomy, use soft limits to encourage
 // synthesis rather than hard cutoffs that reduce quality.
@@ -143,22 +156,54 @@ type toolResult struct {
 	result string
 }
 
-// Explore explores the codebase to answer a question.
+// Explore explores the codebase to answer a question using medium thoroughness.
 // Returns a prose report with code snippets for another LLM to read.
+// This is the backward-compatible method - uses ModeAnalyze (existing behavior).
 func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error) {
+	return e.ExploreWithMode(ctx, query, ModeAnalyze)
+}
+
+// ExploreWithMode explores the codebase using the specified mode.
+// ModeLocate: Fast file finding, doesn't read contents deeply (~15k tokens)
+// ModeAnalyze: Deep analysis, traces data flow (~40k tokens)
+func (e *ExploreAgent) ExploreWithMode(ctx context.Context, query string, mode ExploreMode) (string, error) {
+	var thoroughness Thoroughness
+	switch mode {
+	case ModeLocate:
+		thoroughness = ThoroughnessQuick
+	case ModeAnalyze:
+		thoroughness = ThoughnessMedium
+	default:
+		thoroughness = ThoughnessMedium
+		mode = ModeAnalyze
+	}
+
+	return e.exploreInternal(ctx, query, thoroughness, mode)
+}
+
+// ExploreWithThoroughness explores the codebase with configurable depth.
+// Use ThoroughnessQuick for fast verification, ThoughnessMedium for balanced exploration,
+// or ThoughnessThorough for comprehensive search.
+// Defaults to ModeAnalyze behavior.
+func (e *ExploreAgent) ExploreWithThoroughness(ctx context.Context, query string, thoroughness Thoroughness) (string, error) {
+	return e.exploreInternal(ctx, query, thoroughness, ModeAnalyze)
+}
+
+// exploreInternal is the core exploration loop with configurable thoroughness and mode.
+func (e *ExploreAgent) exploreInternal(ctx context.Context, query string, thoroughness Thoroughness, mode ExploreMode) (string, error) {
 	// Mock mode: use fixture selection instead of real exploration
 	if e.mockMode {
 		return e.exploreWithMock(ctx, query)
 	}
 
-	config := thoroughnessConfig(ThoughnessMedium)
+	config := thoroughnessConfig(thoroughness)
 	start := time.Now()
 
 	// Initialize metrics for structured logging
 	metrics := ExploreMetrics{
 		SessionID:    time.Now().Format("20060102-150405.000"),
 		Query:        query,
-		Thoroughness: "medium",
+		Thoroughness: string(thoroughness),
 		StartTime:    start,
 		ToolCalls:    make(map[string]int),
 		CodegraphOps: make(map[string]int),
@@ -173,7 +218,7 @@ func (e *ExploreAgent) Explore(ctx context.Context, query string) (string, error
 	defer cancel()
 
 	messages := []llm.Message{
-		{Role: "system", Content: e.systemPrompt()},
+		{Role: "system", Content: e.systemPrompt(config, mode)},
 		{Role: "user", Content: query},
 	}
 
@@ -607,24 +652,127 @@ func (e *ExploreAgent) writeMetricsLog(metrics ExploreMetrics) {
 	}
 }
 
-// systemPrompt returns the system prompt for the explore agent.
-func (e *ExploreAgent) systemPrompt() string {
+// systemPrompt returns the system prompt for the explore agent based on mode.
+func (e *ExploreAgent) systemPrompt(config ThoroughnessConfig, mode ExploreMode) string {
+	switch mode {
+	case ModeLocate:
+		return e.locateSystemPrompt(config)
+	case ModeAnalyze:
+		return e.analyzeSystemPrompt(config)
+	default:
+		return e.analyzeSystemPrompt(config)
+	}
+}
+
+// locateSystemPrompt returns the system prompt for fast file location (ModeLocate).
+// Mirrors .claude/agents/cl/codebase-locator.md pattern.
+func (e *ExploreAgent) locateSystemPrompt(config ThoroughnessConfig) string {
+	return fmt.Sprintf(`You are a specialist at finding WHERE code lives. Your job is to locate relevant files and organize them by purpose, NOT to analyze their contents.
+
+# Core Responsibilities
+
+1. **Find Files by Topic/Feature**
+   - Search for files containing relevant keywords
+   - Look for directory patterns and naming conventions
+   - Check common locations (internal/, pkg/, cmd/)
+
+2. **Categorize Findings**
+   - Implementation files (core logic)
+   - Test files (unit, integration)
+   - Configuration files
+   - Type definitions/interfaces
+
+3. **Return Structured Results**
+   - Group files by their purpose
+   - Provide full paths from repository root
+   - Note which directories contain clusters of related files
+
+# Tools
+
+**grep**(pattern, glob?, context?) — Search contents. Regex pattern. Returns file:line matches.
+**glob**(pattern, path?) — Find files. Supports **, *, {a,b}. Returns paths by recency.
+**bash**(command) — ls, find, tree commands for directory exploration.
+
+# Search Strategy
+
+1. Start with grep to find keywords
+2. Use glob for file patterns
+3. Use bash for directory structure (ls, find)
+
+For Go code:
+- Look in internal/, pkg/, cmd/
+- Check for feature-specific directories
+
+# Token Budget
+
+You have approximately %d tokens for this search.
+- Work quickly — find locations, don't read contents deeply
+- Maximum %d tokens: you must synthesize by this point
+
+# Output Format
+
+Structure your findings like this:
+
+<report>
+## File Locations for [Feature/Topic]
+
+### Implementation Files
+| File | Purpose |
+|------|---------|
+| `+"`"+`path/to/file.go`+"`"+` | Main logic for X |
+| `+"`"+`path/to/handler.go`+"`"+` | Request handling |
+
+### Test Files
+| File | Purpose |
+|------|---------|
+| `+"`"+`path/to/file_test.go`+"`"+` | Unit tests for X |
+
+### Configuration
+| File | Purpose |
+|------|---------|
+| `+"`"+`config/x.yaml`+"`"+` | Feature config |
+
+### Related Directories
+- `+"`"+`internal/feature/`+"`"+` — Contains N related files
+- `+"`"+`pkg/client/`+"`"+` — Client implementations
+
+### Entry Points
+- `+"`"+`cmd/server/main.go`+"`"+` — Imports feature at line N
+</report>
+
+# Important Guidelines
+
+- **Don't read file contents deeply** — Just report locations
+- **Be thorough** — Check multiple naming patterns
+- **Group logically** — Make it easy to understand code organization
+- **Include counts** — "Contains X files" for directories
+- **Note naming patterns** — Help understand conventions
+
+# Context
+
+Go module: %s
+Codebase index: .basegraph/index.md`, config.SoftTokenTarget, config.HardTokenLimit, e.modulePath)
+}
+
+// analyzeSystemPrompt returns the system prompt for deep code analysis (ModeAnalyze).
+// This is the original ExploreAgent behavior.
+func (e *ExploreAgent) analyzeSystemPrompt(config ThoroughnessConfig) string {
 	return fmt.Sprintf(`You are a code exploration agent. Answer questions with evidence from this codebase.
 
 # Your Tools
 
 You have three types of tools:
 
-**STRUCTURE tools** - Understand code relationships (Go only)
+**STRUCTURE tools** — Understand code relationships (Go only)
 - codegraph: Call chains, interface implementations, type usages
 
-**TEXT tools** - Find patterns in files
+**TEXT tools** — Find patterns in files
 - glob: Find files by name/path
 - grep: Find string patterns in content
 - read: View code at specific locations
 - bash: Read files (cat, head, tail), search (grep, rg)
 
-**HISTORY tools** - Track changes over time
+**HISTORY tools** — Track changes over time
 - bash: Git log, diff, blame
 
 # Decision Tree
@@ -732,9 +880,9 @@ Codebase index: .basegraph/index.md
 
 # Token Budget
 
-You have approximately 60,000 tokens for this exploration (medium thoroughness).
-- Around 40,000 tokens: consider starting your report synthesis
-- Maximum 60,000 tokens: you must synthesize by this point
+You have approximately %d tokens for this exploration.
+- Around %d tokens: consider starting your report synthesis
+- Maximum %d tokens: you must synthesize by this point
 
 Use your budget wisely:
 - Explore multiple related areas, not just the direct answer
@@ -796,5 +944,5 @@ When you have gathered comprehensive evidence, write a detailed report:
 - Include a **Data Model & Persistence (Entity & Join Map)** section when relevant
 - Include **actual code snippets** for key logic (with file:line references)
 - Add as many numbered sections as needed to fully answer the question
-- The report should be **self-contained** — a reader shouldn't need to explore further`, e.modulePath)
+- The report should be **self-contained** — a reader shouldn't need to explore further`, e.modulePath, config.HardTokenLimit, config.SoftTokenTarget*80/100, config.HardTokenLimit)
 }

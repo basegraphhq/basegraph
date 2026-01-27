@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"os/signal"
 	"os/exec"
+	"os/signal"
 	"runtime/debug"
 	"strconv"
 	"sync"
@@ -477,12 +477,12 @@ func createMessageContext(ctx context.Context, msg queue.Message) (context.Conte
 
 	// Enrich context with message metadata for automatic logging
 	ctx = logger.WithLogFields(ctx, logger.LogFields{
-		IssueID:    msg.IssueID,
-		EventLogID: msg.EventLogID,
-		MessageID:  &msg.ID,
-		EventType:  &msg.EventType,
+		IssueID:     msg.IssueID,
+		EventLogID:  msg.EventLogID,
+		MessageID:   &msg.ID,
+		EventType:   &msg.EventType,
 		WorkspaceID: msg.WorkspaceID,
-		Component:  "relay.worker.processor",
+		Component:   "relay.worker.processor",
 	})
 
 	return ctx, sc.End

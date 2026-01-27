@@ -70,7 +70,9 @@ type PlannerMetrics struct {
 	ProceedSignal         string `json:"proceed_signal,omitempty"` // excerpt of human approval
 
 	// Explore usage - how much code exploration?
-	ExploreCallCount int `json:"explore_call_count"`
+	ExploreCallCount int `json:"explore_call_count"` // total (locate + analyze)
+	LocateCallCount  int `json:"locate_call_count"`  // fast file finding calls
+	AnalyzeCallCount int `json:"analyze_call_count"` // deep analysis calls
 }
 
 // Planner gathers code context for issue scoping.
@@ -259,9 +261,14 @@ func (p *Planner) Plan(ctx context.Context, messages []llm.Message) (PlannerOutp
 			ToolCalls: resp.ToolCalls,
 		})
 
-		// Count explore calls for metrics
+		// Count exploration calls by type for metrics
 		for _, tc := range resp.ToolCalls {
-			if tc.Name == "explore" {
+			switch tc.Name {
+			case "locate":
+				metrics.LocateCallCount++
+				metrics.ExploreCallCount++
+			case "analyze":
+				metrics.AnalyzeCallCount++
 				metrics.ExploreCallCount++
 			}
 		}
@@ -290,13 +297,14 @@ func (p *Planner) Plan(ctx context.Context, messages []llm.Message) (PlannerOutp
 			})
 		}
 
-		// Soft warning when explore calls exceed target
+		// Soft warning when exploration calls exceed target
 		if metrics.ExploreCallCount > 3 {
 			messages = append(messages, llm.Message{
 				Role: "user",
-				Content: fmt.Sprintf("⚠️ You've made %d explore calls (target: 2-3). "+
+				Content: fmt.Sprintf("⚠️ You've made %d exploration calls (target: 2-3). "+
 					"Consider asking broader questions to get comprehensive reports "+
-					"you can synthesize locally.", metrics.ExploreCallCount),
+					"you can synthesize locally. Use locate() for fast file finding, "+
+					"analyze() only when you need deep understanding.", metrics.ExploreCallCount),
 			})
 		}
 	}
@@ -391,7 +399,7 @@ type exploreResult struct {
 	report string
 }
 
-// executeExploresParallel runs multiple explore calls concurrently with bounded parallelism.
+// executeExploresParallel runs multiple locate/analyze calls concurrently with bounded parallelism.
 func (p *Planner) executeExploresParallel(ctx context.Context, toolCalls []llm.ToolCall) []exploreResult {
 	results := make([]exploreResult, len(toolCalls))
 	var wg sync.WaitGroup
@@ -400,7 +408,14 @@ func (p *Planner) executeExploresParallel(ctx context.Context, toolCalls []llm.T
 	sem := make(chan struct{}, maxParallelExplorers)
 
 	for i, tc := range toolCalls {
-		if tc.Name != "explore" {
+		// Determine mode based on tool name
+		var mode ExploreMode
+		switch tc.Name {
+		case "locate":
+			mode = ModeLocate
+		case "analyze":
+			mode = ModeAnalyze
+		default:
 			results[i] = exploreResult{
 				callID: tc.ID,
 				report: fmt.Sprintf("Unknown tool: %s", tc.Name),
@@ -409,7 +424,7 @@ func (p *Planner) executeExploresParallel(ctx context.Context, toolCalls []llm.T
 		}
 
 		wg.Add(1)
-		go func(idx int, call llm.ToolCall) {
+		go func(idx int, call llm.ToolCall, exploreMode ExploreMode) {
 			defer wg.Done()
 
 			// Acquire semaphore slot
@@ -428,19 +443,22 @@ func (p *Planner) executeExploresParallel(ctx context.Context, toolCalls []llm.T
 			exploreStart := time.Now()
 
 			slog.InfoContext(ctx, "planner spawning explore agent",
+				"mode", exploreMode,
 				"query", logger.Truncate(params.Query, 100),
 				"slot", idx+1,
 				"total", len(toolCalls))
 
-			report, err := p.explore.Explore(ctx, params.Query)
+			report, err := p.explore.ExploreWithMode(ctx, params.Query, exploreMode)
 			if err != nil {
 				slog.WarnContext(ctx, "explore agent failed",
+					"mode", exploreMode,
 					"error", err,
 					"query", logger.Truncate(params.Query, 100),
 					"duration_ms", time.Since(exploreStart).Milliseconds())
 				report = fmt.Sprintf("Explore error: %s", err)
 			} else {
 				slog.DebugContext(ctx, "explore agent completed",
+					"mode", exploreMode,
 					"query", logger.Truncate(params.Query, 100),
 					"duration_ms", time.Since(exploreStart).Milliseconds(),
 					"report_length", len(report))
@@ -450,7 +468,7 @@ func (p *Planner) executeExploresParallel(ctx context.Context, toolCalls []llm.T
 				callID: call.ID,
 				report: report,
 			}
-		}(i, tc)
+		}(i, tc, mode)
 	}
 
 	wg.Wait()
@@ -460,28 +478,39 @@ func (p *Planner) executeExploresParallel(ctx context.Context, toolCalls []llm.T
 func (p *Planner) tools() []llm.Tool {
 	return []llm.Tool{
 		{
-			Name: "explore",
-			Description: `Delegate codebase exploration to a junior engineer.
+			Name: "locate",
+			Description: `Find WHERE code lives in the codebase. FAST (~15k tokens).
 
-You're a tech lead. Give a short, conceptual query — not implementation details.
+Use for:
+- "Where is X defined?"
+- "What files handle Y?"
+- "Find all Z-related files"
 
-GOOD (delegation):
-- "Explore how authentication works"
-- "Explore the webhook handling flow"
-- "Explore how we persist user settings"
-- "Explore the domain entities involved and how they relate"
-- "Explore where X is persisted and how it joins to Y"
+Returns file paths grouped by purpose. Does NOT read file contents deeply.
+For understanding HOW code works, use analyze() instead.
 
-BAD (micromanaging):
-- "Find AuthMiddleware and check if it validates JWT tokens"
-- "Search for handleWebhook function and trace the call to processEvent"
-- "Grep for UserSettings struct and check if preferences is a JSON field"
+Examples:
+- "Locate where authentication is handled"
+- "Find files related to webhook processing"
+- "Locate where user settings are persisted"`,
+			Parameters: llm.GenerateSchemaFrom(ExploreParams{}),
+		},
+		{
+			Name: "analyze",
+			Description: `Understand HOW code works. THOROUGH (~40k tokens).
 
-The junior will discover the specifics and report back.
+Use for:
+- "How does X flow to Y?"
+- "What's the architecture of Z?"
+- "Trace data from A to B"
 
-For integration tickets, also send audit-oriented queries:
-- "Audit the [Provider] integration for completeness — webhooks, error handling, data mapping"
-- "Explore retry and rate limiting patterns in external API clients"`,
+Reads files, traces call chains, explains patterns.
+Only use when you need deep understanding, not just locations.
+
+Examples:
+- "Analyze how authentication validates and creates sessions"
+- "Trace the webhook flow from ingestion to processing"
+- "Analyze how we handle retry and rate limiting"`,
 			Parameters: llm.GenerateSchemaFrom(ExploreParams{}),
 		},
 		{
@@ -683,11 +712,21 @@ You're a Planner that returns structured actions. Don't roleplay posting — req
 
 # Tools
 
-## explore(query)
-Delegate exploration to a junior engineer. Keep queries short and conceptual:
-- "Explore how authentication works" (not "find JWT validation in AuthMiddleware")
-- "Explore the webhook handling flow" (not "trace handleWebhook to processEvent")
-They'll discover the specifics and report back.
+## locate(query)
+Find WHERE code lives. FAST. Use for:
+- "Locate where authentication is handled"
+- "Find files related to webhook processing"
+- "Locate the domain entities and their files"
+
+Returns file paths grouped by purpose. Use this first to understand the landscape.
+
+## analyze(query)
+Understand HOW code works. THOROUGH. Use for:
+- "Analyze how authentication validates and creates sessions"
+- "Trace the webhook flow from ingestion to processing"
+- "Analyze the data model relationships"
+
+Reads files, traces call chains, explains patterns. Only use when you need depth.
 
 ## submit_actions(actions, reasoning)
 End your turn. Reasoning is for logs only.
@@ -716,18 +755,48 @@ End your turn. Reasoning is for logs only.
 ## ready_for_spec_generation
 Signal readiness for spec generation.
 
-- context_summary: A DETAILED handoff report for the spec generator. Include:
-  1. What we're building and why (from issue + clarifications)
-  2. Key decisions made and their rationale
-  3. Relevant code patterns/locations you discovered
-  4. Technical constraints or considerations
-  5. What the spec generator should focus on
+- context_summary: Implementation-ready handoff for spec generator. Use this EXACT structure:
 
-  This report is the spec generator's primary context. Be thorough — it shouldn't need to re-explore what you already found.
+  ## What We're Building
+  [2-3 sentences: goal and scope from issue + clarifications]
 
-- relevant_finding_ids: IDs of findings (list what's most relevant for implementation)
-- closed_gap_ids: answered gaps
-- proceed_signal: brief excerpt of the EXPLICIT human approval you observed (e.g., "go ahead", "yes", "ship it"). Must be a direct approval phrase, NOT a technical description that happens to contain "proceed".
+  ## Key Decisions
+  | Decision | Choice | Rationale |
+  |----------|--------|-----------|
+  | [From resolved gap] | [The answer] | [Why this choice] |
+
+  ## Files to Modify
+  | File | Lines | What to Change |
+  |------|-------|----------------|
+  | ` + "`" + `relay/internal/store/x.go` + "`" + ` | 45-80 | Add CreateX method |
+  | ` + "`" + `relay/internal/http/handler/y.go` + "`" + ` | 120-150 | Add endpoint handler |
+
+  ## Code Patterns to Follow
+  Include actual code snippets from your exploration:
+  ` + "```" + `go
+  // From relay/internal/store/workspace.go:45-60
+  // This is the pattern for store methods
+  func (s *Store) CreateWorkspace(ctx context.Context, w model.Workspace) error {
+      params := sqlc.CreateWorkspaceParams{...}
+      return s.queries.CreateWorkspace(ctx, params)
+  }
+  ` + "```" + `
+
+  ## Function Signatures
+  - ` + "`" + `func (s *Store) CreateX(ctx context.Context, x model.X) error` + "`" + `
+  - ` + "`" + `func (h *Handler) GetX(w http.ResponseWriter, r *http.Request)` + "`" + `
+
+  ## Technical Constraints
+  - [Constraint from findings, e.g., "Must use snowflake IDs via id.New()"]
+  - [Another constraint]
+
+  ⚠️ CRITICAL: The spec generator has LIMITED locate budget (8 calls max).
+  Include ALL file paths, signatures, and code examples here.
+  It should NOT need to re-explore what you already found.
+
+- relevant_finding_ids: IDs of findings most relevant for implementation
+- closed_gap_ids: IDs of answered gaps to include
+- proceed_signal: brief excerpt of the EXPLICIT human approval (e.g., "go ahead", "yes")
 
 ## set_spec_status
 - status: "approved" | "rejected"

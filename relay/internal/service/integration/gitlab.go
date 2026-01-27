@@ -28,12 +28,12 @@ type GitLabService interface {
 }
 
 type GitLabProject struct {
-	Name        string // e.g. "api-service"
-	PathWithNS  string // e.g. "acme-corp/backend/api-service"
-	WebURL      string // e.g. "https://gitlab.com/acme-corp/backend/api-service"
-	Description string // e.g. "API service for the Acme Corp backend"
+	Name          string // e.g. "api-service"
+	PathWithNS    string // e.g. "acme-corp/backend/api-service"
+	WebURL        string // e.g. "https://gitlab.com/acme-corp/backend/api-service"
+	Description   string // e.g. "API service for the Acme Corp backend"
 	DefaultBranch string
-	ID          int64
+	ID            int64
 }
 
 type SetupIntegrationParams struct {
@@ -134,11 +134,11 @@ func (s *gitLabService) ListProjects(ctx context.Context, instanceURL, token str
 
 		for _, p := range pageProjects {
 			projects = append(projects, GitLabProject{
-				ID:          p.ID,
-				Name:        p.Name,
-				PathWithNS:  p.PathWithNamespace,
-				WebURL:      p.WebURL,
-				Description: p.Description,
+				ID:            p.ID,
+				Name:          p.Name,
+				PathWithNS:    p.PathWithNamespace,
+				WebURL:        p.WebURL,
+				Description:   p.Description,
 				DefaultBranch: p.DefaultBranch,
 			})
 		}
@@ -365,10 +365,10 @@ func (s *gitLabService) EnableRepositories(ctx context.Context, params EnableRep
 	}
 
 	var (
-		integration      *model.Integration
-		primaryCred      *model.IntegrationCredential
-		webhookSecret    string
-		webhookConfigs   map[string]webhookConfigValue
+		integration    *model.Integration
+		primaryCred    *model.IntegrationCredential
+		webhookSecret  string
+		webhookConfigs map[string]webhookConfigValue
 	)
 
 	if err := s.txRunner.WithTx(ctx, func(stores StoreProvider) error {

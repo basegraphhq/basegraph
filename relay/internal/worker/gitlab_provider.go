@@ -15,9 +15,9 @@ import (
 )
 
 type gitLabRepoProvider struct {
-	client       *gitlab.Client
-	integration  *model.Integration
-	configStore  store.IntegrationConfigStore
+	client      *gitlab.Client
+	integration *model.Integration
+	configStore store.IntegrationConfigStore
 }
 
 func newGitLabRepoProvider(integration *model.Integration, credential *model.IntegrationCredential, configs store.IntegrationConfigStore) (*gitLabRepoProvider, error) {

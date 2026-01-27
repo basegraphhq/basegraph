@@ -39,13 +39,13 @@ type TaskRunnerConfig struct {
 }
 
 type TaskRunner struct {
-	stores      *store.Stores
-	redis       *redis.Client
-	runner      CommandRunner
-	workspace   *model.Workspace
-	org         *model.Organization
-	dataDir     string
-	repoRoot    string
+	stores       *store.Stores
+	redis        *redis.Client
+	runner       CommandRunner
+	workspace    *model.Workspace
+	org          *model.Organization
+	dataDir      string
+	repoRoot     string
 	statusStream string
 }
 
@@ -226,7 +226,7 @@ func (r *TaskRunner) HandleWorkspaceSetup(ctx context.Context, runID int64) erro
 	}
 
 	var (
-		failed   []string
+		failed    []string
 		succeeded int
 	)
 
@@ -445,9 +445,9 @@ func (r *TaskRunner) loadCodeRepoIntegration(ctx context.Context) (*model.Integr
 
 func (r *TaskRunner) updateRunStatus(ctx context.Context, runID int64, status model.WorkspaceEventStatus, errMsg *string, metadata json.RawMessage, startedAt *time.Time, finishedAt *time.Time) error {
 	log := &model.WorkspaceEventLog{
-		ID:     runID,
-		Status: string(status),
-		Error:  errMsg,
+		ID:       runID,
+		Status:   string(status),
+		Error:    errMsg,
 		Metadata: metadata,
 	}
 	_, err := r.stores.WorkspaceEventLogs().Update(ctx, log, startedAt, finishedAt)

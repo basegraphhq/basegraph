@@ -13,8 +13,8 @@ import (
 	. "github.com/onsi/gomega"
 
 	"basegraph.co/relay/internal/http/handler"
-	"basegraph.co/relay/internal/service/integration"
 	"basegraph.co/relay/internal/service"
+	"basegraph.co/relay/internal/service/integration"
 )
 
 type mockGitLabService struct {

@@ -8,17 +8,17 @@ import (
 type WorkspaceEventType string
 
 const (
-	WorkspaceEventTypeSetup   WorkspaceEventType = "workspace_setup"
+	WorkspaceEventTypeSetup    WorkspaceEventType = "workspace_setup"
 	WorkspaceEventTypeRepoSync WorkspaceEventType = "repo_sync"
 )
 
 type WorkspaceEventStatus string
 
 const (
-	WorkspaceEventStatusQueued            WorkspaceEventStatus = "queued"
-	WorkspaceEventStatusRunning           WorkspaceEventStatus = "running"
-	WorkspaceEventStatusSucceeded         WorkspaceEventStatus = "succeeded"
-	WorkspaceEventStatusFailed            WorkspaceEventStatus = "failed"
+	WorkspaceEventStatusQueued              WorkspaceEventStatus = "queued"
+	WorkspaceEventStatusRunning             WorkspaceEventStatus = "running"
+	WorkspaceEventStatusSucceeded           WorkspaceEventStatus = "succeeded"
+	WorkspaceEventStatusFailed              WorkspaceEventStatus = "failed"
 	WorkspaceEventStatusSucceededWithErrors WorkspaceEventStatus = "succeeded_with_errors"
 )
 

@@ -45,7 +45,6 @@ func SetupRoutes(router *gin.Engine, services *service.Services, cfg RouterConfi
 		agentStatusHandler := handler.NewAgentStatusHandler(cfg.RedisClient)
 		AgentStatusRouter(v1.Group("/agent-status"), agentStatusHandler)
 
-
 	}
 
 	mapperRegistry := mapper.NewMapperRegistry()
